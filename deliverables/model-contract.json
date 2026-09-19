@@ -80,15 +80,24 @@
     "models": {
       "stage-a-320-fp32.onnx": {
         "description": "Primary detector in FP32 precision",
-        "budget_mb": 14.0
+        "budget_mb": 14.0,
+        "sha256": "c04feb00ba3af7bd3456c8190ed745ecea2bb0b1f1be670854b5523b193f873f",
+        "size_bytes": 13229650,
+        "size_mb": 13.23
       },
       "stage-a-320-fp16.onnx": {
         "description": "WebGPU-optimized FP16 model with genuine float16 weights",
-        "budget_mb": 7.0
+        "budget_mb": 7.0,
+        "sha256": "04578fee834a24918dd601b66c6e044b984a5816e6d8a4920e4d9b1d59b6bc2f",
+        "size_bytes": 6642088,
+        "size_mb": 6.64
       },
       "stage-a-256-int8.onnx": {
         "description": "WASM single-thread fallback quantized to INT8",
-        "budget_mb": 4.0
+        "budget_mb": 4.0,
+        "sha256": "52b551ea5d6ab3f24d8b027fef0438ff0505e4d4cf790bc56255241f05c380db",
+        "size_bytes": 3520887,
+        "size_mb": 3.52
       }
     }
   },
