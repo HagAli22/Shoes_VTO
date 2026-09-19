@@ -1,0 +1,171 @@
+{
+  "schema_version": "2.0.0",
+  "standard_reference_size": "EU 42 / US 9 (ISO 9407 Mondopoint 265)",
+  "reference_foot_length_mm": 265.0,
+  "reference_foot_width_mm": 98.0,
+  "measurement_definitions": {
+    "length": "Total bounding distance along longitudinal Z axis from heel_back (Z=0.0) to toe_tip (Z=265.0): length = 265.0 mm exactly.",
+    "width": "Total transverse distance along X axis between ball_medial (X=+49.0) and ball_lateral (X=-49.0): width = 98.0 mm exactly.",
+    "measurement_type": "Anatomical surface landmark coordinates for calibrated virtual shoe fitting."
+  },
+  "coordinate_system": {
+    "handedness": "Right-handed (Three.js compliant)",
+    "up_axis": "+Y (floor normal / height above ground; sole contact plane at Y=0.0)",
+    "forward_axis": "+Z (foot longitudinal axis pointing towards toe_tip)",
+    "lateral_axis": "+X (+Y cross +Z in right-handed convention)",
+    "units": "millimeters (mm)"
+  },
+  "reflection_rule": {
+    "sagittal_plane": "X = 0",
+    "point_reflection": "x_left = -x_right, y_left = y_right, z_left = z_right",
+    "rotation_reflection_so3": "R_left = S * R_right * S, where S = diag(-1, 1, 1). Preserves det(R) = +1 in SO(3)."
+  },
+  "foot_side": "left",
+  "lateral_axis_meaning": "+X is lateral (pinky-toe side), -X is medial (big-toe side)",
+  "keypoints_3d_mm": {
+    "0": {
+      "name": "toe_tip",
+      "x_mm": 0.0,
+      "y_mm": 8.0,
+      "z_mm": 265.0,
+      "zone": "sole",
+      "tier": 1,
+      "description": "Most anterior point of foot outline"
+    },
+    "1": {
+      "name": "toe_ground",
+      "x_mm": 0.0,
+      "y_mm": 0.0,
+      "z_mm": 248.0,
+      "zone": "sole",
+      "tier": 1,
+      "description": "Front ground contact point of sole"
+    },
+    "2": {
+      "name": "heel_back",
+      "x_mm": 0.0,
+      "y_mm": 18.0,
+      "z_mm": 0.0,
+      "zone": "sole",
+      "tier": 1,
+      "description": "Most posterior point of heel outline (Z bound = 0.0)"
+    },
+    "3": {
+      "name": "heel_ground",
+      "x_mm": 0.0,
+      "y_mm": 0.0,
+      "z_mm": 15.0,
+      "zone": "sole",
+      "tier": 1,
+      "description": "Back ground contact point of heel"
+    },
+    "4": {
+      "name": "ball_medial",
+      "x_mm": -49.0,
+      "y_mm": 4.0,
+      "z_mm": 175.0,
+      "zone": "ball",
+      "tier": 1,
+      "description": "1st metatarsal head (lateral ball width bound)"
+    },
+    "5": {
+      "name": "ball_lateral",
+      "x_mm": 49.0,
+      "y_mm": 4.0,
+      "z_mm": 165.0,
+      "zone": "ball",
+      "tier": 1,
+      "description": "5th metatarsal head (medial ball width bound)"
+    },
+    "6": {
+      "name": "ball_top",
+      "x_mm": 0.0,
+      "y_mm": 42.0,
+      "z_mm": 170.0,
+      "zone": "ball",
+      "tier": 1,
+      "description": "Top of forefoot above ball line"
+    },
+    "7": {
+      "name": "instep_top",
+      "x_mm": -2.0,
+      "y_mm": 68.0,
+      "z_mm": 118.0,
+      "zone": "mid",
+      "tier": 1,
+      "description": "Apex of instep (highest dorsal arch point)"
+    },
+    "8": {
+      "name": "arch_medial",
+      "x_mm": -38.0,
+      "y_mm": 14.0,
+      "z_mm": 95.0,
+      "zone": "mid",
+      "tier": 2,
+      "description": "Deepest point of lateral longitudinal arch"
+    },
+    "9": {
+      "name": "midfoot_lateral",
+      "x_mm": 44.0,
+      "y_mm": 0.0,
+      "z_mm": 95.0,
+      "zone": "mid",
+      "tier": 2,
+      "description": "Lateral midfoot border at 5th metatarsal base"
+    },
+    "10": {
+      "name": "malleolus_medial",
+      "x_mm": -36.0,
+      "y_mm": 74.0,
+      "z_mm": 48.0,
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Center of lateral malleolus (inner ankle bone)"
+    },
+    "11": {
+      "name": "malleolus_lateral",
+      "x_mm": 38.0,
+      "y_mm": 65.0,
+      "z_mm": 40.0,
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Center of medial malleolus (outer ankle bone)"
+    },
+    "12": {
+      "name": "ankle_center",
+      "x_mm": 1.0,
+      "y_mm": 69.5,
+      "z_mm": 44.0,
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Midpoint between lateral and medial malleoli"
+    },
+    "13": {
+      "name": "throat",
+      "x_mm": 0.0,
+      "y_mm": 82.0,
+      "z_mm": 82.0,
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Front ankle crease / collar entry"
+    },
+    "14": {
+      "name": "achilles",
+      "x_mm": 0.0,
+      "y_mm": 70.0,
+      "z_mm": 8.0,
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Posterior curve of Achilles tendon level with ankle center"
+    },
+    "15": {
+      "name": "shin_mid",
+      "x_mm": 1.0,
+      "y_mm": 189.5,
+      "z_mm": 44.0,
+      "zone": "leg",
+      "tier": 1,
+      "description": "Leg centerline, exactly 120 mm proximal to ankle_center"
+    }
+  }
+}

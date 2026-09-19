@@ -1,0 +1,345 @@
+{
+  "schema_version": "2.0.0",
+  "date": "2026-09-19",
+  "framework": "onnxruntime-web",
+  "opset": 12,
+  "pipeline": {
+    "architecture": "Two-Stage Decoupled Perception (Detector + Landmark/Pose/Mask)",
+    "stage_a_role": "Coarse acquisition and loss recovery detector. Runs on initial frame or when Stage B presence < threshold.",
+    "stage_b_role": "Continuous fine perception: 16 keypoints, 6D continuous rotation, relative scale, dual masks, presence, and next ROI. Runs every frame per foot on rotation-normalized 224x224 crop.",
+    "tracking_boundary": "Perception outputs raw candidates and per-frame crop estimates. The AR SDK owns temporal association, persistent track IDs, PnP, and Three.js scene integration."
+  },
+  "stage_a": {
+    "contract_path": "Path A (Frozen Compact Detector)",
+    "primary_resolution": {
+      "input_name": "images",
+      "input_shape": [
+        1,
+        3,
+        320,
+        320
+      ],
+      "input_dtype": "float32",
+      "color_space": "RGB",
+      "normalization": "[0.0, 1.0]",
+      "padding": "Letterbox with centered (114, 114, 114) padding",
+      "output_name": "output0",
+      "output_shape": [
+        1,
+        18,
+        2100
+      ],
+      "output_dtype": "float32",
+      "layout": "Channel-major: 18 rows x 2100 anchors at 320x320 letterbox resolution",
+      "channels": {
+        "box_cx": 0,
+        "box_cy": 1,
+        "box_w": 2,
+        "box_h": 3,
+        "class_left_foot": 4,
+        "class_right_foot": 5,
+        "kpt_toe_tip_x": 6,
+        "kpt_toe_tip_y": 7,
+        "kpt_toe_tip_v": 8,
+        "kpt_heel_back_x": 9,
+        "kpt_heel_back_y": 10,
+        "kpt_heel_back_v": 11,
+        "kpt_ball_medial_x": 12,
+        "kpt_ball_medial_y": 13,
+        "kpt_ball_medial_v": 14,
+        "kpt_ball_lateral_x": 15,
+        "kpt_ball_lateral_y": 16,
+        "kpt_ball_lateral_v": 17
+      }
+    },
+    "fallback_resolution": {
+      "input_name": "images",
+      "input_shape": [
+        1,
+        3,
+        256,
+        256
+      ],
+      "input_dtype": "float32",
+      "output_name": "output0",
+      "output_shape": [
+        1,
+        18,
+        1344
+      ],
+      "output_dtype": "float32",
+      "layout": "Channel-major: 18 rows x 1344 anchors at 256x256 resolution"
+    },
+    "nms_rules": {
+      "in_graph_nms": false,
+      "decoder_nms": "Independent per-class NMS (left_foot and right_foot processed independently). NO cross-class suppression. Preserves both feet during overlap and crossing.",
+      "max_active_feet": 2,
+      "box_conf_threshold": 0.35,
+      "class_nms_iou_threshold": 0.45
+    },
+    "models": {
+      "stage-a-320-fp32.onnx": {
+        "description": "Primary detector in FP32 precision",
+        "budget_mb": 14.0
+      },
+      "stage-a-320-fp16.onnx": {
+        "description": "WebGPU-optimized FP16 model with genuine float16 weights",
+        "budget_mb": 7.0
+      },
+      "stage-a-256-int8.onnx": {
+        "description": "WASM single-thread fallback quantized to INT8",
+        "budget_mb": 4.0
+      }
+    }
+  },
+  "stage_b": {
+    "input": {
+      "name": "crop",
+      "shape": [
+        1,
+        3,
+        224,
+        224
+      ],
+      "dtype": "float32",
+      "color_space": "RGB",
+      "normalization": "[0.0, 1.0]",
+      "description": "Square rotation-normalized crop centered on target foot, no letterbox padding"
+    },
+    "outputs": {
+      "keypoints": {
+        "shape": [
+          1,
+          16,
+          3
+        ],
+        "dtype": "float32",
+        "description": "Crop-normalized (x, y, v) in range [0, 1] for all 16 points in frozen order"
+      },
+      "rotation": {
+        "shape": [
+          1,
+          6
+        ],
+        "dtype": "float32",
+        "description": "Continuous 6-D rotation (first 2 columns of 3x3 rotation matrix). Recovered via Gram-Schmidt in decoder."
+      },
+      "relative_scale": {
+        "shape": [
+          1,
+          2
+        ],
+        "dtype": "float32",
+        "description": "Dimensionless foot length and width relative to canonical template (1.0 = 265mm x 98mm)"
+      },
+      "relative_scale_sigma": {
+        "shape": [
+          1,
+          2
+        ],
+        "dtype": "float32",
+        "description": "Uncertainty in relative scale units"
+      },
+      "sigma": {
+        "shape": [
+          1,
+          16
+        ],
+        "dtype": "float32",
+        "description": "Per-keypoint positional uncertainty sigma in crop-normalized coordinates"
+      },
+      "confidence": {
+        "shape": [
+          1,
+          16
+        ],
+        "dtype": "float32",
+        "description": "Calibrated confidence [0, 1] derived via baked smoothstep: 1 - smoothstep(0.01, 0.08, sigma) * (1 - v)"
+      },
+      "presence": {
+        "shape": [
+          1,
+          1
+        ],
+        "dtype": "float32",
+        "description": "Probability [0, 1] that target foot is actively present inside this crop (sigmoid in-graph)"
+      },
+      "next_roi": {
+        "shape": [
+          1,
+          5
+        ],
+        "dtype": "float32",
+        "description": "(cx, cy, w, h, theta) in current crop-normalized coordinates [0, 1], ready for affine composition by AR SDK"
+      },
+      "foot_mask": {
+        "shape": [
+          1,
+          1,
+          160,
+          160
+        ],
+        "dtype": "float32",
+        "description": "Sigmoid probability mask of target foot/shoe surface in-graph"
+      },
+      "foreground_mask": {
+        "shape": [
+          1,
+          1,
+          160,
+          160
+        ],
+        "dtype": "float32",
+        "description": "Sigmoid probability mask of occluding foreground (garments, cuffs, other foot) in-graph"
+      },
+      "depth_order": {
+        "shape": [
+          1,
+          1
+        ],
+        "dtype": "float32",
+        "description": "Confidence [0, 1] that detected foreground/other foot is in front of target foot (sigmoid in-graph)"
+      }
+    },
+    "models": {
+      "stage-b-224-fp32.onnx": {
+        "description": "Primary landmark/pose model in FP32 precision",
+        "budget_mb": 14.0
+      },
+      "stage-b-224-fp16.onnx": {
+        "description": "WebGPU-optimized FP16 model with genuine float16 weights",
+        "budget_mb": 7.0
+      },
+      "stage-b-224-int8.onnx": {
+        "description": "WASM single-thread fallback quantized to INT8",
+        "budget_mb": 4.0
+      }
+    }
+  },
+  "frozen_16_keypoints": [
+    {
+      "index": 0,
+      "name": "toe_tip",
+      "zone": "sole",
+      "tier": 1,
+      "description": "Most anterior point of foot outline"
+    },
+    {
+      "index": 1,
+      "name": "toe_ground",
+      "zone": "sole",
+      "tier": 1,
+      "description": "Front ground contact point of sole"
+    },
+    {
+      "index": 2,
+      "name": "heel_back",
+      "zone": "sole",
+      "tier": 1,
+      "description": "Most posterior point of heel outline"
+    },
+    {
+      "index": 3,
+      "name": "heel_ground",
+      "zone": "sole",
+      "tier": 1,
+      "description": "Back ground contact point of heel"
+    },
+    {
+      "index": 4,
+      "name": "ball_medial",
+      "zone": "ball",
+      "tier": 1,
+      "description": "1st metatarsal head (medial ball width bound)"
+    },
+    {
+      "index": 5,
+      "name": "ball_lateral",
+      "zone": "ball",
+      "tier": 1,
+      "description": "5th metatarsal head (lateral ball width bound)"
+    },
+    {
+      "index": 6,
+      "name": "ball_top",
+      "zone": "ball",
+      "tier": 1,
+      "description": "Top of forefoot above ball line"
+    },
+    {
+      "index": 7,
+      "name": "instep_top",
+      "zone": "mid",
+      "tier": 1,
+      "description": "Apex of instep (highest dorsal arch point)"
+    },
+    {
+      "index": 8,
+      "name": "arch_medial",
+      "zone": "mid",
+      "tier": 2,
+      "description": "Deepest point of medial longitudinal arch"
+    },
+    {
+      "index": 9,
+      "name": "midfoot_lateral",
+      "zone": "mid",
+      "tier": 2,
+      "description": "Lateral midfoot border at 5th metatarsal base"
+    },
+    {
+      "index": 10,
+      "name": "malleolus_medial",
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Center of medial malleolus (inner ankle bone)"
+    },
+    {
+      "index": 11,
+      "name": "malleolus_lateral",
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Center of lateral malleolus (outer ankle bone)"
+    },
+    {
+      "index": 12,
+      "name": "ankle_center",
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Midpoint between medial and lateral malleoli"
+    },
+    {
+      "index": 13,
+      "name": "throat",
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Front ankle crease / collar entry"
+    },
+    {
+      "index": 14,
+      "name": "achilles",
+      "zone": "ankle",
+      "tier": 1,
+      "description": "Posterior curve of Achilles tendon level with ankle center"
+    },
+    {
+      "index": 15,
+      "name": "shin_mid",
+      "zone": "leg",
+      "tier": 1,
+      "description": "Leg centerline, exactly 120 mm proximal to ankle_center"
+    }
+  ],
+  "visibility_labels": {
+    "0": "Not labeled or outside frame. Excluded from keypoint loss.",
+    "1": "Anatomically present but occluded/covered. Position supervised, visibility target negative.",
+    "2": "Visible and unoccluded. Visibility target positive."
+  },
+  "canonical_geometry_files": {
+    "right_foot": "canonical-right.json",
+    "left_foot": "canonical-left.json",
+    "units": "millimeters (mm)",
+    "reference_length_mm": 265.0,
+    "reference_width_mm": 98.0
+  }
+}
