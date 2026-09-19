@@ -1,0 +1,109 @@
+{
+  "model_name": "stage_a_foot_detector",
+  "model_version": "1.0.0",
+  "date_created": "2026-09-17",
+  "author": "Mostafa (AI/Perception)",
+  "runtime": {
+    "opset": 12,
+    "framework": "onnxruntime-web",
+    "supported_eps": [
+      "webgpu",
+      "wasm"
+    ]
+  },
+  "input": {
+    "tensor_name": "images",
+    "shape": [
+      1,
+      3,
+      320,
+      320
+    ],
+    "dtype": "float32",
+    "color_space": "RGB",
+    "normalization": {
+      "mean": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "std": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "scale": 0.00392156862745098,
+      "pad_color": [
+        114,
+        114,
+        114
+      ]
+    }
+  },
+  "output": {
+    "tensor_name": "output0",
+    "shape": [
+      1,
+      18,
+      2100
+    ],
+    "dtype": "float32",
+    "channels": {
+      "box_cx": 0,
+      "box_cy": 1,
+      "box_w": 2,
+      "box_h": 3,
+      "class_left_foot": 4,
+      "class_right_foot": 5,
+      "kpt_toe_tip": [
+        6,
+        7,
+        8
+      ],
+      "kpt_heel_back": [
+        9,
+        10,
+        11
+      ],
+      "kpt_ball_medial": [
+        12,
+        13,
+        14
+      ],
+      "kpt_ball_lateral": [
+        15,
+        16,
+        17
+      ]
+    }
+  },
+  "classes": [
+    "left_foot",
+    "right_foot"
+  ],
+  "coarse_keypoints": [
+    "toe_tip",
+    "heel_back",
+    "ball_medial",
+    "ball_lateral"
+  ],
+  "flip_camera_rule": {
+    "horizontal_mirror": true,
+    "class_swap": {
+      "0": 1,
+      "1": 0
+    },
+    "kpt_x_transform": "1.0 - x"
+  },
+  "thresholds": {
+    "default_box_conf": 0.3,
+    "cross_class_nms_iou": 0.35,
+    "max_detections": 2
+  },
+  "weights_sha256": {
+    "stage_a_320_fp32": "c04feb00ba3af7bd3456c8190ed745ecea2bb0b1f1be670854b5523b193f873f",
+    "stage_a_320_fp16": "c04feb00ba3af7bd3456c8190ed745ecea2bb0b1f1be670854b5523b193f873f",
+    "stage_a_320_int8": "443dd13964a3dc464d9eb501adcbdaaedb128da36da9464978438e26955b8153",
+    "stage_a_256_fp32": "c46a519138b3fa9d213453a83e6db0956ac2a6e81bfe6ce9f7d380b0b6d46280"
+  }
+}

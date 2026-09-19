@@ -1,0 +1,141 @@
+# ============================================================
+# Shoe AR Try-On — Training Configuration
+# ============================================================
+
+# ── Model ────────────────────────────────────────────────────
+model:
+  backbone: rtmpose_tiny          # rtmpose_tiny | rtmpose_s
+  num_keypoints: 18               # 9 per foot × 2 feet
+  input_size: [256, 192]          # H × W
+  heatmap_size: [64, 48]          # H/4 × W/4
+  sigma: 2.0                      # Gaussian heatmap sigma (pixels)
+
+# ── Keypoint Schema ──────────────────────────────────────────
+keypoints:
+  names:
+    - left_big_toe
+    - left_little_toe
+    - left_near_little_toe
+    - left_near_big_toe
+    - left_far_big_toe
+    - left_far_little_toe
+    - left_dorsum
+    - left_heel
+    - left_upper_heel
+    - right_big_toe
+    - right_little_toe
+    - right_near_little_toe
+    - right_near_big_toe
+    - right_far_big_toe
+    - right_far_little_toe
+    - right_dorsum
+    - right_heel
+    - right_upper_heel
+  # OKS sigmas (relative to foot size) — tuned for foot geometry
+  sigmas:
+    - 0.025   # left_big_toe
+    - 0.025   # left_little_toe
+    - 0.035   # left_near_little_toe
+    - 0.035   # left_near_big_toe
+    - 0.040   # left_far_big_toe
+    - 0.040   # left_far_little_toe
+    - 0.040   # left_dorsum
+    - 0.030   # left_heel
+    - 0.035   # left_upper_heel
+    - 0.025   # right_big_toe
+    - 0.025   # right_little_toe
+    - 0.035   # right_near_little_toe
+    - 0.035   # right_near_big_toe
+    - 0.040   # right_far_big_toe
+    - 0.040   # right_far_little_toe
+    - 0.040   # right_dorsum
+    - 0.030   # right_heel
+    - 0.035   # right_upper_heel
+
+# ── Training ─────────────────────────────────────────────────
+training:
+  epochs: 200
+  batch_size: 64
+  num_workers: 4
+  seed: 42
+
+# ── Optimizer ────────────────────────────────────────────────
+optimizer:
+  type: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  betas: [0.9, 0.999]
+
+# ── LR Scheduler ─────────────────────────────────────────────
+scheduler:
+  type: exponential_decay
+  gamma: 0.95
+  warmup_epochs: 5
+  warmup_ratio: 0.1
+
+# ── Loss ─────────────────────────────────────────────────────
+loss:
+  type: mse                       # L2 loss on heatmaps
+  use_visibility_weight: true     # weight=0 for vis=0 points
+
+# ── Augmentation ─────────────────────────────────────────────
+augmentation:
+  train:
+    horizontal_flip: true         # foot-aware (swaps L/R labels)
+    brightness_limit: 0.2
+    contrast_limit: 0.2
+    scale_range: [0.8, 1.2]
+    rotation_limit: 15            # degrees
+    gaussian_noise_std: 0.01
+    random_crop: true
+    crop_min_size: 0.75
+  val:
+    horizontal_flip: false
+
+# ── Dataset Paths ─────────────────────────────────────────────
+dataset:
+  train_json: data/annotations/train_annotations.json
+  val_json:   data/annotations/val_annotations.json
+  test_json:  data/annotations/test_annotations.json
+  image_dir:  data/processed/
+
+# ── Checkpointing ─────────────────────────────────────────────
+checkpoint:
+  save_dir: outputs/checkpoints/
+  save_best: true
+  metric: OKS                     # monitor OKS for best model
+  save_last: true
+  save_every_n_epochs: 10
+
+# ── Logging ───────────────────────────────────────────────────
+logging:
+  log_every_n_steps: 50
+  val_every_n_epochs: 5
+
+# ── Detector ──────────────────────────────────────────────────
+detector:
+  model: yolov8n
+  conf_threshold: 0.4
+  iou_threshold: 0.45
+  input_size: 640
+  model_path: outputs/exports/foot_detector.onnx
+
+# ── Geometry / PnP ────────────────────────────────────────────
+geometry:
+  pnp_method: epnp                # epnp | iterative | auto
+  reprojection_threshold: 8.0     # pixels — reject if higher
+  min_visible_points: 4           # minimum points for PnP
+
+# ── Stabilization ─────────────────────────────────────────────
+stabilization:
+  alpha: 0.85
+  beta: 0.15
+  iou_stability_threshold: 0.96
+  iou_history_frames: 10
+
+# ── Export ────────────────────────────────────────────────────
+export:
+  onnx_opset: 17
+  quantize: false                 # set true for INT8 mobile
+  output_dir: outputs/exports/
+
