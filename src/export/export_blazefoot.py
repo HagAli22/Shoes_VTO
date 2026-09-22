@@ -59,6 +59,13 @@ def export_blazefoot(
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
         model.load_state_dict(checkpoint)
+    sd = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+    # Deduce num_keypoints from head_p3.kpt.3.weight shape: (num_anchors * kp * 3) -> 2 * kp * 3 = 6 * kp
+    kpt_out_channels = sd["head_p3.kpt.3.weight"].shape[0]
+    num_kp = kpt_out_channels // 6 # 24 // 6 = 4 keypoints
+
+    model = BlazeFoot(num_classes=2, num_keypoints=num_kp)
+    model.load_state_dict(sd)
     model.eval()
 
     export_model = BlazeFootPathAExport(model)

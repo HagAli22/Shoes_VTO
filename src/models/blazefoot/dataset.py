@@ -2,9 +2,15 @@
 dataset.py
 ──────────
 PyTorch Dataset and Anchor Matching for BlazeFoot training.
+PyTorch Dataset and Anchor Matching for BlazeFoot 4-Keypoint Training.
 
 Loads annotations from data/shuffled_v3 (YOLO-Pose format):
   Line format: cls cx cy w h kx0 ky0 kv0 ... kx15 ky15 kv15
+Extracts only the 4 Coarse Keypoints from the 16 annotated landmarks:
+  - Keypoint 0: toe_tip
+  - Keypoint 2: heel_back
+  - Keypoint 4: ball_medial
+  - Keypoint 5: ball_lateral
 """
 
 import os
@@ -17,6 +23,9 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+
+# The 4 coarse keypoints indices in the 16-keypoint annotation order
+COARSE_KP_INDICES = [0, 2, 4, 5]
 
 
 def generate_blaze_anchors(img_size: int = 320, num_anchors_per_scale: int = 2) -> torch.Tensor:
@@ -32,6 +41,9 @@ def generate_blaze_anchors(img_size: int = 320, num_anchors_per_scale: int = 2) 
         (20, [0.12, 0.22]), # P3
         (10, [0.35, 0.50]), # P4
         (5,  [0.65, 0.85])  # P5
+        (20, [0.12, 0.22]), # P3 (20x20) -> 800 anchors
+        (10, [0.35, 0.50]), # P4 (10x10) -> 200 anchors
+        (5,  [0.65, 0.85])  # P5 (5x5)   -> 50 anchors
     ]
     anchors = []
 
@@ -95,6 +107,7 @@ class BlazeFootDataset(Dataset):
         boxes_yolo = []
         category_ids = []
         kpts_list = []
+        kpts_4_list = []
 
         if os.path.exists(lbl_path):
             with open(lbl_path, "r", encoding="utf-8") as f:
@@ -113,27 +126,41 @@ class BlazeFootDataset(Dataset):
                     category_ids.append(cls_id)
 
                     kps = []
+                    # Extract strictly the 4 Coarse Keypoints: [0, 2, 4, 5]
+                    kps_4 = []
                     if len(parts) >= 5 + 48:
                         for ki in range(16):
                             kx = float(parts[5 + ki*3]) * w_orig
                             ky = float(parts[6 + ki*3]) * h_orig
                             kv = int(float(parts[7 + ki*3]))
                             kps.append((kx, ky, kv))
+                        for target_idx in COARSE_KP_INDICES:
+                            kx = float(parts[5 + target_idx*3]) * w_orig
+                            ky = float(parts[6 + target_idx*3]) * h_orig
+                            kv = int(float(parts[7 + target_idx*3]))
+                            kps_4.append((kx, ky, kv))
                     else:
                         for _ in range(16):
                             kps.append((0.0, 0.0, 0))
                     kpts_list.append(kps)
+                        for _ in range(4):
+                            kps_4.append((0.0, 0.0, 0))
+                    kpts_4_list.append(kps_4)
 
         flat_kpts_xy = []
         kpt_visibilities = []
         if len(kpts_list) > 0:
             for inst_kps in kpts_list:
+        if len(kpts_4_list) > 0:
+            for inst_kps in kpts_4_list:
                 for (kx, ky, kv) in inst_kps:
                     flat_kpts_xy.append((kx, ky))
                     kpt_visibilities.append(kv)
         else:
             flat_kpts_xy = [(0.0, 0.0)] * 16
             kpt_visibilities = [0] * 16
+            flat_kpts_xy = [(0.0, 0.0)] * 4
+            kpt_visibilities = [0] * 4
 
         try:
             transformed = self.transform(
@@ -157,6 +184,7 @@ class BlazeFootDataset(Dataset):
         target_cls = torch.zeros((num_anchors, 2), dtype=torch.float32)
         target_box = torch.zeros((num_anchors, 4), dtype=torch.float32)
         target_kpt = torch.zeros((num_anchors, 16 * 3), dtype=torch.float32)
+        target_kpt = torch.zeros((num_anchors, 4 * 3), dtype=torch.float32) # 4 Keypoints * 3 = 12 channels
         target_mask = torch.zeros(num_anchors, dtype=torch.bool)
 
         if len(boxes_aug) > 0:
@@ -171,6 +199,8 @@ class BlazeFootDataset(Dataset):
                 inst_kpts_norm = []
                 inst_offset = inst_idx * 16
                 for ki in range(16):
+                inst_offset = inst_idx * 4
+                for ki in range(4):
                     k_idx = inst_offset + ki
                     if k_idx < len(kpts_aug_xy):
                         kx_px, ky_px = kpts_aug_xy[k_idx]

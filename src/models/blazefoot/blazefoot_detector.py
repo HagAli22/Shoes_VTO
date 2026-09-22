@@ -1,20 +1,18 @@
 """
 blazefoot_detector.py
 ─────────────────────
-Google BlazeFoot (MediaPipe / BlazePose style) Foot Detection & Keypoint Network.
+Google BlazeFoot (MediaPipe / BlazePose style) 4-Keypoint Native Perception Network.
 
-Key specifications:
+Optimized strictly for Path A Contract:
   - Input: [B, 3, 320, 320]
-  - Architecture: Lightweight 5x5 Depthwise Separable Convolutions + Multi-Scale Anchor Heads
-  - Feature Pyramid: P3 (20x20), P4 (10x10), P5 (5x5)
   - Outputs:
-      - Bounding Boxes: [B, N, 4] (cx, cy, w, h)
-      - Classification: [B, N, 2] (left_foot, right_foot)
-      - 16 Keypoints:   [B, N, 48] (x, y, visibility for 16 landmarks)
-  - Total Parameters: ~500K parameters (FP32 size: ~2.1 MB, FP16 size: ~1.05 MB)
+      - Box Reg:   [B, N, 4]  (cx, cy, w, h)
+      - Class:     [B, N, 2]  (left_foot, right_foot)
+      - 4 Coarse:  [B, N, 12] (4 landmarks: toe_tip, heel_back, ball_medial, ball_lateral)
+  - Native Output: [B, 18, 1050] (Zero slicing overhead!)
+  - Total Parameters: ~574K parameters (FP32: ~2.30 MB, FP16: ~1.15 MB, INT8: ~0.58 MB)
 """
 
-import math
 from typing import List, Tuple, Dict
 import torch
 import torch.nn as nn
@@ -25,9 +23,9 @@ from .blazeblock import BlazeBlock, DoubleBlazeBlock
 
 class BlazeFoot(nn.Module):
     """
-    BlazeFoot full detector architecture.
+    BlazeFoot 4-Keypoint Native Architecture.
     """
-    def __init__(self, num_classes: int = 2, num_keypoints: int = 16, num_anchors_per_scale: int = 2):
+    def __init__(self, num_classes: int = 2, num_keypoints: int = 4, num_anchors_per_scale: int = 2):
         super().__init__()
         self.num_classes = num_classes
         self.num_keypoints = num_keypoints
@@ -80,14 +78,12 @@ class BlazeFoot(nn.Module):
             DoubleBlazeBlock(256, 256, stride=1)
         )
 
-        # ── 8. Multi-Scale Detection Heads ────────────────────────────────
-        # Channels: P3=144, P4=192, P5=256
+        # ── 8. Multi-Scale Detection Heads (4 Keypoints Only) ─────────────
         self.head_p3 = self._build_head(144)
         self.head_p4 = self._build_head(192)
         self.head_p5 = self._build_head(256)
 
     def _build_head(self, in_c: int) -> nn.ModuleDict:
-        """Constructs classification, bounding box, and keypoint prediction subnets."""
         return nn.ModuleDict({
             "cls": nn.Sequential(
                 nn.Conv2d(in_c, in_c, kernel_size=5, padding=2, groups=in_c, bias=False),
@@ -105,25 +101,17 @@ class BlazeFoot(nn.Module):
                 nn.Conv2d(in_c, in_c, kernel_size=5, padding=2, groups=in_c, bias=False),
                 nn.BatchNorm2d(in_c),
                 nn.PReLU(in_c),
-                nn.Conv2d(in_c, self.num_anchors * (self.num_keypoints * 3), kernel_size=1)
+                nn.Conv2d(in_c, self.num_anchors * (self.num_keypoints * 3), kernel_size=1) # 4 * 3 = 12
             )
         })
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Forward pass.
-        Returns:
-            cls_preds: [B, Total_Anchors, num_classes] (logits)
-            box_preds: [B, Total_Anchors, 4] (cx, cy, w, h offsets)
-            kpt_preds: [B, Total_Anchors, num_keypoints * 3] (kx, ky, kv)
-        """
         b = x.shape[0]
 
-        # Backbone forward
-        x = self.stem(x)     # 160x160
-        x = self.stage1(x)   # 160x160
-        x = self.stage2(x)   # 80x80
-        x = self.stage3(x)   # 40x40
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
 
         p3 = self.stage4(x)  # 20x20
         p4 = self.stage5(p3) # 10x10
@@ -137,24 +125,21 @@ class BlazeFoot(nn.Module):
         for feat, head in zip(features, heads):
             h, w = feat.shape[2], feat.shape[3]
 
-            # Cls: [B, num_anchors * num_classes, H, W] -> [B, H*W*num_anchors, num_classes]
             c = head["cls"](feat).view(b, self.num_anchors, self.num_classes, h, w)
             c = c.permute(0, 3, 4, 1, 2).contiguous().view(b, -1, self.num_classes)
             all_cls.append(c)
 
-            # Box: [B, num_anchors * 4, H, W] -> [B, H*W*num_anchors, 4]
             bx = head["box"](feat).view(b, self.num_anchors, 4, h, w)
             bx = bx.permute(0, 3, 4, 1, 2).contiguous().view(b, -1, 4)
             all_box.append(bx)
 
-            # Kpt: [B, num_anchors * (KP*3), H, W] -> [B, H*W*num_anchors, KP*3]
             kp = head["kpt"](feat).view(b, self.num_anchors, self.num_keypoints * 3, h, w)
             kp = kp.permute(0, 3, 4, 1, 2).contiguous().view(b, -1, self.num_keypoints * 3)
             all_kpt.append(kp)
 
-        cls_out = torch.cat(all_cls, dim=1)
-        box_out = torch.cat(all_box, dim=1)
-        kpt_out = torch.cat(all_kpt, dim=1)
+        cls_out = torch.cat(all_cls, dim=1) # [B, 1050, 2]
+        box_out = torch.cat(all_box, dim=1) # [B, 1050, 4]
+        kpt_out = torch.cat(all_kpt, dim=1) # [B, 1050, 12]
 
         return cls_out, box_out, kpt_out
 
@@ -164,37 +149,23 @@ class BlazeFoot(nn.Module):
 
 class BlazeFootPathAExport(nn.Module):
     """
-    ONNX Export wrapper formatting BlazeFoot output strictly to Path A [1, 18, Total_Anchors]:
+    Direct Export to Path A [1, 18, 1050]:
       - Rows 0..3: cx, cy, w, h
-      - Rows 4..5: class scores (Sigmoid probabilities)
-      - Rows 6..17: 4 coarse keypoints (toe_tip: 0, heel_back: 2, ball_medial: 4, ball_lateral: 5)
+      - Rows 4..5: left_foot, right_foot class probabilities
+      - Rows 6..17: 4 coarse keypoints (toe_tip, heel_back, ball_medial, ball_lateral)
     """
     def __init__(self, model: BlazeFoot):
         super().__init__()
         self.model = model
-        # Indices of the 4 coarse keypoints (0, 2, 4, 5) * 3 channels
-        self.kpt_select_indices = [
-            0*3, 0*3+1, 0*3+2,   # kp0: toe_tip
-            2*3, 2*3+1, 2*3+2,   # kp2: heel_back
-            4*3, 4*3+1, 4*3+2,   # kp4: ball_medial
-            5*3, 5*3+1, 5*3+2    # kp5: ball_lateral
-        ]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         cls_logits, box_preds, kpt_preds = self.model(x)
 
-        # Apply sigmoid to class scores and keypoint visibilities
         cls_probs = torch.sigmoid(cls_logits)
-        
-        # Bounding box is sigmoid normalized
-        boxes = torch.sigmoid(box_preds)
+        boxes     = torch.sigmoid(box_preds)
+        kpts      = torch.sigmoid(kpt_preds)
 
-        # Extract 4 coarse keypoints
-        kpts = torch.sigmoid(kpt_preds)
-        kpts_4 = kpts[:, :, self.kpt_select_indices]
-
-        # Concatenate into [B, Total_Anchors, 18] -> Transpose to [B, 18, Total_Anchors]
-        out = torch.cat([boxes, cls_probs, kpts_4], dim=-1)
+        # Concat [B, 1050, 18] -> Transpose to [B, 18, 1050]
+        out = torch.cat([boxes, cls_probs, kpts], dim=-1)
         out = out.permute(0, 2, 1).contiguous()
         return out
-

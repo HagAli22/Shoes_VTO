@@ -151,10 +151,10 @@ def main():
     print(f"  Output Dir    : {out_dir}")
     print("=" * 70)
 
-    # 1. Initialize Model
-    model = BlazeFoot(num_classes=2, num_keypoints=16).to(device)
+    # 1. Initialize Model (4 Keypoints strictly for Path A)
+    model = BlazeFoot(num_classes=2, num_keypoints=4).to(device)
     params = model.count_parameters()
-    print(f"[1] BlazeFoot initialized with {params:,} parameters ({params*4/1e6:.2f} MB in FP32)")
+    print(f"[1] BlazeFoot (4-KP Native) initialized with {params:,} parameters ({params*4/1e6:.2f} MB in FP32)")
 
     # 2. Load Data
     train_loader, val_loader = get_blazefoot_loaders(args.data, batch_size=args.batch, num_workers=0)
