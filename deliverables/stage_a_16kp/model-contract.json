@@ -30,6 +30,7 @@
   },
   "output": {
     "name": "output0",
+    "shape": [
     "shape_320": [
       1,
       54,
@@ -43,6 +44,7 @@
     "dtype": "float32",
     "layout": "channel_major [batch, channels, anchors]",
     "channels_description": {
+      "rows_0_3": "Bounding box coordinates [cx, cy, w, h] in 320x320 letterbox pixel space",
       "rows_0_3": "Bounding box coordinates [cx, cy, w, h] in letterbox pixel space",
       "rows_4_5": "Sigmoid class probabilities: row 4 = left_foot, row 5 = right_foot",
       "rows_6_53": "16 Anatomical Keypoints (16 * 3 = 48 channels) in (x_pixel, y_pixel, visibility_score)"
@@ -51,65 +53,86 @@
   "keypoint_mapping_16": [
     {
       "index": 0,
+      "name": "toe_tip",
       "name": "toe_ground",
       "tier": 1,
+      "description": "Anterior tip of distal phalanx of 1st/2nd toe"
       "description": "Inferior contact point under toe box / lateral toe base"
     },
     {
       "index": 1,
+      "name": "toe_ground",
       "name": "heel_back",
       "tier": 1,
+      "description": "Inferior contact point under toe box"
       "description": "Posterior-most prominence of calcaneus (heel back)"
     },
     {
       "index": 2,
+      "name": "heel_back",
       "name": "heel_ground",
       "tier": 1,
+      "description": "Posterior-most prominence of calcaneus"
       "description": "Inferior ground contact point of calcaneus"
     },
     {
       "index": 3,
+      "name": "heel_ground",
       "name": "ball_medial",
       "tier": 1,
+      "description": "Inferior ground contact of calcaneus"
       "description": "1st metatarsal head prominence (medial ball)"
     },
     {
       "index": 4,
+      "name": "ball_medial",
       "name": "ball_lateral",
       "tier": 1,
+      "description": "1st metatarsal head prominence (medial)"
       "description": "5th metatarsal head prominence (lateral ball)"
     },
     {
       "index": 5,
+      "name": "ball_lateral",
+      "tier": 1,
+      "description": "5th metatarsal head prominence (lateral)"
+    },
+    {
+      "index": 6,
       "name": "ball_top",
       "tier": 1,
       "description": "Superior dorsal point over metatarsal heads"
     },
     {
+      "index": 7,
       "index": 6,
       "name": "instep_top",
       "tier": 1,
       "description": "Apex of the dorsal instep arch"
     },
     {
+      "index": 8,
       "index": 7,
       "name": "arch_medial",
       "tier": 2,
       "description": "Medial longitudinal arch apex"
     },
     {
+      "index": 9,
       "index": 8,
       "name": "midfoot_lateral",
       "tier": 2,
       "description": "Lateral midfoot outer boundary"
     },
     {
+      "index": 10,
       "index": 9,
       "name": "malleolus_medial",
       "tier": 1,
       "description": "Center of medial malleolus (inner ankle bone)"
     },
     {
+      "index": 11,
       "index": 10,
       "name": "malleolus_lateral",
       "tier": 1,
@@ -147,18 +170,21 @@
     }
   ],
   "models": {
+    "fp32": {
     "fp32_320": {
       "file": "models/stage-a-320-16kp-fp32.onnx",
       "size_bytes": 13199516,
       "sha256": "c6866cd07dd8517519b6ffa066cef4add95bd420a0b1b18f4baa9b4c9760166a",
       "target_runtime": "ONNX Runtime Web / CPU"
     },
+    "fp16": {
     "fp16_320": {
       "file": "models/stage-a-320-16kp-fp16.onnx",
       "size_bytes": 6647665,
       "sha256": "001cf15e8a1b25d0d8872fc91052b8e226609ac410579b0a954fa3ec9d391475",
       "target_runtime": "ONNX Runtime Web / WebGPU"
     },
+    "int8": {
     "int8_320": {
       "file": "models/stage-a-320-16kp-int8.onnx",
       "size_bytes": 3533664,
@@ -177,6 +203,8 @@
     "description": "NMS is evaluated independently per class (left_foot vs right_foot). Cross-class suppression is strictly forbidden to preserve overlapping and crossing feet."
   },
   "keypoint_order_verification_status": {
+    "status": "DECLARED — NOT YET VISUALLY VERIFIED PER CHANNEL",
+    "explanation": "The 16-KP channel order declared in keypoint_mapping_16 reflects the Roboflow annotation convention used during labeling. The data.yaml does not name individual keypoints. No automated per-channel identity test has been run. Visual verification (overlay decoded keypoints on source frames) is recommended before production sign-off.",
     "status": "VERIFIED AND FROZEN VIA GROUND TRUTH VISUAL AUDIT",
     "audit_date": "2026-09-22",
     "audit_findings": "Keypoint indices 0 to 15 have been visually audited against Roboflow dataset annotations across diverse camera angles and splits. Crucial resolution: Index 11 is the big toe tip (toe_tip) and Index 1 is the heel back (heel_back). All 16 indices are explicitly mapped in keypoint_mapping_16.",

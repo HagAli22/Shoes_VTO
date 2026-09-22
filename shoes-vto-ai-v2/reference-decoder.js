@@ -11,6 +11,10 @@
  */
 
 const KEYPOINT_NAMES_16 = [
+  "toe_tip", "toe_ground", "heel_back", "heel_ground",
+  "ball_medial", "ball_lateral", "ball_top", "instep_top",
+  "arch_medial", "midfoot_lateral", "malleolus_medial", "malleolus_lateral",
+  "ankle_center", "throat", "achilles", "shin_mid"
   "toe_ground",        // Index 0
   "heel_back",         // Index 1
   "heel_ground",       // Index 2
@@ -77,9 +81,9 @@ export function decodeStageA16KP(tensorData, origWidth, origHeight, options = {}
     const w  = tensorData[2 * numAnchors + a];
     const h  = tensorData[3 * numAnchors + a];
 
-    // Sigmoid class scores
-    const scoreLeft = sigmoid(tensorData[4 * numAnchors + a]);
-    const scoreRight = sigmoid(tensorData[5 * numAnchors + a]);
+    // Class scores (already sigmoid probabilities in ONNX graph)
+    const scoreLeft = tensorData[4 * numAnchors + a];
+    const scoreRight = tensorData[5 * numAnchors + a];
 
     const maxScore = Math.max(scoreLeft, scoreRight);
     if (maxScore < confThresh) continue;
@@ -107,7 +111,8 @@ export function decodeStageA16KP(tensorData, origWidth, origHeight, options = {}
 
       const kxOrig = (kxRaw - padX) / scale;
       const kyOrig = (kyRaw - padY) / scale;
-      const conf = sigmoid(kvRaw);
+      const conf = kvRaw;
+
 
       keypoints.push({
         index: k,

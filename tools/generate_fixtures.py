@@ -48,6 +48,10 @@ KPT_THRESH = 0.30
 NMS_THRESH = 0.45
 
 KEYPOINT_NAMES = [
+    "toe_tip", "toe_ground", "heel_back", "heel_ground",
+    "ball_medial", "ball_lateral", "ball_top", "instep_top",
+    "arch_medial", "midfoot_lateral", "malleolus_medial", "malleolus_lateral",
+    "ankle_center", "throat", "achilles", "shin_mid"
     "toe_ground",        # Index 0
     "heel_back",         # Index 1
     "heel_ground",       # Index 2
@@ -93,8 +97,8 @@ def decode_output(output, orig_w, orig_h, scale, pad_x, pad_y):
 
     for i in range(N):
         cx, cy, bw, bh = out[0, i], out[1, i], out[2, i], out[3, i]
-        score_left = float(sigmoid(out[4, i]))
-        score_right = float(sigmoid(out[5, i]))
+        score_left = float(out[4, i])
+        score_right = float(out[5, i])
         max_score = max(score_left, score_right)
 
         if max_score < CONF_THRESH:
@@ -111,7 +115,7 @@ def decode_output(output, orig_w, orig_h, scale, pad_x, pad_y):
         for k in range(16):
             kx = float((out[6 + k*3, i] - pad_x) / scale)
             ky = float((out[7 + k*3, i] - pad_y) / scale)
-            kv = float(sigmoid(out[8 + k*3, i]))
+            kv = float(out[8 + k*3, i])
             keypoints.append({
                 "index": k,
                 "name": KEYPOINT_NAMES[k],
@@ -120,6 +124,7 @@ def decode_output(output, orig_w, orig_h, scale, pad_x, pad_y):
                 "confidence": round(kv, 4),
                 "visible": kv >= KPT_THRESH
             })
+
 
         detections.append({
             "class_id": class_id,
