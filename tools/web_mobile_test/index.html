@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Shoes VTO — Mobile AR Perception</title>
+  <!-- ONNX Runtime Web -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/ort.min.js"></script>
+  <style>
+    :root {
+      --primary: #00f0ff;
+      --green: #00ff75;
+      --orange: #ff9500;
+      --bg: #000;
+      --card: rgba(18, 20, 28, 0.85);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    html, body {
+      width: 100%; height: 100%; height: 100dvh;
+      background: #000; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden; position: fixed;
+    }
+
+    #app {
+      position: relative; width: 100%; height: 100%;
+      display: flex; flex-direction: column; justify-content: space-between;
+      max-width: 500px; margin: 0 auto;
+    }
+
+    /* Fullscreen Camera & Canvas */
+    #viewport {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      z-index: 1; background: #000; overflow: hidden;
+    }
+    video, canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      object-fit: cover;
+    }
+
+    /* Top HUD Panel */
+    #top-hud {
+      position: relative; z-index: 10;
+      margin: 12px 14px 0 14px;
+      padding: 10px 14px;
+      background: var(--card);
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    }
+
+    .hud-title-row {
+      display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
+    }
+    .hud-title {
+      font-size: 14px; font-weight: 700; color: var(--primary);
+    }
+    .hud-chip {
+      font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
+      background: rgba(0, 255, 117, 0.15); color: var(--green); border: 1px solid rgba(0, 255, 117, 0.3);
+    }
+
+    .select-box {
+      width: 100%; padding: 8px 10px; margin-bottom: 6px;
+      background: #141722; color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px; font-size: 12px; font-weight: 600;
+      outline: none; cursor: pointer;
+    }
+
+    .stats-row {
+      display: flex; justify-content: space-between; gap: 6px;
+      padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .stat-item {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      background: rgba(0, 0, 0, 0.25); padding: 3px 4px; border-radius: 6px;
+    }
+    .stat-lbl { font-size: 8px; color: #8e94a5; text-transform: uppercase; font-weight: 700; }
+    .stat-val { font-size: 13px; font-weight: 700; color: #fff; }
+    .val-green { color: var(--green); }
+
+    .indicator-row {
+      display: flex; gap: 6px; margin-top: 6px;
+    }
+    .badge {
+      flex: 1; padding: 5px 6px; border-radius: 6px; font-size: 11px; font-weight: 700;
+      text-align: center; transition: all 0.2s;
+    }
+    .badge-left { background: rgba(0, 255, 117, 0.1); color: #88ffb8; border: 1px solid rgba(0, 255, 117, 0.25); }
+    .badge-right { background: rgba(255, 149, 0, 0.1); color: #ffd188; border: 1px solid rgba(255, 149, 0, 0.25); }
+    .badge-active-l { background: var(--green) !important; color: #000 !important; }
+    .badge-active-r { background: var(--orange) !important; color: #000 !important; }
+
+    /* Bottom Control Bar */
+    #bottom-hud {
+      position: relative; z-index: 10;
+      margin: 0 14px 16px 14px;
+      display: flex; gap: 8px;
+    }
+    .btn {
+      flex: 1; padding: 12px 10px; border-radius: 12px; border: none;
+      background: var(--card); color: #fff; font-size: 13px; font-weight: 600;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      cursor: pointer;
+    }
+    .btn:active { background: rgba(40, 44, 60, 0.9); transform: scale(0.97); }
+
+    /* Floating Mini Toast Status (Non-blocking) */
+    #toast {
+      position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.85); color: #00f0ff; padding: 6px 14px;
+      border-radius: 20px; font-size: 12px; font-weight: 600; z-index: 20;
+      border: 1px solid rgba(0, 240, 255, 0.3); pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- Camera Viewport -->
+    <div id="viewport">
+      <video id="video" playsinline autoplay muted></video>
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <!-- Top HUD -->
+    <div id="top-hud">
+      <div class="hud-title-row">
+        <div class="hud-title">👟 Shoes VTO Live</div>
+        <div class="hud-chip" id="engine-chip">⚡ READY</div>
+      </div>
+
+      <select id="model-select" class="select-box">
+        <option value="/models/stage-a-320-compact-int8.onnx" selected>⚡ Compact v3 (INT8 - 1.46 MB) [Ultra Fast]</option>
+        <option value="/models/stage-a-320-compact-fp16.onnx">⚡ Compact v3 (FP16 - 2.49 MB) [Balanced]</option>
+        <option value="/models/stage-a-320-shuffled-int8.onnx">🎯 Full Model v3 (INT8 - 3.50 MB)</option>
+        <option value="/models/stage-a-320-shuffled-fp16.onnx">🎯 Full Model v3 (FP16 - 6.63 MB) [82.8% Pose]</option>
+      </select>
+
+      <div class="stats-row">
+        <div class="stat-item">
+          <span class="stat-lbl">FPS</span>
+          <span class="stat-val val-green" id="fps-val">--</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-lbl">Latency</span>
+          <span class="stat-val" id="lat-val">-- ms</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-lbl">Feet Visible</span>
+          <span class="stat-val" id="count-val">0</span>
+        </div>
+      </div>
+
+      <div class="indicator-row">
+        <div class="badge badge-left" id="badge-left">Left Foot: None</div>
+        <div class="badge badge-right" id="badge-right">Right Foot: None</div>
+      </div>
+    </div>
+
+    <!-- Toast message -->
+    <div id="toast">📷 Starting Camera...</div>
+
+    <!-- Bottom Controls -->
+    <div id="bottom-hud">
+      <button class="btn" id="btn-flip">🔄 Flip Camera</button>
+      <button class="btn" id="btn-skel">🦴 Skeleton ON</button>
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const fpsVal = document.getElementById('fps-val');
+    const latVal = document.getElementById('lat-val');
+    const countVal = document.getElementById('count-val');
+    const badgeLeft = document.getElementById('badge-left');
+    const badgeRight = document.getElementById('badge-right');
+    const modelSelect = document.getElementById('model-select');
+    const btnFlip = document.getElementById('btn-flip');
+    const btnSkel = document.getElementById('btn-skel');
+    const toast = document.getElementById('toast');
+    const engineChip = document.getElementById('engine-chip');
+
+    let session = null;
+    let facingMode = "environment";
+    let isInferring = false;
+    let showSkeleton = true;
+
+    function showToast(msg, duration = 2500) {
+      toast.innerText = msg;
+      toast.style.opacity = '1';
+      if (duration > 0) {
+        setTimeout(() => { toast.style.opacity = '0'; }, duration);
+      }
+    }
+
+    // Direct Camera Activation
+    async function startCameraDirect() {
+      try {
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(t => t.stop());
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+        resize();
+        showToast("📷 Camera Active! Loading Model...", 1500);
+        return true;
+      } catch (err) {
+        showToast("⚠️ Camera Error: " + err.message, 5000);
+        return false;
+      }
+    }
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+
+    // Static Reusable Canvas & Buffer (Zero GC)
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = 320;
+    offCanvas.height = 320;
+    const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+    const floatBuffer = new Float32Array(3 * 320 * 320);
+
+    let frameCount = 0;
+    let lastFpsTime = performance.now();
+
+    async function loadModel(url) {
+      const modelName = url.split('/').pop();
+      engineChip.innerText = "⏳ LOADING...";
+      engineChip.style.color = "#ffaa00";
+
+      try {
+        if (session) {
+          try { await session.release(); } catch(e){}
+        }
+
+        ort.env.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 2, 4);
+        ort.env.wasm.simd = true;
+
+        session = await ort.InferenceSession.create(url, {
+          executionProviders: ['wasm'],
+          graphOptimizationLevel: 'all'
+        });
+
+        engineChip.innerText = "⚡ RUNNING";
+        engineChip.style.color = "#00ff75";
+        showToast(`✅ Model Ready: ${modelName}`, 2000);
+      } catch (err) {
+        engineChip.innerText = "❌ ERROR";
+        engineChip.style.color = "#ff3b30";
+        showToast("Model Load Failed: " + err.message, 5000);
+      }
+    }
+
+    function preprocess() {
+      const vw = video.videoWidth, vh = video.videoHeight;
+      if (!vw || !vh) return null;
+
+      offCtx.fillStyle = '#727272';
+      offCtx.fillRect(0, 0, 320, 320);
+
+      const r = Math.min(320 / vw, 320 / vh);
+      const nw = Math.round(vw * r), nh = Math.round(vh * r);
+      const dx = (320 - nw) / 2, dy = (320 - nh) / 2;
+
+      offCtx.drawImage(video, dx, dy, nw, nh);
+      const imgData = offCtx.getImageData(0, 0, 320, 320).data;
+
+      const plane = 320 * 320;
+      const p2 = plane * 2;
+      let pIdx = 0;
+
+      for (let i = 0; i < plane; i++) {
+        floatBuffer[i]         = imgData[pIdx]     * 0.00392156862;
+        floatBuffer[plane + i] = imgData[pIdx + 1] * 0.00392156862;
+        floatBuffer[p2 + i]    = imgData[pIdx + 2] * 0.00392156862;
+        pIdx += 4;
+      }
+
+      return {
+        tensor: new ort.Tensor('float32', floatBuffer, [1, 3, 320, 320]),
+        r, dx, dy, vw, vh
+      };
+    }
+
+    async function loop() {
+      if (!session || isInferring || video.readyState < 2) {
+        requestAnimationFrame(loop);
+        return;
+      }
+
+      isInferring = true;
+      const t0 = performance.now();
+      const pre = preprocess();
+
+      if (pre) {
+        try {
+          const inputName = session.inputNames[0];
+          const results = await session.run({ [inputName]: pre.tensor });
+          const raw = results[session.outputNames[0]].data;
+          const dt = performance.now() - t0;
+
+          frameCount++;
+          const now = performance.now();
+          if (now - lastFpsTime >= 1000) {
+            fpsVal.innerText = Math.round((frameCount * 1000) / (now - lastFpsTime));
+            latVal.innerText = `${dt.toFixed(0)} ms`;
+            frameCount = 0;
+            lastFpsTime = now;
+          }
+
+          drawDetections(raw, pre);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      isInferring = false;
+      requestAnimationFrame(loop);
+    }
+
+    function drawDetections(raw, pre) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const numAnchors = 2100;
+      const { r, dx, dy, vw, vh } = pre;
+
+      const sx = canvas.width / vw;
+      const sy = canvas.height / vh;
+      const scale = Math.max(sx, sy);
+      const offX = (canvas.width - vw * scale) / 2;
+      const offY = (canvas.height - vh * scale) / 2;
+
+      let leftBest = null, rightBest = null;
+      const thresh = 0.30;
+
+      for (let i = 0; i < numAnchors; i++) {
+        const sL = raw[4 * numAnchors + i];
+        const sR = raw[5 * numAnchors + i];
+
+        if (sL > thresh && (!leftBest || sL > leftBest.score)) {
+          leftBest = extractBox(raw, i, numAnchors, 'Left Foot', sL, r, dx, dy, scale, offX, offY);
+        }
+        if (sR > thresh && (!rightBest || sR > rightBest.score)) {
+          rightBest = extractBox(raw, i, numAnchors, 'Right Foot', sR, r, dx, dy, scale, offX, offY);
+        }
+      }
+
+      const activeList = [leftBest, rightBest].filter(Boolean);
+      countVal.innerText = activeList.length;
+
+      badgeLeft.innerText = leftBest ? `Left: ${(leftBest.score * 100).toFixed(0)}%` : "Left: None";
+      badgeLeft.className = leftBest ? "badge badge-left badge-active-l" : "badge badge-left";
+
+      badgeRight.innerText = rightBest ? `Right: ${(rightBest.score * 100).toFixed(0)}%` : "Right: None";
+      badgeRight.className = rightBest ? "badge badge-right badge-active-r" : "badge badge-right";
+
+      activeList.forEach(d => renderBox(d));
+    }
+
+    function extractBox(raw, idx, N, label, score, r, dx, dy, scale, offX, offY) {
+      const cx = raw[0 * N + idx], cy = raw[1 * N + idx];
+      const w  = raw[2 * N + idx], h  = raw[3 * N + idx];
+
+      const x1 = ((cx - w / 2 - dx) / r) * scale + offX;
+      const y1 = ((cy - h / 2 - dy) / r) * scale + offY;
+      const x2 = ((cx + w / 2 - dx) / r) * scale + offX;
+      const y2 = ((cy + h / 2 - dy) / r) * scale + offY;
+
+      const kpts = [];
+      for (let k = 0; k < 4; k++) {
+        const kx = ((raw[(6 + k * 3) * N + idx] - dx) / r) * scale + offX;
+        const ky = ((raw[(7 + k * 3) * N + idx] - dy) / r) * scale + offY;
+        const kv = raw[(8 + k * 3) * N + idx];
+        kpts.push({ x: kx, y: ky, v: kv });
+      }
+      return { label, score, x1, y1, x2, y2, kpts, isLeft: label.includes('Left') };
+    }
+
+    function renderBox(d) {
+      const color = d.isLeft ? '#00ff75' : '#ff9500';
+      const bw = d.x2 - d.x1;
+      const bh = d.y2 - d.y1;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(d.x1, d.y1, bw, bh);
+
+      // Corner Brackets
+      const cLen = Math.min(20, bw / 4, bh / 4);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(d.x1, d.y1 + cLen); ctx.lineTo(d.x1, d.y1); ctx.lineTo(d.x1 + cLen, d.y1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(d.x2 - cLen, d.y1); ctx.lineTo(d.x2, d.y1); ctx.lineTo(d.x2, d.y1 + cLen); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(d.x1, d.y2 - cLen); ctx.lineTo(d.x1, d.y2); ctx.lineTo(d.x1 + cLen, d.y2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(d.x2 - cLen, d.y2); ctx.lineTo(d.x2, d.y2); ctx.lineTo(d.x2, d.y2 - cLen); ctx.stroke();
+
+      // Tag
+      ctx.fillStyle = color;
+      ctx.fillRect(d.x1, Math.max(0, d.y1 - 22), 110, 22);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText(`${d.label} ${(d.score * 100).toFixed(0)}%`, d.x1 + 6, Math.max(15, d.y1 - 6));
+
+      // Skeleton
+      if (showSkeleton && d.kpts) {
+        const k = d.kpts;
+        const pairs = [[0, 2], [2, 1], [1, 3], [3, 0], [2, 3]];
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.lineWidth = 2;
+
+        pairs.forEach(([p1, p2]) => {
+          if (k[p1].v > 0.2 && k[p2].v > 0.2) {
+            ctx.beginPath();
+            ctx.moveTo(k[p1].x, k[p1].y);
+            ctx.lineTo(k[p2].x, k[p2].y);
+            ctx.stroke();
+          }
+        });
+
+        const kpCols = ['#ff2a55', '#00b4d8', '#ffd166', '#f72585'];
+        k.forEach((pt, i) => {
+          if (pt.v > 0.2) {
+            ctx.fillStyle = kpCols[i];
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 5, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+        });
+      }
+    }
+
+    btnFlip.addEventListener('click', async () => {
+      facingMode = facingMode === "environment" ? "user" : "environment";
+      await startCameraDirect();
+    });
+
+    btnSkel.addEventListener('click', () => {
+      showSkeleton = !showSkeleton;
+      btnSkel.innerText = showSkeleton ? "🦴 Skeleton ON" : "🦴 Skeleton OFF";
+    });
+
+    modelSelect.addEventListener('change', async (e) => {
+      await loadModel(e.target.value);
+    });
+
+    // Instant Start
+    async function startDirect() {
+      // 1. Start camera immediately
+      startCameraDirect();
+      // 2. Load model concurrently
+      await loadModel(modelSelect.value);
+      // 3. Start inference loop
+      loop();
+    }
+    startDirect();
+  </script>
+</body>
+</html>
