@@ -99,6 +99,59 @@
         "size_bytes": 3520887,
         "size_mb": 3.52
       }
+    },
+    "compact_models": {
+      "stage-a-320-compact-fp32.onnx": {
+        "description": "Compact width-scaled (0.16) YOLOv8 detector for mobile memory budget (FP32)",
+        "input_shape": [
+          1,
+          3,
+          320,
+          320
+        ],
+        "output_shape": [
+          1,
+          18,
+          2100
+        ],
+        "sha256": "69132b815ee2d5aace9f0e7d328b340faac92a494d017862f6aed22deb4a14c9",
+        "size_mb": 4.93,
+        "budget_compliant": true
+      },
+      "stage-a-320-compact-fp16.onnx": {
+        "description": "Compact width-scaled (0.16) YOLOv8 detector for mobile WebGPU (FP16)",
+        "input_shape": [
+          1,
+          3,
+          320,
+          320
+        ],
+        "output_shape": [
+          1,
+          18,
+          2100
+        ],
+        "sha256": "e7dac77940c8f70fae6efbcc046a66dd31eb0eee1123a113a41463bc6583e79a",
+        "size_mb": 2.49,
+        "budget_compliant": true
+      },
+      "stage-a-320-compact-int8.onnx": {
+        "description": "Compact width-scaled (0.16) YOLOv8 detector for Safari WASM (INT8)",
+        "input_shape": [
+          1,
+          3,
+          320,
+          320
+        ],
+        "output_shape": [
+          1,
+          18,
+          2100
+        ],
+        "sha256": "94a2afa76f212c3832d6d483717f82c86e6c72844a34dba1c68b550256de7428",
+        "size_mb": 1.46,
+        "budget_compliant": true
+      }
     }
   },
   "stage_b": {
