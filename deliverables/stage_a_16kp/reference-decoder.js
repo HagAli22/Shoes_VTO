@@ -11,11 +11,24 @@
  */
 
 const KEYPOINT_NAMES_16 = [
-  "toe_tip", "toe_ground", "heel_back", "heel_ground",
-  "ball_medial", "ball_lateral", "ball_top", "instep_top",
-  "arch_medial", "midfoot_lateral", "malleolus_medial", "malleolus_lateral",
-  "ankle_center", "throat", "achilles", "shin_mid"
+  "toe_ground",        // Index 0
+  "heel_back",         // Index 1
+  "heel_ground",       // Index 2
+  "ball_medial",       // Index 3
+  "ball_lateral",      // Index 4
+  "ball_top",          // Index 5
+  "instep_top",        // Index 6
+  "arch_medial",       // Index 7
+  "midfoot_lateral",   // Index 8
+  "malleolus_medial",  // Index 9
+  "malleolus_lateral", // Index 10
+  "toe_tip",           // Index 11
+  "ankle_center",      // Index 12
+  "throat",            // Index 13
+  "achilles",          // Index 14
+  "shin_mid"           // Index 15
 ];
+
 
 function sigmoid(x) {
   return 1 / (1 + Math.exp(-x));
