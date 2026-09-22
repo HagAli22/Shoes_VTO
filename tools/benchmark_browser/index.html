@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shoes VTO — Stage A ONNX Browser Benchmark</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e2e8f0; padding: 20px; }
+    h1 { font-size: 1.4rem; color: #63b3ed; margin-bottom: 4px; }
+    .subtitle { color: #718096; font-size: 0.85rem; margin-bottom: 20px; }
+    .card { background: #1a202c; border: 1px solid #2d3748; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .card h2 { font-size: 1rem; color: #90cdf4; margin-bottom: 12px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+    label { font-size: 0.8rem; color: #a0aec0; min-width: 90px; }
+    select, input[type=number] { background: #2d3748; color: #e2e8f0; border: 1px solid #4a5568; border-radius: 4px; padding: 6px 10px; font-size: 0.85rem; width: 220px; }
+    button { background: #3182ce; color: #fff; border: none; border-radius: 5px; padding: 10px 22px; cursor: pointer; font-size: 0.9rem; font-weight: 600; }
+    button:disabled { background: #4a5568; cursor: not-allowed; }
+    button.danger { background: #c53030; }
+    .status { font-size: 0.85rem; padding: 8px 12px; border-radius: 4px; margin-top: 8px; }
+    .status.info  { background: #2a4365; color: #90cdf4; }
+    .status.warn  { background: #744210; color: #fbd38d; }
+    .status.ok    { background: #1c4532; color: #9ae6b4; }
+    .status.error { background: #742a2a; color: #feb2b2; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th { background: #2d3748; color: #90cdf4; padding: 8px 10px; text-align: left; font-weight: 600; }
+    td { padding: 7px 10px; border-bottom: 1px solid #2d3748; }
+    tr:last-child td { border-bottom: none; }
+    td.good  { color: #68d391; font-weight: 700; }
+    td.warn  { color: #f6ad55; font-weight: 700; }
+    td.bad   { color: #fc8181; font-weight: 700; }
+    .progress { height: 4px; background: #2d3748; border-radius: 2px; margin-top: 8px; overflow: hidden; }
+    .progress-bar { height: 100%; background: #3182ce; border-radius: 2px; transition: width 0.2s; }
+    #log { background: #0d1117; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.78rem; color: #a0aec0; max-height: 200px; overflow-y: auto; margin-top: 8px; }
+    .copy-btn { background: #285e61; font-size: 0.75rem; padding: 5px 12px; margin-left: 8px; }
+    #markdown-output { background: #0d1117; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.75rem; color: #a0aec0; max-height: 250px; overflow-y: auto; white-space: pre; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<h1>👟 Shoes VTO — Stage A ONNX Browser Benchmark</h1>
+<p class="subtitle">Measures real WebGPU & WASM inference latency directly in this browser tab.</p>
+
+<div class="card">
+  <h2>⚙️ Configuration</h2>
+  <div class="row">
+    <label>Model (FP32):</label>
+    <input type="text" id="fp32-path" value="../../deliverables/stage_a_16kp/models/stage-a-320-16kp-fp32.onnx" style="width:420px" />
+  </div>
+  <div class="row">
+    <label>Model (FP16):</label>
+    <input type="text" id="fp16-path" value="../../deliverables/stage_a_16kp/models/stage-a-320-16kp-fp16.onnx" style="width:420px" />
+  </div>
+  <div class="row">
+    <label>Model (INT8):</label>
+    <input type="text" id="int8-path" value="../../deliverables/stage_a_16kp/models/stage-a-320-16kp-int8.onnx" style="width:420px" />
+  </div>
+  <div class="row">
+    <label>Warm Runs:</label>
+    <input type="number" id="warm-runs" value="50" min="10" max="500" style="width:100px" />
+    <label>Warmup Runs:</label>
+    <input type="number" id="warmup-runs" value="10" min="5" max="50" style="width:100px" />
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button id="run-btn" onclick="runBenchmark()">▶ Run Full Benchmark</button>
+    <button class="danger" onclick="stopBenchmark()" style="margin-left:8px">⏹ Stop</button>
+  </div>
+  <div id="status" class="status info">Ready. Click "Run Full Benchmark" to start.</div>
+  <div class="progress"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
+</div>
+
+<div class="card">
+  <h2>📊 Results</h2>
+  <div id="results-container">
+    <p style="color:#718096;font-size:0.85rem">No benchmark run yet.</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>📋 Markdown Report <button class="copy-btn" onclick="copyMarkdown()">📋 Copy</button></h2>
+  <div id="markdown-output"># Waiting for benchmark results...</div>
+</div>
+
+<div class="card">
+  <h2>🪵 Log</h2>
+  <div id="log">&gt; Ready.</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<script>
+let stopped = false;
+const results = [];
+
+function log(msg, color = '#a0aec0') {
+  const el = document.getElementById('log');
+  const line = document.createElement('div');
+  line.style.color = color;
+  line.textContent = `> ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+  console.log(msg);
+}
+
+function setStatus(msg, type = 'info') {
+  const el = document.getElementById('status');
+  el.className = `status ${type}`;
+  el.textContent = msg;
+}
+
+function setProgress(pct) {
+  document.getElementById('progress-bar').style.width = `${pct}%`;
+}
+
+function stopBenchmark() {
+  stopped = true;
+  setStatus('Stopped by user.', 'warn');
+}
+
+function percentile(arr, p) {
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, idx)];
+}
+
+function colorLatency(ms, thresholdOk = 12, thresholdWarn = 20) {
+  if (ms <= thresholdOk) return 'good';
+  if (ms <= thresholdWarn) return 'warn';
+  return 'bad';
+}
+
+function colorFPS(fps) {
+  if (fps >= 60) return 'good';
+  if (fps >= 30) return 'warn';
+  return 'bad';
+}
+
+async function benchmarkOne(label, modelPath, provider, inputDtype, warmupRuns, warmRuns) {
+  log(`Loading [${label}] via ${provider}...`, '#90cdf4');
+  
+  const sessionOptions = { executionProviders: [provider] };
+
+  // Cold start: measure load time
+  const t_load_start = performance.now();
+  let session;
+  try {
+    session = await ort.InferenceSession.create(modelPath, sessionOptions);
+  } catch (e) {
+    log(`  [ERROR] ${e.message}`, '#fc8181');
+    return null;
+  }
+  const t_load_end = performance.now();
+  const coldLoad = t_load_end - t_load_start;
+
+  const inputName = session.inputNames[0];
+  const data = new (inputDtype === 'float16' ? Float16Array : Float32Array)(1 * 3 * 320 * 320);
+  if (inputDtype === 'float16') {
+    const float16Tensor = new ort.Tensor('float16', data, [1, 3, 320, 320]);
+    var feeds = { [inputName]: float16Tensor };
+  } else {
+    const float32Tensor = new ort.Tensor('float32', data, [1, 3, 320, 320]);
+    var feeds = { [inputName]: float32Tensor };
+  }
+
+  // Cold inference
+  const t_cold0 = performance.now();
+  await session.run(feeds);
+  const coldInfer = performance.now() - t_cold0;
+
+  // Warmup
+  log(`  Warming up (${warmupRuns} runs)...`, '#718096');
+  for (let i = 0; i < warmupRuns; i++) {
+    if (stopped) return null;
+    await session.run(feeds);
+  }
+
+  // Warm benchmark
+  log(`  Benchmarking (${warmRuns} runs)...`, '#718096');
+  const timings = [];
+  for (let i = 0; i < warmRuns; i++) {
+    if (stopped) return null;
+    const t0 = performance.now();
+    await session.run(feeds);
+    timings.push(performance.now() - t0);
+    setProgress(((i + 1) / warmRuns) * 100);
+  }
+
+  const p50 = percentile(timings, 50);
+  const p95 = percentile(timings, 95);
+  const mean = timings.reduce((a, b) => a + b, 0) / timings.length;
+  const fps = 1000 / p50;
+
+  const result = {
+    label, modelPath, provider, inputDtype,
+    coldLoad: coldLoad.toFixed(1),
+    coldInfer: coldInfer.toFixed(1),
+    p50: p50.toFixed(2),
+    p95: p95.toFixed(2),
+    mean: mean.toFixed(2),
+    min: Math.min(...timings).toFixed(2),
+    max: Math.max(...timings).toFixed(2),
+    fps: fps.toFixed(1),
+    outputShape: Object.values(session.outputNames)
+  };
+
+  log(`  ✓ p50=${p50.toFixed(1)}ms | p95=${p95.toFixed(1)}ms | FPS=${fps.toFixed(0)}`, '#9ae6b4');
+  return result;
+}
+
+async function runBenchmark() {
+  stopped = false;
+  results.length = 0;
+
+  const fp32Path = document.getElementById('fp32-path').value;
+  const fp16Path = document.getElementById('fp16-path').value;
+  const int8Path = document.getElementById('int8-path').value;
+  const warmRuns = parseInt(document.getElementById('warm-runs').value);
+  const warmupRuns = parseInt(document.getElementById('warmup-runs').value);
+
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('results-container').innerHTML = '<p style="color:#718096;font-size:0.85rem">Running...</p>';
+
+  // Device info
+  const ua = navigator.userAgent;
+  const deviceInfo = `${navigator.platform} | ${ua.includes('Mobile') ? 'Mobile' : 'Desktop'} | ${ua.slice(0, 60)}`;
+  log(`Device: ${deviceInfo}`, '#90cdf4');
+  log(`ONNX Runtime Web version: ${ort.version || 'unknown'}`, '#90cdf4');
+
+  const benchmarks = [
+    { label: 'FP32 (WebGPU)',     path: fp32Path, provider: 'webgpu',  dtype: 'float32' },
+    { label: 'FP32 (WASM)',       path: fp32Path, provider: 'wasm',    dtype: 'float32' },
+    { label: 'FP16 (WebGPU)',     path: fp16Path, provider: 'webgpu',  dtype: 'float16' },
+    { label: 'INT8 (WASM)',       path: int8Path, provider: 'wasm',    dtype: 'float32' },
+  ];
+
+  const totalSteps = benchmarks.length;
+  for (let i = 0; i < benchmarks.length; i++) {
+    if (stopped) break;
+    const b = benchmarks[i];
+    setStatus(`[${i+1}/${totalSteps}] Benchmarking ${b.label}...`, 'info');
+    setProgress(0);
+    const r = await benchmarkOne(b.label, b.path, b.provider, b.dtype, warmupRuns, warmRuns);
+    if (r) results.push(r);
+  }
+
+  renderResults(results, deviceInfo);
+  document.getElementById('run-btn').disabled = false;
+  setStatus(stopped ? 'Stopped.' : `✅ Done! ${results.length} models benchmarked.`, stopped ? 'warn' : 'ok');
+  setProgress(100);
+}
+
+function renderResults(results, deviceInfo) {
+  const now = new Date().toISOString();
+  const browser = navigator.userAgent;
+
+  let html = `<table>
+    <tr>
+      <th>Model / Provider</th>
+      <th>Cold Load</th>
+      <th>Cold Infer</th>
+      <th>Warm p50</th>
+      <th>Warm p95</th>
+      <th>Min</th>
+      <th>Max</th>
+      <th>FPS (p50)</th>
+      <th>≤12ms?</th>
+    </tr>`;
+
+  const mdRows = [];
+  for (const r of results) {
+    const pClass = colorLatency(parseFloat(r.p50));
+    const fClass = colorFPS(parseFloat(r.fps));
+    const ok12 = parseFloat(r.p50) <= 12 ? '✅' : '❌';
+
+    html += `<tr>
+      <td><strong>${r.label}</strong></td>
+      <td>${r.coldLoad} ms</td>
+      <td>${r.coldInfer} ms</td>
+      <td class="${pClass}">${r.p50} ms</td>
+      <td>${r.p95} ms</td>
+      <td>${r.min} ms</td>
+      <td>${r.max} ms</td>
+      <td class="${fClass}">${r.fps} FPS</td>
+      <td>${ok12}</td>
+    </tr>`;
+
+    mdRows.push(`| **${r.label}** | ${r.coldLoad} ms | ${r.coldInfer} ms | **${r.p50} ms** | ${r.p95} ms | **${r.fps} FPS** | ${ok12} |`);
+  }
+
+  html += `</table>
+    <p style="color:#718096;font-size:0.75rem;margin-top:10px">
+      Measured: ${now} | Browser: ${browser.slice(0, 80)}...
+    </p>`;
+
+  document.getElementById('results-container').innerHTML = html;
+
+  const md = `# Stage A Browser & Mobile Performance Report
+
+> **Measurement Method:** ONNX Runtime Web v${ort.version || '1.20'} — real browser inference.
+> **Date:** ${now.slice(0, 10)}
+> **Browser / UA:** ${browser.slice(0, 120)}
+> **Device Info:** ${deviceInfo}
+> **Warm Iterations:** ${document.getElementById('warm-runs').value} per model after ${document.getElementById('warmup-runs').value} warmup runs.
+
+---
+
+## Browser WebGPU / WASM Benchmark
+
+| Model / Provider | Cold Load | Cold Infer | Warm p50 | Warm p95 | FPS (p50) | ≤12 ms? |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+${mdRows.join('\n')}
+
+---
+
+## Stage A Latency Requirements
+
+| Requirement | Target | Measured p50 | Status |
+| :--- | :--- | :--- | :--- |
+| Stage A acquisition / recovery | ≤ 12 ms | See table above | See table |
+`;
+
+  document.getElementById('markdown-output').textContent = md;
+}
+
+function copyMarkdown() {
+  const text = document.getElementById('markdown-output').textContent;
+  navigator.clipboard.writeText(text).then(() => alert('Copied to clipboard!'));
+}
+</script>
+</body>
+</html>
+
