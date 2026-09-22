@@ -26,8 +26,10 @@ from torch.utils.data import Dataset, DataLoader
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
-# The 4 coarse keypoints indices in the 16-keypoint annotation order
-COARSE_KP_INDICES = [0, 2, 4, 5]
+# The 4 coarse keypoints indices in the verified Roboflow 16-keypoint order:
+# [toe_tip=11, heel_back=1, ball_medial=3, ball_lateral=4]
+COARSE_KP_INDICES = [11, 1, 3, 4]
+
 
 
 def generate_blaze_anchors(img_size: int = 320, num_anchors_per_scale: int = 2) -> torch.Tensor:
