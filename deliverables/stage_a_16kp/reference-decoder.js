@@ -136,6 +136,8 @@ export function decodeStageA16KP(tensorData, origWidth, origHeight, options = {}
     const vLatY = ballLat.y - heel.y;
     const crossLat = vAxisX * vLatY - vAxisY * vLatX;
 
+    // In screen coords (Y down): Right foot cross < 0, Left foot cross > 0
+    const resolvedClassId = crossLat < 0 ? 1 : 0;
     // In screen coords: Right foot cross > 0 (1), Left foot cross < 0 (0)
     const resolvedClassId = crossLat < 0 ? 0 : 1;
     const resolvedClassName = resolvedClassId === 0 ? "left_foot" : "right_foot";

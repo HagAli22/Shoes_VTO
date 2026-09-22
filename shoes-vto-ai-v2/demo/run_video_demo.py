@@ -4,16 +4,17 @@ run_video_demo.py
 ─────────────────
 Production Video Inference & Advanced Post-Processing for Shoes VTO Stage A (16-KP ONNX).
 
-Post-Processing Capabilities:
-  1. Anatomical Geometric Chirality (Deterministically resolves Left vs Right foot using keypoint vectors)
-  2. Physical Foot Duplicate Resolver (Cross-Class IoU > 0.60 suppression on the same foot)
-  3. One-Euro / Exponential Moving Average (EMA) Keypoint & Bbox Temporal Smoothing
-  4. Track ID Association & Class Consistency (Anti-Flicker)
-  5. Anatomical Skeleton Rendering & Telemetry HUD
+Key Features & Post-Processing:
+  1. Anatomical Geometric Chirality (Deterministically resolves Left vs Right foot using 2D cross-product).
+  2. Occluded Keypoint Rendering: Solid dots for visible points; tiny elegant hollow rings for occluded points.
+  3. Physical Foot Duplicate Resolver: Suppresses phantom duplicate boxes (IoU > 0.60) on the same physical foot.
+  4. One-Euro / EMA Temporal Smoothing: Eliminates micro-jitter with zero movement lag.
+  5. Track ID Association & Class Consistency.
 
 Usage:
     python demo/run_video_demo.py
-    python demo/run_video_demo.py --video test_video.mp4 --smooth --output demo_smooth.mp4
+    python demo/run_video_demo.py --video test_video.mp4 --output demo_annotated.mp4
+    python demo/run_video_demo.py --show-indices --output demo_indices.mp4
 """
 
 import os
@@ -24,7 +25,7 @@ import numpy as np
 import cv2
 import onnxruntime as ort
 
-# ── 16-Keypoint Anatomical Mapping ─────────────────────────────────────────────
+# ── 16-Keypoint Anatomical Mapping (Verified & Frozen) ─────────────────────────
 KEYPOINT_NAMES = [
     "toe_ground",        # Index 0
     "heel_back",         # Index 1
@@ -44,6 +45,7 @@ KEYPOINT_NAMES = [
     "shin_mid"           # Index 15
 ]
 
+# Anatomical skeleton connections: pairs of (kp_idx_1, kp_idx_2)
 SKELETON_PAIRS = [
     # Sole / Foot contour
     (2, 1),   # heel_ground -> heel_back
@@ -70,13 +72,15 @@ SKELETON_PAIRS = [
 COLOR_LEFT = {
     "bbox": (255, 191, 0),      # Deep Sky Blue / Cyan (BGR)
     "skeleton": (255, 140, 0),
-    "kpt": (0, 255, 255),       # Yellow
+    "kpt_vis": (0, 255, 255),   # Solid Yellow
+    "kpt_occ": (0, 200, 200),   # Dim Yellow ring
     "name": "Left Foot"
 }
 COLOR_RIGHT = {
     "bbox": (180, 105, 255),    # Hot Pink / Magenta (BGR)
     "skeleton": (147, 20, 255),
-    "kpt": (0, 255, 128),       # Bright Green
+    "kpt_vis": (0, 255, 128),   # Solid Bright Green
+    "kpt_occ": (0, 180, 90),    # Dim Green ring
     "name": "Right Foot"
 }
 
@@ -89,25 +93,24 @@ def determine_geometric_chirality(keypoints):
     Returns:
         0 for 'left_foot', 1 for 'right_foot'
     """
-    # Keypoint indices: toe_tip = 11, heel_back = 1, ball_lateral = 4, ball_medial = 3
-    toe = keypoints[11]
-    heel = keypoints[1]
-    ball_lat = keypoints[4]
+    toe = keypoints[11]      # toe_tip (Index 11)
+    heel = keypoints[1]      # heel_back (Index 1)
+    ball_lat = keypoints[4]  # ball_lateral (Index 4)
     
-    # Vector: heel -> toe
+    # Longitudinal axis: heel -> toe
     v_axis_x = toe["x"] - heel["x"]
     v_axis_y = toe["y"] - heel["y"]
     
-    # Vector: heel -> ball_lateral
+    # Lateral vector: heel -> ball_lateral
     v_lat_x = ball_lat["x"] - heel["x"]
     v_lat_y = ball_lat["y"] - heel["y"]
     
     # 2D cross product: v_axis × v_lat
     cross_lat = v_axis_x * v_lat_y - v_axis_y * v_lat_x
     
-    # In user top-down perspective:
-    # Right Foot: cross_lat > 0 -> returns 1
-    # Left Foot:  cross_lat < 0 -> returns 0
+    # In top-down view (user perspective):
+    # Right Foot: cross_lat >= 0 (1)
+    # Left Foot:  cross_lat < 0 (0)
     return 0 if cross_lat < 0 else 1
 
 
@@ -262,13 +265,13 @@ def letterbox(img, size=320):
     return canvas, scale, pad_x, pad_y
 
 
-def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0.28, nms_thresh=0.45, kpt_thresh=0.30, dedup_iou=0.60, use_geometric_chirality=True):
+def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0.28, nms_thresh=0.45, kpt_thresh=0.35, dedup_iou=0.60, use_geometric_chirality=True):
     """
     Decodes the raw [1, 54, 2100] output tensor:
       1. Candidate thresholding.
       2. Per-Class Independent NMS.
       3. Physical Foot De-duplication (Cross-Class IoU > dedup_iou resolver).
-      4. Anatomical Geometric Chirality Disambiguation (Resolves Left vs Right with 100% certainty).
+      4. Anatomical Geometric Chirality Disambiguation.
     """
     out = raw_output[0] if isinstance(raw_output, list) else raw_output
     if out.ndim == 3:
@@ -299,16 +302,22 @@ def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0
             ky = ((out[7 + k * 3, i] - pad_y) / scale)
             kv = float(out[8 + k * 3, i])
 
+            # Classify keypoint state:
+            # visible (kv >= kpt_thresh) vs occluded/inferred (0.12 <= kv < kpt_thresh)
+            is_visible = kv >= kpt_thresh
+            is_occluded = (kv >= 0.12 and kv < kpt_thresh)
+
             keypoints.append({
                 "index": k,
                 "name": KEYPOINT_NAMES[k],
                 "x": float(kx),
                 "y": float(ky),
                 "conf": kv,
-                "visible": kv >= kpt_thresh
+                "visible": is_visible,
+                "occluded": is_occluded
             })
 
-        # Apply Geometric Chirality Disambiguation if enabled
+        # Apply Geometric Chirality Disambiguation
         if use_geometric_chirality:
             class_id = determine_geometric_chirality(keypoints)
 
@@ -383,32 +392,44 @@ def draw_visuals(frame, detections, fps=0.0, lat_ms=0.0, show_labels=False, show
         cv2.rectangle(frame, (x1, max(0, y1 - txt_h - 10)), (x1 + txt_w + 12, y1), color_bgr, -1)
         cv2.putText(frame, label_text, (x1 + 6, max(txt_h + 2, y1 - 4)), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
 
-        # Skeleton connections
+        # Draw Skeleton connections
         for p1_idx, p2_idx in SKELETON_PAIRS:
             kp1 = kpts[p1_idx]
             kp2 = kpts[p2_idx]
-            if kp1["visible"] and kp2["visible"]:
+            pt1_active = kp1["visible"] or kp1["occluded"]
+            pt2_active = kp2["visible"] or kp2["occluded"]
+
+            if pt1_active and pt2_active:
                 pt1 = (int(round(kp1["x"])), int(round(kp1["y"])))
                 pt2 = (int(round(kp2["x"])), int(round(kp2["y"])))
-                cv2.line(frame, pt1, pt2, skel_color, 2, cv2.LINE_AA)
+                
+                # If both are visible: solid strong line
+                # If at least one is occluded: subtle thin line
+                line_th = 2 if (kp1["visible"] and kp2["visible"]) else 1
+                cv2.line(frame, pt1, pt2, skel_color, line_th, cv2.LINE_AA)
 
-        # Keypoints
+        # Draw Keypoints
         for kp in kpts:
-            if not kp["visible"]:
-                continue
             kx, ky = int(round(kp["x"])), int(round(kp["y"]))
             if kx < 0 or kx >= w or ky < 0 or ky >= h:
                 continue
 
-            cv2.circle(frame, (kx, ky), 5, (0, 0, 0), -1, cv2.LINE_AA)
-            cv2.circle(frame, (kx, ky), 4, scheme["kpt"], -1, cv2.LINE_AA)
+            if kp["visible"]:
+                # Solid dot for visible keypoints
+                cv2.circle(frame, (kx, ky), 5, (0, 0, 0), -1, cv2.LINE_AA)
+                cv2.circle(frame, (kx, ky), 4, scheme["kpt_vis"], -1, cv2.LINE_AA)
 
-            if show_indices:
-                tag = str(kp["index"])
-                cv2.putText(frame, tag, (kx + 5, ky - 3), cv2.FONT_HERSHEY_PLAIN, 0.9, (255, 255, 255), 1, cv2.LINE_AA)
-            elif show_labels:
-                tag = f"{kp['index']}:{kp['name']}"
-                cv2.putText(frame, tag, (kx + 6, ky - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1, cv2.LINE_AA)
+                if show_indices:
+                    tag = str(kp["index"])
+                    cv2.putText(frame, tag, (kx + 5, ky - 3), cv2.FONT_HERSHEY_PLAIN, 0.9, (255, 255, 255), 1, cv2.LINE_AA)
+                elif show_labels:
+                    tag = f"{kp['index']}:{kp['name']}"
+                    cv2.putText(frame, tag, (kx + 6, ky - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1, cv2.LINE_AA)
+
+            elif kp["occluded"]:
+                # Tiny elegant hollow ring for occluded/inferred keypoints
+                cv2.circle(frame, (kx, ky), 3, (0, 0, 0), 2, cv2.LINE_AA)
+                cv2.circle(frame, (kx, ky), 3, scheme["kpt_occ"], 1, cv2.LINE_AA)
 
     cv2.addWeighted(overlay, 0.12, frame, 0.88, 0, frame)
 
@@ -432,14 +453,14 @@ def draw_visuals(frame, detections, fps=0.0, lat_ms=0.0, show_labels=False, show
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Shoes VTO Stage A with Post-Processing.")
+    parser = argparse.ArgumentParser(description="Run Shoes VTO Stage A with Advanced Post-Processing.")
     parser.add_argument("--video", type=str, default="test_video.mp4", help="Path to input video file")
     parser.add_argument("--model", type=str, default="models/stage-a-320-16kp-fp32.onnx", help="Path to ONNX model")
     parser.add_argument("--output", type=str, default="annotated_output.mp4", help="Path to save output video")
     parser.add_argument("--conf", type=float, default=0.28, help="Detection confidence threshold")
     parser.add_argument("--nms", type=float, default=0.45, help="Per-Class NMS IoU threshold")
     parser.add_argument("--dedup-iou", type=float, default=0.60, help="Duplicate physical foot IoU threshold")
-    parser.add_argument("--kpt-thresh", type=float, default=0.30, help="Keypoint visibility threshold")
+    parser.add_argument("--kpt-thresh", type=float, default=0.35, help="Keypoint visibility threshold")
     parser.add_argument("--smooth", action="store_true", default=True, help="Enable One-Euro temporal smoothing")
     parser.add_argument("--no-smooth", dest="smooth", action="store_false", help="Disable temporal smoothing")
     parser.add_argument("--no-geom", dest="use_geom", action="store_false", default=True, help="Disable geometric chirality check")
