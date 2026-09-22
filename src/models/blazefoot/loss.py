@@ -1,18 +1,27 @@
 """
 loss.py
 ───────
+Composite Loss functions for Google BlazeFoot Training.
 Composite Loss functions for Google BlazeFoot 4-Keypoint Training.
 
 Components:
+  1. Wing Loss (Adaptive Wing Loss for Keypoint coordinates)
+  2. Complete IoU (CIoU) / Smooth L1 Loss for Bounding Boxes
+  3. Binary Cross Entropy / Focal Loss for Classification & Visibility
+  1. Wing Loss on 4 Coarse Keypoint coordinates (8 coords)
+  2. Complete IoU (CIoU) Loss for Bounding Boxes (4 coords)
+  3. Binary Cross Entropy for Foot Classification (left_foot, right_foot)
   1. Adaptive Wing Loss on 4 Coarse Keypoint coordinates (8 coords: 4 * 2)
   2. Complete IoU (CIoU) Loss for Bounding Boxes (4 coords: cx, cy, w, h)
   3. Binary Cross Entropy (BCE) for Foot Classification (left_foot, right_foot)
 """
 
 import math
+from typing import Dict, List, Tuple
 from typing import Dict
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class WingLoss(nn.Module):
@@ -20,6 +29,7 @@ class WingLoss(nn.Module):
     Wing Loss for robust keypoint regression:
       Provides non-linear logarithmic gradient for small errors (sub-pixel refinement),
       and linear L1 gradient for large errors (outlier resistance).
+    Wing Loss for robust 4-keypoint regression.
     """
     def __init__(self, omega: float = 10.0, epsilon: float = 2.0):
         super().__init__()
@@ -29,9 +39,12 @@ class WingLoss(nn.Module):
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
+        pred, target: [B, N, 32] (x, y coordinates only)
+        mask: [B, N, 16] (visibility > 0)
         pred, target: [B, N, 8] (4 keypoints x 2 coordinates = 8)
         mask: [B, N, 4] (visibility of the 4 keypoints)
         """
+        diff = torch.abs(pred - target) # [B, N, 32]
         diff = torch.abs(pred - target)
         small_mask = diff < self.omega
 
@@ -39,6 +52,8 @@ class WingLoss(nn.Module):
         loss_large = diff - self.c
         loss = torch.where(small_mask, loss_small, loss_large)
 
+        # Duplicate mask for x and y: [B, N, 16] -> [B, N, 32]
+        mask_xy = mask.repeat_interleave(2, dim=-1) # [B, N, 32]
         # Duplicate mask for x and y: [B, N, 4] -> [B, N, 8]
         mask_xy = mask.repeat_interleave(2, dim=-1)
         valid_loss = loss * mask_xy
@@ -103,6 +118,7 @@ def bbox_ciou_loss(pred_boxes: torch.Tensor, target_boxes: torch.Tensor, eps: fl
 
 class BlazeFootLoss(nn.Module):
     """
+    Unified Loss for BlazeFoot multi-task learning.
     Unified Loss for BlazeFoot 4-Keypoint multi-task learning.
     """
     def __init__(self, lambda_cls: float = 1.0, lambda_box: float = 2.5, lambda_kpt: float = 4.0):
@@ -117,6 +133,15 @@ class BlazeFootLoss(nn.Module):
 
     def forward(
         self,
+        cls_preds: torch.Tensor, # [B, N, 2]
+        box_preds: torch.Tensor, # [B, N, 4]
+        kpt_preds: torch.Tensor, # [B, N, 48]
+        kpt_preds: torch.Tensor, # [B, N, 12] (4 * 3)
+        target_cls: torch.Tensor,# [B, N, 2]
+        target_box: torch.Tensor,# [B, N, 4]
+        target_kpt: torch.Tensor,# [B, N, 48]
+        target_kpt: torch.Tensor,# [B, N, 12]
+        target_mask: torch.Tensor# [B, N] bool
         cls_preds: torch.Tensor,   # [B, N, 2]
         box_preds: torch.Tensor,   # [B, N, 4]
         kpt_preds: torch.Tensor,   # [B, N, 12] (4 keypoints * 3)
@@ -127,14 +152,19 @@ class BlazeFootLoss(nn.Module):
     ) -> Dict[str, torch.Tensor]:
 
         pos_mask = target_mask # [B, N]
+        pos_mask = target_mask
         num_pos = pos_mask.sum().clamp(min=1.0)
 
         # ── 1. Classification Loss (BCE) ──────────────────────────────────
         cls_loss_all = self.cls_bce(cls_preds, target_cls) # [B, N, 2]
+        # 1. Classification Loss (BCE)
+        cls_loss_all = self.cls_bce(cls_preds, target_cls)
         loss_cls = cls_loss_all.sum() / num_pos
 
         # ── 2. Box Regression Loss (CIoU on positive anchors) ─────────────
         pred_boxes_sig = torch.sigmoid(box_preds) # [B, N, 4]
+        # 2. Box Loss (CIoU)
+        pred_boxes_sig = torch.sigmoid(box_preds)
         if pos_mask.any():
             pos_pred_boxes = pred_boxes_sig[pos_mask]
             pos_tgt_boxes  = target_box[pos_mask]
@@ -143,10 +173,18 @@ class BlazeFootLoss(nn.Module):
             loss_box = torch.tensor(0.0, device=cls_preds.device)
 
         # ── 3. Keypoint Regression Loss (Wing Loss + Visibility BCE) ──────
+        # 3. 4-Keypoint Loss (Wing Loss + Visibility BCE)
         if pos_mask.any():
+            pos_kpt_pred = torch.sigmoid(kpt_preds[pos_mask]) # [M, 48]
+            pos_kpt_tgt  = target_kpt[pos_mask]               # [M, 48]
             pos_kpt_pred = torch.sigmoid(kpt_preds[pos_mask]) # [M, 12]
             pos_kpt_tgt  = target_kpt[pos_mask]               # [M, 12]
 
+            # Separate (x, y) coordinates from visibility (v)
+            # 16 landmarks -> 32 coords + 16 visibilities
+            pred_xy = pos_kpt_pred.view(-1, 16, 3)[:, :, :2].reshape(-1, 32)
+            tgt_xy  = pos_kpt_tgt.view(-1, 16, 3)[:, :, :2].reshape(-1, 32)
+            tgt_vis = (pos_kpt_tgt.view(-1, 16, 3)[:, :, 2] > 0).float() # [M, 16]
             # 4 Keypoints -> 8 (x,y) coords + 4 visibilities
             pred_xy = pos_kpt_pred.view(-1, 4, 3)[:, :, :2].reshape(-1, 8)
             tgt_xy  = pos_kpt_tgt.view(-1, 4, 3)[:, :, :2].reshape(-1, 8)
@@ -154,6 +192,7 @@ class BlazeFootLoss(nn.Module):
 
             loss_kpt_coords = self.wing_loss(pred_xy.unsqueeze(0), tgt_xy.unsqueeze(0), tgt_vis.unsqueeze(0))
 
+            pred_vis_logits = kpt_preds[pos_mask].view(-1, 16, 3)[:, :, 2]
             pred_vis_logits = kpt_preds[pos_mask].view(-1, 4, 3)[:, :, 2]
             loss_vis = self.vis_bce(pred_vis_logits, tgt_vis).mean()
 

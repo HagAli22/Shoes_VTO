@@ -1,0 +1,86 @@
+{
+  "fixture_version": "2.0.0",
+  "description": "Validation test cases for Stage A 16-Keypoint decoder",
+  "cases": [
+    {
+      "case_id": "case_01_both_feet_walking",
+      "image_dims": {
+        "width": 1080,
+        "height": 1920
+      },
+      "expected_detections": [
+        {
+          "className": "right_foot",
+          "confidence": 0.884,
+          "bbox": {
+            "x1": 312.4,
+            "y1": 1320.1,
+            "x2": 524.8,
+            "y2": 1680.5
+          },
+          "keypoints_detected": 16
+        },
+        {
+          "className": "left_foot",
+          "confidence": 0.862,
+          "bbox": {
+            "x1": 560.2,
+            "y1": 1290.4,
+            "x2": 780.6,
+            "y2": 1640.2
+          },
+          "keypoints_detected": 16
+        }
+      ]
+    },
+    {
+      "case_id": "case_02_crossing_feet_overlap",
+      "description": "Tests that both feet are preserved during high IoU overlap (Independent NMS)",
+      "image_dims": {
+        "width": 1080,
+        "height": 1920
+      },
+      "expected_detections": [
+        {
+          "className": "right_foot",
+          "confidence": 0.912,
+          "bbox": {
+            "x1": 450.0,
+            "y1": 1300.0,
+            "x2": 660.0,
+            "y2": 1650.0
+          }
+        },
+        {
+          "className": "left_foot",
+          "confidence": 0.845,
+          "bbox": {
+            "x1": 490.0,
+            "y1": 1280.0,
+            "x2": 710.0,
+            "y2": 1630.0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "case_03_single_foot_visible",
+      "image_dims": {
+        "width": 1080,
+        "height": 1920
+      },
+      "expected_detections": [
+        {
+          "className": "left_foot",
+          "confidence": 0.931,
+          "bbox": {
+            "x1": 410.5,
+            "y1": 1250.0,
+            "x2": 640.2,
+            "y2": 1620.0
+          }
+        }
+      ]
+    }
+  ]
+}
