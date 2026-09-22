@@ -11,10 +11,6 @@
  */
 
 const KEYPOINT_NAMES_16 = [
-  "toe_tip", "toe_ground", "heel_back", "heel_ground",
-  "ball_medial", "ball_lateral", "ball_top", "instep_top",
-  "arch_medial", "midfoot_lateral", "malleolus_medial", "malleolus_lateral",
-  "ankle_center", "throat", "achilles", "shin_mid"
   "toe_ground",        // Index 0
   "heel_back",         // Index 1
   "heel_ground",       // Index 2

@@ -92,3 +92,4 @@ An adaptive low-pass filter (One-Euro filter) tracks keypoints across consecutiv
 3. `deliverables/stage_a_16kp/demo/run_video_demo.py`: Python video runner updated with all post-processing and hollow-ring styling.
 4. `deliverables/stage_a_16kp/fixtures/expected-decoded.json`: Regenerated with the verified keypoint names.
 5. `shoes-vto-ai-v2/`: Synchronized SDK drop-in folder.
+

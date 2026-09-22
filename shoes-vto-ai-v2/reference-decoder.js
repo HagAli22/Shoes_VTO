@@ -11,10 +11,6 @@
  */
 
 const KEYPOINT_NAMES_16 = [
-  "toe_tip", "toe_ground", "heel_back", "heel_ground",
-  "ball_medial", "ball_lateral", "ball_top", "instep_top",
-  "arch_medial", "midfoot_lateral", "malleolus_medial", "malleolus_lateral",
-  "ankle_center", "throat", "achilles", "shin_mid"
   "toe_ground",        // Index 0
   "heel_back",         // Index 1
   "heel_ground",       // Index 2
@@ -136,6 +132,8 @@ export function decodeStageA16KP(tensorData, origWidth, origHeight, options = {}
     const vLatY = ballLat.y - heel.y;
     const crossLat = vAxisX * vLatY - vAxisY * vLatX;
 
+    // In screen coords (Y down): Right foot cross < 0, Left foot cross > 0
+    const resolvedClassId = crossLat < 0 ? 1 : 0;
     // In screen coords: Right foot cross > 0 (1), Left foot cross < 0 (0)
     const resolvedClassId = crossLat < 0 ? 0 : 1;
     const resolvedClassName = resolvedClassId === 0 ? "left_foot" : "right_foot";

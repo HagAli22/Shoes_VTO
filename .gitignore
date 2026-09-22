@@ -1,2 +1,12 @@
 outputs/
 data/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.rar
+*.zip
+*.7z
+.ipynb_checkpoints/
+deliverables/stage_a_16kp/demo/*.mp4
+shoes-vto-ai-v2/demo/*.mp4

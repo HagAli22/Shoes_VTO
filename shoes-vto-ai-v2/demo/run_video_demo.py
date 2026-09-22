@@ -302,8 +302,6 @@ def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0
             ky = ((out[7 + k * 3, i] - pad_y) / scale)
             kv = float(out[8 + k * 3, i])
 
-            # Classify keypoint state:
-            # visible (kv >= kpt_thresh) vs occluded/inferred (0.12 <= kv < kpt_thresh)
             is_visible = kv >= kpt_thresh
             is_occluded = (kv >= 0.12 and kv < kpt_thresh)
 
@@ -402,9 +400,6 @@ def draw_visuals(frame, detections, fps=0.0, lat_ms=0.0, show_labels=False, show
             if pt1_active and pt2_active:
                 pt1 = (int(round(kp1["x"])), int(round(kp1["y"])))
                 pt2 = (int(round(kp2["x"])), int(round(kp2["y"])))
-                
-                # If both are visible: solid strong line
-                # If at least one is occluded: subtle thin line
                 line_th = 2 if (kp1["visible"] and kp2["visible"]) else 1
                 cv2.line(frame, pt1, pt2, skel_color, line_th, cv2.LINE_AA)
 
@@ -464,8 +459,8 @@ def main():
     parser.add_argument("--smooth", action="store_true", default=True, help="Enable One-Euro temporal smoothing")
     parser.add_argument("--no-smooth", dest="smooth", action="store_false", help="Disable temporal smoothing")
     parser.add_argument("--no-geom", dest="use_geom", action="store_false", default=True, help="Disable geometric chirality check")
-    parser.add_argument("--show-indices", action="store_true", help="Display numeric index on keypoints")
-    parser.add_argument("--show-labels", action="store_true", help="Display keypoint names")
+    parser.add_argument("--show-indices", "--indices", dest="show_indices", action="store_true", help="Display numeric index on keypoints")
+    parser.add_argument("--show-labels", "--labels", dest="show_labels", action="store_true", help="Display keypoint names")
     parser.add_argument("--max-frames", type=int, default=0, help="Stop after N frames (0 = full)")
     args = parser.parse_args()
 
