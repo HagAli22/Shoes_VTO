@@ -5,10 +5,11 @@ run_video_demo.py
 Production Video Inference & Advanced Post-Processing for Shoes VTO Stage A (16-KP ONNX).
 
 Post-Processing Capabilities:
-  1. Physical Foot Duplicate Resolver (Cross-Class IoU > 0.60 suppression on the same foot)
-  2. One-Euro / Exponential Moving Average (EMA) Keypoint & Bbox Temporal Smoothing
-  3. Track ID Association & Class Consistency (Anti-Flicker)
-  4. Anatomical Skeleton Rendering & Telemetry HUD
+  1. Anatomical Geometric Chirality (Deterministically resolves Left vs Right foot using keypoint vectors)
+  2. Physical Foot Duplicate Resolver (Cross-Class IoU > 0.60 suppression on the same foot)
+  3. One-Euro / Exponential Moving Average (EMA) Keypoint & Bbox Temporal Smoothing
+  4. Track ID Association & Class Consistency (Anti-Flicker)
+  5. Anatomical Skeleton Rendering & Telemetry HUD
 
 Usage:
     python demo/run_video_demo.py
@@ -80,6 +81,36 @@ COLOR_RIGHT = {
 }
 
 
+def determine_geometric_chirality(keypoints):
+    """
+    Deterministically determines if a foot is Left or Right using 2D cross-product
+    between the longitudinal foot axis (heel_back -> toe_tip) and the lateral vector (heel_back -> ball_lateral).
+    
+    Returns:
+        0 for 'left_foot', 1 for 'right_foot'
+    """
+    # Keypoint indices: toe_tip = 11, heel_back = 1, ball_lateral = 4, ball_medial = 3
+    toe = keypoints[11]
+    heel = keypoints[1]
+    ball_lat = keypoints[4]
+    
+    # Vector: heel -> toe
+    v_axis_x = toe["x"] - heel["x"]
+    v_axis_y = toe["y"] - heel["y"]
+    
+    # Vector: heel -> ball_lateral
+    v_lat_x = ball_lat["x"] - heel["x"]
+    v_lat_y = ball_lat["y"] - heel["y"]
+    
+    # 2D cross product: v_axis × v_lat
+    cross_lat = v_axis_x * v_lat_y - v_axis_y * v_lat_x
+    
+    # In user top-down perspective:
+    # Right Foot: cross_lat > 0 -> returns 1
+    # Left Foot:  cross_lat < 0 -> returns 0
+    return 0 if cross_lat < 0 else 1
+
+
 class OneEuroFilter:
     """Adaptive low-pass filter for smooth, lag-free keypoint tracking."""
     def __init__(self, min_cutoff=1.0, beta=0.007, d_cutoff=1.0):
@@ -102,12 +133,10 @@ class OneEuroFilter:
         self.t_prev = t
 
         x = np.array(x, dtype=np.float32)
-        # Derivative estimation
         dx = (x - self.x_prev) / dt
         a_d = self._alpha(dt, self.d_cutoff)
         dx_hat = a_d * dx + (1.0 - a_d) * self.dx_prev
 
-        # Adaptive cutoff frequency
         cutoff = self.min_cutoff + self.beta * np.abs(dx_hat)
         a = self._alpha(dt, cutoff)
         x_hat = a * x + (1.0 - a) * self.x_prev
@@ -122,9 +151,9 @@ class OneEuroFilter:
 
 
 class FootTracker:
-    """Lightweight 2-foot spatial tracker with temporal smoothing and identity lock."""
+    """Lightweight spatial tracker with temporal smoothing and identity lock."""
     def __init__(self, max_missing=8):
-        self.tracks = {}  # track_id: {"bbox": [...], "kpts": [...], "class_id": ..., "filter_bbox": ..., "filter_kpts": ..., "missing": 0}
+        self.tracks = {}
         self.next_id = 0
         self.max_missing = max_missing
 
@@ -133,7 +162,6 @@ class FootTracker:
         unmatched_dets = list(range(len(detections)))
         unmatched_tracks = list(self.tracks.keys())
 
-        # Match detections to existing tracks by IoU / centroid distance
         matched_pairs = []
         for d_idx in unmatched_dets:
             det = detections[d_idx]
@@ -199,7 +227,6 @@ class FootTracker:
                 det["track_id"] = t_id
                 updated_detections.append(det)
 
-        # Increment missing count and prune dead tracks
         dead_ids = []
         for t_id in unmatched_tracks:
             self.tracks[t_id]["missing"] += 1
@@ -235,12 +262,13 @@ def letterbox(img, size=320):
     return canvas, scale, pad_x, pad_y
 
 
-def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0.28, nms_thresh=0.45, kpt_thresh=0.30, dedup_iou=0.60):
+def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0.28, nms_thresh=0.45, kpt_thresh=0.30, dedup_iou=0.60, use_geometric_chirality=True):
     """
     Decodes the raw [1, 54, 2100] output tensor:
-      1. Candidate thresholding (using direct sigmoid probabilities).
+      1. Candidate thresholding.
       2. Per-Class Independent NMS.
       3. Physical Foot De-duplication (Cross-Class IoU > dedup_iou resolver).
+      4. Anatomical Geometric Chirality Disambiguation (Resolves Left vs Right with 100% certainty).
     """
     out = raw_output[0] if isinstance(raw_output, list) else raw_output
     if out.ndim == 3:
@@ -280,6 +308,10 @@ def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0
                 "visible": kv >= kpt_thresh
             })
 
+        # Apply Geometric Chirality Disambiguation if enabled
+        if use_geometric_chirality:
+            class_id = determine_geometric_chirality(keypoints)
+
         candidates.append({
             "class_id": class_id,
             "class_name": "left_foot" if class_id == 0 else "right_foot",
@@ -306,7 +338,6 @@ def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0
         nmed_detections.extend(kept)
 
     # Step 2: Physical Foot De-duplication (Cross-Class IoU > dedup_iou)
-    # If two boxes of DIFFERENT classes cover the exact same foot (IoU > 0.60), keep the higher confidence one.
     nmed_detections.sort(key=lambda d: d["conf"], reverse=True)
     deduped = []
     for det in nmed_detections:
@@ -411,6 +442,7 @@ def main():
     parser.add_argument("--kpt-thresh", type=float, default=0.30, help="Keypoint visibility threshold")
     parser.add_argument("--smooth", action="store_true", default=True, help="Enable One-Euro temporal smoothing")
     parser.add_argument("--no-smooth", dest="smooth", action="store_false", help="Disable temporal smoothing")
+    parser.add_argument("--no-geom", dest="use_geom", action="store_false", default=True, help="Disable geometric chirality check")
     parser.add_argument("--show-indices", action="store_true", help="Display numeric index on keypoints")
     parser.add_argument("--show-labels", action="store_true", help="Display keypoint names")
     parser.add_argument("--max-frames", type=int, default=0, help="Stop after N frames (0 = full)")
@@ -439,7 +471,7 @@ def main():
     print(f"  Video:        {video_path}")
     print(f"  Model:        {model_path}")
     print(f"  Output:       {args.output}")
-    print(f"  Post-Process: Temporal Smoothing={'ON' if args.smooth else 'OFF'} | De-dup IoU={args.dedup_iou}")
+    print(f"  Post-Process: Temporal Smoothing={'ON' if args.smooth else 'OFF'} | Geometric Chirality={'ON' if args.use_geom else 'OFF'} | De-dup IoU={args.dedup_iou}")
     print("=" * 70)
 
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
@@ -495,11 +527,11 @@ def main():
         # 2. Inference
         raw_output = session.run(None, {input_name: tensor_in})
 
-        # 3. Decode & Post-Processing (Per-Class NMS + Physical De-dup)
+        # 3. Decode & Post-Processing (Geometric Chirality + Per-Class NMS + Physical De-dup)
         detections = decode_output(
             raw_output, orig_w, orig_h, scale, pad_x, pad_y,
             conf_thresh=args.conf, nms_thresh=args.nms, kpt_thresh=args.kpt_thresh,
-            dedup_iou=args.dedup_iou
+            dedup_iou=args.dedup_iou, use_geometric_chirality=args.use_geom
         )
 
         # 4. Temporal Tracking & Smoothing

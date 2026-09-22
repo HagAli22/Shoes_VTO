@@ -124,9 +124,29 @@ export function decodeStageA16KP(tensorData, origWidth, origHeight, options = {}
       });
     }
 
+    // Anatomical Geometric Chirality Disambiguation:
+    // Resolves Left vs Right with mathematical determinism based on toe vs lateral ball position
+    const toe = keypoints[11];      // toe_tip (Big Toe)
+    const heel = keypoints[1];      // heel_back
+    const ballLat = keypoints[4];   // ball_lateral (5th metatarsal)
+
+    const vAxisX = toe.x - heel.x;
+    const vAxisY = toe.y - heel.y;
+    const vLatX = ballLat.x - heel.x;
+    const vLatY = ballLat.y - heel.y;
+    const crossLat = vAxisX * vLatY - vAxisY * vLatX;
+
+    // In screen coords: Right foot cross > 0 (1), Left foot cross < 0 (0)
+    const resolvedClassId = crossLat < 0 ? 0 : 1;
+    const resolvedClassName = resolvedClassId === 0 ? "left_foot" : "right_foot";
+
+
     candidates.push({
       classId,
       className,
+      classId: resolvedClassId,
+      className: resolvedClassName,
+      rawClassId: classId,
       confidence: maxScore,
       scoreLeft,
       scoreRight,
@@ -144,6 +164,8 @@ export function decodeStageA16KP(tensorData, origWidth, origHeight, options = {}
 
   // INDEPENDENT PER-CLASS NMS (Crucial: never cross-suppress left vs right foot)
   const finalDetections = [];
+  // Step 1: Independent Per-Class NMS
+  const nmedDetections = [];
   for (const targetClassId of [0, 1]) {
     const classCandidates = candidates
       .filter(c => c.classId === targetClassId)
@@ -163,7 +185,25 @@ export function decodeStageA16KP(tensorData, origWidth, origHeight, options = {}
       }
     }
     finalDetections.push(...keep);
+    nmedDetections.push(...keep);
+  }
+
+  // Step 2: Physical Foot De-duplication (Cross-Class IoU > 0.60 resolver)
+  nmedDetections.sort((a, b) => b.confidence - a.confidence);
+  const finalDetections = [];
+  for (const det of nmedDetections) {
+    let duplicate = false;
+    for (const kept of finalDetections) {
+      if (computeIoU(det.bbox, kept.bbox) > 0.60) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (!duplicate) {
+      finalDetections.push(det);
+    }
   }
 
   return finalDetections.sort((a, b) => b.confidence - a.confidence);
 }
+
