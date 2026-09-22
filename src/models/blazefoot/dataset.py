@@ -1,8 +1,6 @@
 """
 dataset.py
 ──────────
-PyTorch Dataset and Anchor Matching for BlazeFoot training.
-PyTorch Dataset and Anchor Matching for BlazeFoot 4-Keypoint Training.
 High-Performance PyTorch Dataset and Anchor Matching for BlazeFoot 4-Keypoint Training.
 
 Loads annotations from data/shuffled_v3 (YOLO-Pose format):
@@ -12,16 +10,15 @@ Extracts only the 4 Coarse Keypoints from the 16 annotated landmarks:
   - Keypoint 2: heel_back
   - Keypoint 4: ball_medial
   - Keypoint 5: ball_lateral
+
 Features:
-  - In-Memory RAM Caching (--cache_ram): Preloads all images into RAM for 100% GPU saturation on Colab/Servers.
-  - Multi-worker parallel processing with pin_memory.
-  - 4 Coarse Keypoints: toe_tip (0), heel_back (2), ball_medial (4), ball_lateral (5).
+  - In-Memory RAM Caching (cache_ram=True): Preloads all images into RAM for maximum GPU throughput.
+  - Multi-worker parallel processing with pin_memory and prefetch_factor.
 """
 
 import os
 import glob
-import math
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
 import cv2
 import numpy as np
 import torch
@@ -35,17 +32,14 @@ COARSE_KP_INDICES = [0, 2, 4, 5]
 
 def generate_blaze_anchors(img_size: int = 320, num_anchors_per_scale: int = 2) -> torch.Tensor:
     """
-    Generates anchor grid centers [N, 4] (cx, cy, base_w, base_h) normalized to [0, 1].
+    Generates anchor grid centers [1050, 4] (cx, cy, base_w, base_h) normalized to [0, 1].
     Scales:
-      P3: 20x20, stride 16 (anchor base scale: 0.15, 0.25)
-      P4: 10x10, stride 32 (anchor base scale: 0.35, 0.50)
-      P5:  5x5,  stride 64 (anchor base scale: 0.65, 0.85)
-    Total Anchors = (20*20 + 10*10 + 5*5) * 2 = (400 + 100 + 25) * 2 = 1050 anchors.
+      P3: 20x20, stride 16 (anchor base scales: 0.12, 0.22) -> 800 anchors
+      P4: 10x10, stride 32 (anchor base scales: 0.35, 0.50) -> 200 anchors
+      P5:  5x5,  stride 64 (anchor base scales: 0.65, 0.85) -> 50 anchors
+    Total Anchors = 800 + 200 + 50 = 1050 anchors.
     """
     grid_configs = [
-        (20, [0.12, 0.22]), # P3
-        (10, [0.35, 0.50]), # P4
-        (5,  [0.65, 0.85])  # P5
         (20, [0.12, 0.22]), # P3 (20x20) -> 800 anchors
         (10, [0.35, 0.50]), # P4 (10x10) -> 200 anchors
         (5,  [0.65, 0.85])  # P5 (5x5)   -> 50 anchors
@@ -65,7 +59,6 @@ def generate_blaze_anchors(img_size: int = 320, num_anchors_per_scale: int = 2) 
 
 
 class BlazeFootDataset(Dataset):
-    def __init__(self, data_root: str, split: str = "train", img_size: int = 320, is_train: bool = True):
     def __init__(self, data_root: str, split: str = "train", img_size: int = 320, is_train: bool = True, cache_ram: bool = True):
         self.img_size = img_size
         self.is_train = is_train
@@ -79,9 +72,8 @@ class BlazeFootDataset(Dataset):
         self.anchors = generate_blaze_anchors(img_size)
         self.ram_cache = {}
 
-        # Albumentations pipeline
         # Preload images into RAM if requested
-        if self.cache_ram:
+        if self.cache_ram and len(self.img_paths) > 0:
             print(f"  [RAM Cache] Preloading {len(self.img_paths)} '{split}' images into memory...")
             for idx, p in enumerate(self.img_paths):
                 im = cv2.imread(p)
@@ -124,18 +116,10 @@ class BlazeFootDataset(Dataset):
 
         img_path = self.img_paths[idx]
         lbl_path = os.path.join(self.lbl_dir, os.path.splitext(os.path.basename(img_path))[0] + ".txt")
-
-        # Load image
-        img = cv2.imread(img_path)
-        if img is None:
-            img = np.zeros((self.img_size, self.img_size, 3), dtype=np.uint8)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         h_orig, w_orig = img.shape[:2]
 
-        # Parse labels
         boxes_yolo = []
         category_ids = []
-        kpts_list = []
         kpts_4_list = []
 
         if os.path.exists(lbl_path):
@@ -154,40 +138,27 @@ class BlazeFootDataset(Dataset):
                     boxes_yolo.append([cx, cy, w, h])
                     category_ids.append(cls_id)
 
-                    kps = []
                     # Extract strictly the 4 Coarse Keypoints: [0, 2, 4, 5]
                     kps_4 = []
                     if len(parts) >= 5 + 48:
-                        for ki in range(16):
-                            kx = float(parts[5 + ki*3]) * w_orig
-                            ky = float(parts[6 + ki*3]) * h_orig
-                            kv = int(float(parts[7 + ki*3]))
-                            kps.append((kx, ky, kv))
                         for target_idx in COARSE_KP_INDICES:
-                            kx = float(parts[5 + target_idx*3]) * w_orig
-                            ky = float(parts[6 + target_idx*3]) * h_orig
-                            kv = int(float(parts[7 + target_idx*3]))
+                            kx = float(parts[5 + target_idx * 3]) * w_orig
+                            ky = float(parts[6 + target_idx * 3]) * h_orig
+                            kv = int(float(parts[7 + target_idx * 3]))
                             kps_4.append((kx, ky, kv))
                     else:
-                        for _ in range(16):
-                            kps.append((0.0, 0.0, 0))
-                    kpts_list.append(kps)
                         for _ in range(4):
                             kps_4.append((0.0, 0.0, 0))
                     kpts_4_list.append(kps_4)
 
         flat_kpts_xy = []
         kpt_visibilities = []
-        if len(kpts_list) > 0:
-            for inst_kps in kpts_list:
         if len(kpts_4_list) > 0:
             for inst_kps in kpts_4_list:
                 for (kx, ky, kv) in inst_kps:
                     flat_kpts_xy.append((kx, ky))
                     kpt_visibilities.append(kv)
         else:
-            flat_kpts_xy = [(0.0, 0.0)] * 16
-            kpt_visibilities = [0] * 16
             flat_kpts_xy = [(0.0, 0.0)] * 4
             kpt_visibilities = [0] * 4
 
@@ -207,14 +178,12 @@ class BlazeFootDataset(Dataset):
             img_tensor = torch.from_numpy(img_resized).permute(2, 0, 1)
             boxes_aug = boxes_yolo
             cats_aug = category_ids
-            kpts_aug_xy = [(k[0]*self.img_size/w_orig, k[1]*self.img_size/h_orig) for k in flat_kpts_xy]
+            kpts_aug_xy = [(k[0]*self.img_size/max(w_orig, 1), k[1]*self.img_size/max(h_orig, 1)) for k in flat_kpts_xy]
 
         num_anchors = len(self.anchors)
         target_cls = torch.zeros((num_anchors, 2), dtype=torch.float32)
         target_box = torch.zeros((num_anchors, 4), dtype=torch.float32)
-        target_kpt = torch.zeros((num_anchors, 16 * 3), dtype=torch.float32)
-        target_kpt = torch.zeros((num_anchors, 4 * 3), dtype=torch.float32) # 4 Keypoints * 3 = 12 channels
-        target_kpt = torch.zeros((num_anchors, 4 * 3), dtype=torch.float32)
+        target_kpt = torch.zeros((num_anchors, 4 * 3), dtype=torch.float32) # 4 KPs * (x, y, v) = 12 channels
         target_mask = torch.zeros(num_anchors, dtype=torch.bool)
 
         if len(boxes_aug) > 0:
@@ -227,8 +196,6 @@ class BlazeFootDataset(Dataset):
                 closest_anchor_idxs = torch.topk(dists, topk, largest=False).indices
 
                 inst_kpts_norm = []
-                inst_offset = inst_idx * 16
-                for ki in range(16):
                 inst_offset = inst_idx * 4
                 for ki in range(4):
                     k_idx = inst_offset + ki
@@ -258,9 +225,6 @@ class BlazeFootDataset(Dataset):
         }
 
 
-def get_blazefoot_loaders(data_root: str = "data/shuffled_v3", batch_size: int = 16, num_workers: int = 0) -> Tuple[DataLoader, DataLoader]:
-    train_ds = BlazeFootDataset(data_root, split="train", img_size=320, is_train=True)
-    val_ds   = BlazeFootDataset(data_root, split="valid", img_size=320, is_train=False)
 def get_blazefoot_loaders(
     data_root: str = "data/shuffled_v3",
     batch_size: int = 64,
@@ -270,8 +234,6 @@ def get_blazefoot_loaders(
     train_ds = BlazeFootDataset(data_root, split="train", img_size=320, is_train=True, cache_ram=cache_ram)
     val_ds   = BlazeFootDataset(data_root, split="valid", img_size=320, is_train=False, cache_ram=cache_ram)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
-    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
     train_kwargs = {
         "batch_size": batch_size,
         "shuffle": True,
@@ -295,4 +257,3 @@ def get_blazefoot_loaders(
     val_loader   = DataLoader(val_ds, **val_kwargs)
 
     return train_loader, val_loader
-
