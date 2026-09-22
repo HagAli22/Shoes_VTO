@@ -1,16 +1,17 @@
 """
 train_blazefoot.py
 ──────────────────
-PyTorch Training Pipeline for Google BlazeFoot (MediaPipe-style) Detector.
+High-Performance PyTorch Training Pipeline for Google BlazeFoot (A100 / GPU Optimized).
 
-Features:
-  - Mixed Precision Training (torch.amp)
-  - AdamW Optimizer with Cosine Annealing Learning Rate Decay
-  - Multi-task Loss: Wing Loss (keypoints) + CIoU (boxes) + BCE (classes)
-  - Automatic validation evaluation and best checkpoint saving
+Optimizations:
+  - cuDNN Benchmark enabled for ultra-fast convolution kernels.
+  - In-Memory RAM Caching (--cache_ram) to eliminate disk I/O bottlenecks.
+  - Multi-worker parallel DataLoader with pin_memory and non_blocking CUDA transfers.
+  - Mixed Precision Training (torch.amp.autocast).
+  - Cosine Annealing Learning Rate Decay with AdamW optimizer.
 
 Usage:
-    python -m src.models.blazefoot.train_blazefoot --epochs 100 --batch 16 --device 0
+    python -m src.models.blazefoot.train_blazefoot --epochs 100 --batch 64 --num_workers 4 --device 0
 """
 
 import os
@@ -29,6 +30,13 @@ from torch.amp import autocast, GradScaler
 from .blazefoot_detector import BlazeFoot
 from .dataset import get_blazefoot_loaders
 from .loss import BlazeFootLoss
+
+# Enable cuDNN benchmark & TF32 for highest GPU throughput on NVIDIA GPUs (A100 / RTX / Ampere+)
+if torch.cuda.is_available():
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
 
 
 def train_one_epoch(
@@ -129,11 +137,14 @@ def main():
     parser = argparse.ArgumentParser(description="Train Google BlazeFoot detector.")
     parser.add_argument("--data", default="data/shuffled_v3", help="Dataset directory")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
-    parser.add_argument("--batch", type=int, default=16, help="Batch size")
-    parser.add_argument("--lr0", type=float, default=0.001, help="Initial learning rate")
+    parser.add_argument("--batch", type=int, default=64, help="Batch size (e.g. 64 for A100)")
+    parser.add_argument("--lr0", type=float, default=0.002, help="Initial learning rate")
+    parser.add_argument("--num_workers", type=int, default=4 if os.name != 'nt' else 0, help="DataLoader worker processes")
+    parser.add_argument("--cache_ram", action="store_true", default=True, help="Cache all images in RAM for max GPU utilization")
     parser.add_argument("--device", default="0", help="GPU device ID or 'cpu'")
     parser.add_argument("--project", default="outputs/stage_a", help="Output project directory")
-    parser.add_argument("--name", default="blazefoot_run1", help="Experiment name")
+    parser.add_argument("--name", default="blazefoot_4kp_colab", help="Experiment name")
+    parser.add_argument("--compile", action="store_true", help="Compile model using PyTorch 2.0+ torch.compile for extra speedup")
     args = parser.parse_args()
 
     device_str = f"cuda:{args.device}" if torch.cuda.is_available() and args.device != "cpu" else "cpu"
@@ -143,21 +154,35 @@ def main():
     weights_dir = os.path.join(out_dir, "weights")
     os.makedirs(weights_dir, exist_ok=True)
 
+    gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
+    vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9 if device.type == "cuda" else 0.0
+
     print("=" * 70)
-    print("  [>] Training Google BlazeFoot (MediaPipe Style) Detector")
-    print(f"  Device        : {device} ({torch.cuda.get_device_name(0) if device.type == 'cuda' else 'CPU'})")
+    print("  [>] Training Google BlazeFoot (MediaPipe Style) 4-KP Detector")
+    print(f"  Device        : {device} ({gpu_name}, {vram_gb:.1f} GB VRAM)")
     print(f"  Dataset       : {args.data}")
     print(f"  Epochs        : {args.epochs} | Batch Size: {args.batch} | LR0: {args.lr0}")
+    print(f"  Workers       : {args.num_workers} | RAM Cache: {args.cache_ram} | TF32: {torch.cuda.is_available()}")
     print(f"  Output Dir    : {out_dir}")
     print("=" * 70)
 
     # 1. Initialize Model (4 Keypoints strictly for Path A)
     model = BlazeFoot(num_classes=2, num_keypoints=4).to(device)
-    params = model.count_parameters()
+    if args.compile and hasattr(torch, "compile"):
+        print("  [⚡] Compiling model with torch.compile()...")
+        model = torch.compile(model)
+
+    params = model.count_parameters() if hasattr(model, "count_parameters") else sum(p.numel() for p in model.parameters())
     print(f"[1] BlazeFoot (4-KP Native) initialized with {params:,} parameters ({params*4/1e6:.2f} MB in FP32)")
 
-    # 2. Load Data
-    train_loader, val_loader = get_blazefoot_loaders(args.data, batch_size=args.batch, num_workers=0)
+
+    # 2. Load Data with RAM Caching & Multi-Workers
+    train_loader, val_loader = get_blazefoot_loaders(
+        args.data,
+        batch_size=args.batch,
+        num_workers=args.num_workers,
+        cache_ram=args.cache_ram
+    )
     print(f"[2] Data loaded: {len(train_loader.dataset)} train images | {len(val_loader.dataset)} val images")
 
     # 3. Setup Optimizer, Scheduler & Scaler
@@ -190,7 +215,7 @@ def main():
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "val_loss": best_val_loss,
-                "config": {"num_classes": 2, "num_keypoints": 16}
+                "config": {"num_classes": 2, "num_keypoints": 4}
             }, best_path)
 
         last_path = os.path.join(weights_dir, "last.pt")
