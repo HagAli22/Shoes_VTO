@@ -75,3 +75,4 @@ python demo/run_video_demo.py --conf 0.35 --kpt-thresh 0.40
 - **Anatomical Skeleton Connections:** Connected anatomical lines along the sole contour, instep arch, ankle center, and tibia axis.
 - **Top Telemetry HUD:** Real-time FPS, inference latency per frame (ms), active frame index, and total detected feet.
 - **Per-Class Independent NMS:** Zero cross-suppression, ensuring both feet remain continuously tracked even during crossings and overlaps.
+

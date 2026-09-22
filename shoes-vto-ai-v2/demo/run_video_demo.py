@@ -2,18 +2,17 @@
 """
 run_video_demo.py
 ─────────────────
-Standalone Video Inference & Visualization for Shoes VTO Stage A (16-Keypoint ONNX Model).
+Production Video Inference & Advanced Post-Processing for Shoes VTO Stage A (16-KP ONNX).
 
-Dependencies:
-    pip install onnxruntime opencv-python numpy
+Post-Processing Capabilities:
+  1. Physical Foot Duplicate Resolver (Cross-Class IoU > 0.60 suppression on the same foot)
+  2. One-Euro / Exponential Moving Average (EMA) Keypoint & Bbox Temporal Smoothing
+  3. Track ID Association & Class Consistency (Anti-Flicker)
+  4. Anatomical Skeleton Rendering & Telemetry HUD
 
 Usage:
-    # Basic usage (defaults to models/stage-a-320-16kp-fp32.onnx and test_video.mp4):
     python demo/run_video_demo.py
-
-    # Custom options:
-    python demo/run_video_demo.py --video test_video.mp4 --output demo_output.mp4 --show-labels
-    python demo/run_video_demo.py --model models/stage-a-320-16kp-fp16.onnx --conf 0.30
+    python demo/run_video_demo.py --video test_video.mp4 --smooth --output demo_smooth.mp4
 """
 
 import os
@@ -44,7 +43,6 @@ KEYPOINT_NAMES = [
     "shin_mid"           # Index 15
 ]
 
-# Anatomical skeleton connections: pairs of (kp_idx_1, kp_idx_2)
 SKELETON_PAIRS = [
     # Sole / Foot contour
     (2, 1),   # heel_ground -> heel_back
@@ -68,29 +66,163 @@ SKELETON_PAIRS = [
     (14, 12), # achilles -> ankle_center
 ]
 
-# Distinct colors per foot class (BGR)
 COLOR_LEFT = {
-    "bbox": (255, 191, 0),     # Deep Sky Blue / Cyan (BGR)
-    "skeleton": (255, 140, 0), # Deep Sky Blue
-    "kpt": (0, 255, 255),      # Yellow
-    "kpt_outline": (0, 100, 100),
+    "bbox": (255, 191, 0),      # Deep Sky Blue / Cyan (BGR)
+    "skeleton": (255, 140, 0),
+    "kpt": (0, 255, 255),       # Yellow
     "name": "Left Foot"
 }
 COLOR_RIGHT = {
-    "bbox": (180, 105, 255),   # Hot Pink / Magenta (BGR)
-    "skeleton": (147, 20, 255),# Deep Pink
-    "kpt": (0, 255, 128),      # Bright Green
-    "kpt_outline": (0, 100, 0),
+    "bbox": (180, 105, 255),    # Hot Pink / Magenta (BGR)
+    "skeleton": (147, 20, 255),
+    "kpt": (0, 255, 128),       # Bright Green
     "name": "Right Foot"
 }
 
 
-def sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-x))
+class OneEuroFilter:
+    """Adaptive low-pass filter for smooth, lag-free keypoint tracking."""
+    def __init__(self, min_cutoff=1.0, beta=0.007, d_cutoff=1.0):
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        self.x_prev = None
+        self.dx_prev = None
+        self.t_prev = None
+
+    def __call__(self, x, t=None):
+        if self.x_prev is None:
+            self.x_prev = np.array(x, dtype=np.float32)
+            self.dx_prev = np.zeros_like(self.x_prev)
+            self.t_prev = t
+            return self.x_prev
+
+        t = t if t is not None else (self.t_prev + 0.033 if self.t_prev else 0.033)
+        dt = max(1e-4, t - (self.t_prev if self.t_prev else t - 0.033))
+        self.t_prev = t
+
+        x = np.array(x, dtype=np.float32)
+        # Derivative estimation
+        dx = (x - self.x_prev) / dt
+        a_d = self._alpha(dt, self.d_cutoff)
+        dx_hat = a_d * dx + (1.0 - a_d) * self.dx_prev
+
+        # Adaptive cutoff frequency
+        cutoff = self.min_cutoff + self.beta * np.abs(dx_hat)
+        a = self._alpha(dt, cutoff)
+        x_hat = a * x + (1.0 - a) * self.x_prev
+
+        self.x_prev = x_hat
+        self.dx_prev = dx_hat
+        return x_hat
+
+    def _alpha(self, dt, cutoff):
+        tau = 1.0 / (2.0 * np.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+
+class FootTracker:
+    """Lightweight 2-foot spatial tracker with temporal smoothing and identity lock."""
+    def __init__(self, max_missing=8):
+        self.tracks = {}  # track_id: {"bbox": [...], "kpts": [...], "class_id": ..., "filter_bbox": ..., "filter_kpts": ..., "missing": 0}
+        self.next_id = 0
+        self.max_missing = max_missing
+
+    def update(self, detections, t_sec=None):
+        updated_detections = []
+        unmatched_dets = list(range(len(detections)))
+        unmatched_tracks = list(self.tracks.keys())
+
+        # Match detections to existing tracks by IoU / centroid distance
+        matched_pairs = []
+        for d_idx in unmatched_dets:
+            det = detections[d_idx]
+            d_box = det["bbox"]
+            best_iou = 0.0
+            best_t_id = None
+            for t_id in unmatched_tracks:
+                t_box = self.tracks[t_id]["bbox"]
+                iou = compute_iou(d_box, t_box)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_t_id = t_id
+            if best_iou > 0.25 and best_t_id is not None:
+                matched_pairs.append((d_idx, best_t_id))
+                unmatched_tracks.remove(best_t_id)
+
+        matched_d_indices = {p[0] for p in matched_pairs}
+
+        # Update matched tracks
+        for d_idx, t_id in matched_pairs:
+            det = detections[d_idx]
+            track = self.tracks[t_id]
+            track["missing"] = 0
+
+            # Smooth bbox
+            raw_box = np.array(det["bbox"], dtype=np.float32)
+            smooth_box = track["filter_box"](raw_box, t_sec)
+            det["bbox"] = smooth_box.tolist()
+
+            # Smooth keypoints
+            raw_kpts = np.array([[kp["x"], kp["y"]] for kp in det["keypoints"]], dtype=np.float32)
+            smooth_kpts = track["filter_kpts"](raw_kpts, t_sec)
+
+            for k_i, kp in enumerate(det["keypoints"]):
+                kp["x"] = float(smooth_kpts[k_i, 0])
+                kp["y"] = float(smooth_kpts[k_i, 1])
+
+            # Class majority lock
+            track["class_history"].append(det["class_id"])
+            if len(track["class_history"]) > 15:
+                track["class_history"].pop(0)
+            majority_cls = 0 if track["class_history"].count(0) > track["class_history"].count(1) else 1
+            det["class_id"] = majority_cls
+            det["class_name"] = "left_foot" if majority_cls == 0 else "right_foot"
+
+            track["bbox"] = det["bbox"]
+            det["track_id"] = t_id
+            updated_detections.append(det)
+
+        # Create new tracks for unmatched detections
+        for d_idx in unmatched_dets:
+            if d_idx not in matched_d_indices:
+                det = detections[d_idx]
+                t_id = self.next_id
+                self.next_id += 1
+                self.tracks[t_id] = {
+                    "bbox": det["bbox"],
+                    "filter_box": OneEuroFilter(min_cutoff=1.2, beta=0.005),
+                    "filter_kpts": OneEuroFilter(min_cutoff=0.8, beta=0.005),
+                    "class_history": [det["class_id"]],
+                    "missing": 0
+                }
+                det["track_id"] = t_id
+                updated_detections.append(det)
+
+        # Increment missing count and prune dead tracks
+        dead_ids = []
+        for t_id in unmatched_tracks:
+            self.tracks[t_id]["missing"] += 1
+            if self.tracks[t_id]["missing"] > self.max_missing:
+                dead_ids.append(t_id)
+        for d_id in dead_ids:
+            del self.tracks[d_id]
+
+        return updated_detections
+
+
+def compute_iou(b1, b2):
+    ix1 = max(b1[0], b2[0])
+    iy1 = max(b1[1], b2[1])
+    ix2 = min(b1[2], b2[2])
+    iy2 = min(b1[3], b2[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    a1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
+    a2 = (b2[2] - b2[0]) * (b2[3] - b2[1])
+    return inter / (a1 + a2 - inter + 1e-7)
 
 
 def letterbox(img, size=320):
-    """Letterbox resize image preserving aspect ratio with pad 114."""
     h, w = img.shape[:2]
     scale = min(size / w, size / h)
     new_w, new_h = int(round(w * scale)), int(round(h * scale))
@@ -103,19 +235,21 @@ def letterbox(img, size=320):
     return canvas, scale, pad_x, pad_y
 
 
-def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0.25, nms_thresh=0.45, kpt_thresh=0.30):
+def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0.28, nms_thresh=0.45, kpt_thresh=0.30, dedup_iou=0.60):
     """
-    Decodes the raw [1, 54, 2100] output tensor with Per-Class Independent NMS.
+    Decodes the raw [1, 54, 2100] output tensor:
+      1. Candidate thresholding (using direct sigmoid probabilities).
+      2. Per-Class Independent NMS.
+      3. Physical Foot De-duplication (Cross-Class IoU > dedup_iou resolver).
     """
     out = raw_output[0] if isinstance(raw_output, list) else raw_output
     if out.ndim == 3:
-        out = out[0]  # [54, 2100]
+        out = out[0]
     
     num_anchors = out.shape[1]
     candidates = []
 
     for i in range(num_anchors):
-        cx, cy, bw, bh = out[0, i], out[1, i], out[2, i], out[3, i]
         score_left = float(out[4, i])
         score_right = float(out[5, i])
         max_score = max(score_left, score_right)
@@ -123,29 +257,19 @@ def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0
         if max_score < conf_thresh:
             continue
 
+        cx, cy, bw, bh = out[0, i], out[1, i], out[2, i], out[3, i]
         class_id = 0 if score_left >= score_right else 1
 
-        # Transform box back to original coordinates
-        x1 = ((cx - bw / 2.0) - pad_x) / scale
-        y1 = ((cy - bh / 2.0) - pad_y) / scale
-        x2 = ((cx + bw / 2.0) - pad_x) / scale
-        y2 = ((cy + bh / 2.0) - pad_y) / scale
+        x1 = max(0.0, min(orig_w, ((cx - bw / 2.0) - pad_x) / scale))
+        y1 = max(0.0, min(orig_h, ((cy - bh / 2.0) - pad_y) / scale))
+        x2 = max(0.0, min(orig_w, ((cx + bw / 2.0) - pad_x) / scale))
+        y2 = max(0.0, min(orig_h, ((cy + bh / 2.0) - pad_y) / scale))
 
-        x1 = max(0.0, min(orig_w, x1))
-        y1 = max(0.0, min(orig_h, y1))
-        x2 = max(0.0, min(orig_w, x2))
-        y2 = max(0.0, min(orig_h, y2))
-
-        # Decode 16 keypoints
         keypoints = []
         for k in range(16):
-            kx_raw = out[6 + k * 3, i]
-            ky_raw = out[7 + k * 3, i]
-            kv_raw = out[8 + k * 3, i]
-
-            kx = ((kx_raw - pad_x) / scale)
-            ky = ((ky_raw - pad_y) / scale)
-            kv = float(kv_raw)
+            kx = ((out[6 + k * 3, i] - pad_x) / scale)
+            ky = ((out[7 + k * 3, i] - pad_y) / scale)
+            kv = float(out[8 + k * 3, i])
 
             keypoints.append({
                 "index": k,
@@ -156,7 +280,6 @@ def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0
                 "visible": kv >= kpt_thresh
             })
 
-
         candidates.append({
             "class_id": class_id,
             "class_name": "left_foot" if class_id == 0 else "right_foot",
@@ -165,8 +288,8 @@ def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0
             "keypoints": keypoints
         })
 
-    # Independent Per-Class NMS
-    final_detections = []
+    # Step 1: Independent Per-Class NMS
+    nmed_detections = []
     for target_cls in [0, 1]:
         cls_dets = [d for d in candidates if d["class_id"] == target_cls]
         cls_dets.sort(key=lambda d: d["conf"], reverse=True)
@@ -174,29 +297,31 @@ def decode_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_thresh=0
         kept = []
         for det in cls_dets:
             suppress = False
-            b1 = det["bbox"]
             for k in kept:
-                b2 = k["bbox"]
-                ix1 = max(b1[0], b2[0])
-                iy1 = max(b1[1], b2[1])
-                ix2 = min(b1[2], b2[2])
-                iy2 = min(b1[3], b2[3])
-                inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-                a1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
-                a2 = (b2[2] - b2[0]) * (b2[3] - b2[1])
-                iou = inter / (a1 + a2 - inter + 1e-7)
-                if iou > nms_thresh:
+                if compute_iou(det["bbox"], k["bbox"]) > nms_thresh:
                     suppress = True
                     break
             if not suppress:
                 kept.append(det)
-        final_detections.extend(kept)
+        nmed_detections.extend(kept)
 
-    return sorted(final_detections, key=lambda d: d["conf"], reverse=True)
+    # Step 2: Physical Foot De-duplication (Cross-Class IoU > dedup_iou)
+    # If two boxes of DIFFERENT classes cover the exact same foot (IoU > 0.60), keep the higher confidence one.
+    nmed_detections.sort(key=lambda d: d["conf"], reverse=True)
+    deduped = []
+    for det in nmed_detections:
+        duplicate = False
+        for k in deduped:
+            if compute_iou(det["bbox"], k["bbox"]) > dedup_iou:
+                duplicate = True
+                break
+        if not duplicate:
+            deduped.append(det)
+
+    return deduped
 
 
 def draw_visuals(frame, detections, fps=0.0, lat_ms=0.0, show_labels=False, show_indices=False):
-    """Renders sleek bounding boxes, skeleton, keypoints, and HUD overlay."""
     overlay = frame.copy()
     h, w = frame.shape[:2]
 
@@ -205,44 +330,45 @@ def draw_visuals(frame, detections, fps=0.0, lat_ms=0.0, show_labels=False, show
         conf = det["conf"]
         bbox = det["bbox"]
         kpts = det["keypoints"]
+        track_id = det.get("track_id", None)
         scheme = COLOR_LEFT if cls_id == 0 else COLOR_RIGHT
         color_bgr = scheme["bbox"]
         skel_color = scheme["skeleton"]
 
         x1, y1, x2, y2 = [int(v) for v in bbox]
 
-        # Draw semi-transparent bounding box fill + clean outline
+        # Draw semi-transparent bounding box
         cv2.rectangle(overlay, (x1, y1), (x2, y2), color_bgr, -1)
         cv2.rectangle(frame, (x1, y1), (x2, y2), color_bgr, 2, cv2.LINE_AA)
 
-        # Draw Label Header
-        label_text = f"{scheme['name']} {conf:.0%}"
+        # Label Header with Track ID
+        t_tag = f" ID:{track_id}" if track_id is not None else ""
+        label_text = f"{scheme['name']}{t_tag} {conf:.0%}"
         font = cv2.FONT_HERSHEY_DUPLEX
         font_scale = 0.55
         thickness = 1
-        (txt_w, txt_h), baseline = cv2.getTextSize(label_text, font, font_scale, thickness)
+        (txt_w, txt_h), _ = cv2.getTextSize(label_text, font, font_scale, thickness)
         
         cv2.rectangle(frame, (x1, max(0, y1 - txt_h - 10)), (x1 + txt_w + 12, y1), color_bgr, -1)
         cv2.putText(frame, label_text, (x1 + 6, max(txt_h + 2, y1 - 4)), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
 
-        # Draw Skeleton lines
+        # Skeleton connections
         for p1_idx, p2_idx in SKELETON_PAIRS:
             kp1 = kpts[p1_idx]
             kp2 = kpts[p2_idx]
             if kp1["visible"] and kp2["visible"]:
-                pt1 = (int(kp1["x"]), int(kp1["y"]))
-                pt2 = (int(kp2["x"]), int(kp2["y"]))
+                pt1 = (int(round(kp1["x"])), int(round(kp1["y"])))
+                pt2 = (int(round(kp2["x"])), int(round(kp2["y"])))
                 cv2.line(frame, pt1, pt2, skel_color, 2, cv2.LINE_AA)
 
-        # Draw Keypoint dots & optional tags
+        # Keypoints
         for kp in kpts:
             if not kp["visible"]:
                 continue
-            kx, ky = int(kp["x"]), int(kp["y"])
+            kx, ky = int(round(kp["x"])), int(round(kp["y"]))
             if kx < 0 or kx >= w or ky < 0 or ky >= h:
                 continue
 
-            # Outer ring & Inner dot
             cv2.circle(frame, (kx, ky), 5, (0, 0, 0), -1, cv2.LINE_AA)
             cv2.circle(frame, (kx, ky), 4, scheme["kpt"], -1, cv2.LINE_AA)
 
@@ -253,10 +379,9 @@ def draw_visuals(frame, detections, fps=0.0, lat_ms=0.0, show_labels=False, show
                 tag = f"{kp['index']}:{kp['name']}"
                 cv2.putText(frame, tag, (kx + 6, ky - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1, cv2.LINE_AA)
 
-    # Blend semi-transparent box fill (alpha=0.12)
     cv2.addWeighted(overlay, 0.12, frame, 0.88, 0, frame)
 
-    # ── Top HUD (Live Telemetry) ──────────────────────────────────────────────
+    # Telemetry HUD
     hud_h = 42
     hud_bg = frame[:hud_h, :].copy()
     cv2.rectangle(hud_bg, (0, 0), (w, hud_h), (20, 20, 25), -1)
@@ -265,7 +390,6 @@ def draw_visuals(frame, detections, fps=0.0, lat_ms=0.0, show_labels=False, show
     hud_text = f"Shoes VTO Stage A | FPS: {fps:5.1f} | Latency: {lat_ms:4.1f} ms | Detected: {len(detections)} feet"
     cv2.putText(frame, hud_text, (15, 26), cv2.FONT_HERSHEY_DUPLEX, 0.55, (0, 230, 255), 1, cv2.LINE_AA)
 
-    # Legend on top right
     leg_x = w - 240
     cv2.circle(frame, (leg_x, 22), 6, COLOR_LEFT["bbox"], -1)
     cv2.putText(frame, "Left Foot", (leg_x + 12, 26), cv2.FONT_HERSHEY_DUPLEX, 0.45, (230, 230, 230), 1, cv2.LINE_AA)
@@ -277,19 +401,21 @@ def draw_visuals(frame, detections, fps=0.0, lat_ms=0.0, show_labels=False, show
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Shoes VTO Stage A 16-KP Model on Video.")
+    parser = argparse.ArgumentParser(description="Run Shoes VTO Stage A with Post-Processing.")
     parser.add_argument("--video", type=str, default="test_video.mp4", help="Path to input video file")
-    parser.add_argument("--model", type=str, default="models/stage-a-320-16kp-fp32.onnx", help="Path to Stage A ONNX model")
+    parser.add_argument("--model", type=str, default="models/stage-a-320-16kp-fp32.onnx", help="Path to ONNX model")
     parser.add_argument("--output", type=str, default="annotated_output.mp4", help="Path to save output video")
-    parser.add_argument("--conf", type=float, default=0.25, help="Detection confidence threshold")
-    parser.add_argument("--nms", type=float, default=0.45, help="NMS IoU threshold")
+    parser.add_argument("--conf", type=float, default=0.28, help="Detection confidence threshold")
+    parser.add_argument("--nms", type=float, default=0.45, help="Per-Class NMS IoU threshold")
+    parser.add_argument("--dedup-iou", type=float, default=0.60, help="Duplicate physical foot IoU threshold")
     parser.add_argument("--kpt-thresh", type=float, default=0.30, help="Keypoint visibility threshold")
-    parser.add_argument("--show-indices", action="store_true", help="Display numeric index on each keypoint")
-    parser.add_argument("--show-labels", action="store_true", help="Display keypoint names on video")
-    parser.add_argument("--max-frames", type=int, default=0, help="Stop after N frames (0 = full video)")
+    parser.add_argument("--smooth", action="store_true", default=True, help="Enable One-Euro temporal smoothing")
+    parser.add_argument("--no-smooth", dest="smooth", action="store_false", help="Disable temporal smoothing")
+    parser.add_argument("--show-indices", action="store_true", help="Display numeric index on keypoints")
+    parser.add_argument("--show-labels", action="store_true", help="Display keypoint names")
+    parser.add_argument("--max-frames", type=int, default=0, help="Stop after N frames (0 = full)")
     args = parser.parse_args()
 
-    # Search paths if running from root or demo folder
     video_path = args.video
     if not os.path.exists(video_path):
         alt_video = os.path.join(os.path.dirname(__file__), "..", args.video)
@@ -309,13 +435,13 @@ def main():
             sys.exit(1)
 
     print("=" * 70)
-    print("  SHOES VTO STAGE A — 16-KP VIDEO DEMO")
-    print(f"  Video:  {video_path}")
-    print(f"  Model:  {model_path}")
-    print(f"  Output: {args.output}")
+    print("  SHOES VTO STAGE A — ADVANCED VIDEO DEMO")
+    print(f"  Video:        {video_path}")
+    print(f"  Model:        {model_path}")
+    print(f"  Output:       {args.output}")
+    print(f"  Post-Process: Temporal Smoothing={'ON' if args.smooth else 'OFF'} | De-dup IoU={args.dedup_iou}")
     print("=" * 70)
 
-    # Initialize ONNX session
     providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
     session = ort.InferenceSession(model_path, providers=providers)
     active_provider = session.get_providers()[0]
@@ -325,9 +451,7 @@ def main():
     is_fp16 = "float16" in session.get_inputs()[0].type
 
     print(f"  [OK] Session initialized on: {active_provider}")
-    print(f"  [OK] Model input: {input_shape} | dtype: {session.get_inputs()[0].type}")
 
-    # Open Video
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"[ERROR] Could not open video: {video_path}")
@@ -343,10 +467,10 @@ def main():
 
     print(f"  [OK] Video Info: {orig_w}x{orig_h} @ {video_fps:.1f} FPS | Total: {total_frames} frames\n")
 
-    # Output Video Writer
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(args.output, fourcc, video_fps, (orig_w, orig_h))
 
+    tracker = FootTracker() if args.smooth else None
     frame_idx = 0
     fps_history = []
     t_start_all = time.perf_counter()
@@ -357,9 +481,10 @@ def main():
             break
 
         frame_idx += 1
+        t_sec = frame_idx / video_fps
         t0 = time.perf_counter()
 
-        # 1. Letterbox Preprocess
+        # 1. Letterbox
         lb_img, scale, pad_x, pad_y = letterbox(frame, img_size)
         lb_rgb = cv2.cvtColor(lb_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         if is_fp16:
@@ -367,36 +492,38 @@ def main():
 
         tensor_in = np.transpose(lb_rgb, (2, 0, 1))[np.newaxis]
 
-        # 2. Model Inference
+        # 2. Inference
         raw_output = session.run(None, {input_name: tensor_in})
 
-        # 3. Decode & Per-Class NMS
+        # 3. Decode & Post-Processing (Per-Class NMS + Physical De-dup)
         detections = decode_output(
             raw_output, orig_w, orig_h, scale, pad_x, pad_y,
-            conf_thresh=args.conf, nms_thresh=args.nms, kpt_thresh=args.kpt_thresh
+            conf_thresh=args.conf, nms_thresh=args.nms, kpt_thresh=args.kpt_thresh,
+            dedup_iou=args.dedup_iou
         )
+
+        # 4. Temporal Tracking & Smoothing
+        if tracker is not None:
+            detections = tracker.update(detections, t_sec=t_sec)
 
         t1 = time.perf_counter()
         infer_latency_ms = (t1 - t0) * 1000.0
-        instant_fps = 1000.0 / max(infer_latency_ms, 0.001)
-        fps_history.append(instant_fps)
+        fps_history.append(1000.0 / max(infer_latency_ms, 0.001))
         if len(fps_history) > 30:
             fps_history.pop(0)
         avg_fps = float(np.mean(fps_history))
 
-        # 4. Draw Visual Overlay
+        # 5. Draw Visual Overlay
         rendered_frame = draw_visuals(
             frame, detections, fps=avg_fps, lat_ms=infer_latency_ms,
             show_labels=args.show_labels, show_indices=args.show_indices
         )
 
-        # 5. Write Frame
         writer.write(rendered_frame)
 
-        # Progress bar
         if frame_idx % 25 == 0 or frame_idx == total_frames:
             pct = (frame_idx / total_frames) * 100
-            sys.stdout.write(f"\r  Processing Frame: {frame_idx:4d}/{total_frames} ({pct:5.1f}%) | Latency: {infer_latency_ms:4.1f} ms | FPS: {avg_fps:4.1f} | Detections: {len(detections)}")
+            sys.stdout.write(f"\r  Frame: {frame_idx:4d}/{total_frames} ({pct:5.1f}%) | Latency: {infer_latency_ms:4.1f} ms | FPS: {avg_fps:4.1f} | Active Feet: {len(detections)}")
             sys.stdout.flush()
 
     cap.release()
