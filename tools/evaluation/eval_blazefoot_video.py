@@ -30,6 +30,11 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+# Ensure project root is in sys.path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 # 4 Coarse Keypoint Names & Colors (BGR)
 KP_NAMES = ["toe_tip", "heel_back", "ball_medial", "ball_lateral"]
 KP_COLORS = [
