@@ -1,13 +1,13 @@
 """
 loss.py
 ───────
-Composite Loss functions for Google BlazeFoot 4-Keypoint Training.
+Composite Loss functions for Google BlazeFoot 4-Keypoint Training with Anchor-Relative Decoding.
 
 Components:
   1. Sigmoid Focal Loss for Foot Detection / Classification (Left/Right vs Background)
      - Down-weights easy background anchors (gamma=1.5, alpha=0.75) to prevent positive score suppression.
-  2. Complete IoU (CIoU) Loss for Bounding Boxes (cx, cy, w, h)
-  3. Adaptive Wing Loss on 4 Coarse Keypoint coordinates in pixel space (omega=10.0, eps=2.0)
+  2. Complete IoU (CIoU) Loss on Anchor-Decoded Bounding Boxes (cx, cy, w, h)
+  3. Adaptive Wing Loss on Anchor-Decoded 4 Coarse Keypoint coordinates in pixel space (omega=10.0, eps=2.0)
   4. BCE Loss for Keypoint Visibility
 """
 
@@ -16,6 +16,8 @@ from typing import Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from .dataset import generate_blaze_anchors
 
 
 def sigmoid_focal_loss(
@@ -120,9 +122,9 @@ def bbox_ciou_loss(pred_boxes: torch.Tensor, target_boxes: torch.Tensor, eps: fl
     center_dist = (pred_boxes[:, 0] - target_boxes[:, 0])**2 + (pred_boxes[:, 1] - target_boxes[:, 1])**2
 
     # Aspect ratio term v and alpha
-    w1, h1 = pred_boxes[:, 2], pred_boxes[:, 3]
-    w2, h2 = target_boxes[:, 2], target_boxes[:, 3]
-    v = (4.0 / (math.pi**2)) * torch.pow(torch.atan(w2 / (h2 + eps)) - torch.atan(w1 / (h1 + eps)), 2)
+    w1, h1 = pred_boxes[:, 2].clamp(min=1e-4), pred_boxes[:, 3].clamp(min=1e-4)
+    w2, h2 = target_boxes[:, 2].clamp(min=1e-4), target_boxes[:, 3].clamp(min=1e-4)
+    v = (4.0 / (math.pi**2)) * torch.pow(torch.atan(w2 / h2) - torch.atan(w1 / h1), 2)
     with torch.no_grad():
         alpha = v / (1.0 - iou + v + eps)
 
@@ -133,7 +135,7 @@ def bbox_ciou_loss(pred_boxes: torch.Tensor, target_boxes: torch.Tensor, eps: fl
 
 class BlazeFootLoss(nn.Module):
     """
-    Unified Loss for BlazeFoot 4-Keypoint multi-task learning.
+    Unified Loss for BlazeFoot 4-Keypoint multi-task learning with Anchor-Relative Decoding.
     """
     def __init__(
         self,
@@ -152,17 +154,18 @@ class BlazeFootLoss(nn.Module):
         self.focal_gamma = focal_gamma
         self.img_size = float(img_size)
 
+        self.register_buffer("anchors", generate_blaze_anchors(img_size))
         self.wing_loss = WingLoss(omega=10.0, epsilon=2.0)
         self.vis_bce = nn.BCEWithLogitsLoss(reduction='mean')
 
     def forward(
         self,
-        cls_preds: torch.Tensor,   # [B, N, 2]
-        box_preds: torch.Tensor,   # [B, N, 4]
-        kpt_preds: torch.Tensor,   # [B, N, 12] (4 keypoints * 3)
+        cls_preds: torch.Tensor,   # [B, N, 2] logits
+        box_preds: torch.Tensor,   # [B, N, 4] raw delta logits
+        kpt_preds: torch.Tensor,   # [B, N, 12] raw delta logits
         target_cls: torch.Tensor,  # [B, N, 2]
-        target_box: torch.Tensor,  # [B, N, 4]
-        target_kpt: torch.Tensor,  # [B, N, 12]
+        target_box: torch.Tensor,  # [B, N, 4] (cx, cy, w, h) in [0, 1]
+        target_kpt: torch.Tensor,  # [B, N, 12] (kx, ky, kv) in [0, 1]
         target_mask: torch.Tensor  # [B, N] bool
     ) -> Dict[str, torch.Tensor]:
 
@@ -179,28 +182,48 @@ class BlazeFootLoss(nn.Module):
         )
         loss_cls = focal_loss_all.sum() / num_pos
 
-        # ── 2. Box Loss (CIoU) ───────────────────────────────────────────
-        pred_boxes_sig = torch.sigmoid(box_preds)
+        # ── 2. Box Loss (CIoU on Anchor-Decoded Boxes) ───────────────────
         if pos_mask.any():
-            pos_pred_boxes = pred_boxes_sig[pos_mask]
-            pos_tgt_boxes  = target_box[pos_mask]
-            loss_box = bbox_ciou_loss(pos_pred_boxes, pos_tgt_boxes)
+            B, N = cls_preds.shape[:2]
+            # Repeat anchors for batch dimension
+            batch_anchors = self.anchors.unsqueeze(0).expand(B, N, 4)
+            pos_anchors = batch_anchors[pos_mask]
+
+            ax = pos_anchors[:, 0]
+            ay = pos_anchors[:, 1]
+            aw = pos_anchors[:, 2]
+            ah = pos_anchors[:, 3]
+
+            pos_bx_raw = box_preds[pos_mask]
+            dec_cx = ax + pos_bx_raw[:, 0] * aw
+            dec_cy = ay + pos_bx_raw[:, 1] * ah
+            dec_w  = aw * torch.exp(torch.clamp(pos_bx_raw[:, 2], -4.0, 4.0))
+            dec_h  = ah * torch.exp(torch.clamp(pos_bx_raw[:, 3], -4.0, 4.0))
+            pos_dec_boxes = torch.stack([dec_cx, dec_cy, dec_w, dec_h], dim=-1)
+
+            pos_tgt_boxes = target_box[pos_mask]
+            loss_box = bbox_ciou_loss(pos_dec_boxes, pos_tgt_boxes)
         else:
             loss_box = torch.tensor(0.0, device=cls_preds.device)
 
-        # ── 3. 4-Keypoint Loss (Pixel-Scale Wing Loss + Visibility BCE) ──
+        # ── 3. Keypoint Loss (Pixel-Scale Wing Loss on Anchor-Decoded KPs) ──
         if pos_mask.any():
-            pos_kpt_pred = torch.sigmoid(kpt_preds[pos_mask]) # [M, 12]
-            pos_kpt_tgt  = target_kpt[pos_mask]               # [M, 12]
+            pos_kpt_raw = kpt_preds[pos_mask] # [M, 12]
+            pos_tgt_kpt = target_kpt[pos_mask] # [M, 12]
 
-            # 4 Keypoints -> 8 (x,y) coords + 4 visibilities (Scaled to pixel space: 320x320)
-            pred_xy_px = pos_kpt_pred.view(-1, 4, 3)[:, :, :2].reshape(-1, 8) * self.img_size
-            tgt_xy_px  = pos_kpt_tgt.view(-1, 4, 3)[:, :, :2].reshape(-1, 8) * self.img_size
-            tgt_vis = (pos_kpt_tgt.view(-1, 4, 3)[:, :, 2] > 0).float() # [M, 4]
+            dec_kpts_px = []
+            for k in range(4):
+                dec_kx = (ax + pos_kpt_raw[:, k * 3] * aw) * self.img_size
+                dec_ky = (ay + pos_kpt_raw[:, k * 3 + 1] * ah) * self.img_size
+                dec_kpts_px.extend([dec_kx, dec_ky])
+
+            pred_xy_px = torch.stack(dec_kpts_px, dim=-1) # [M, 8]
+            tgt_xy_px  = pos_tgt_kpt.view(-1, 4, 3)[:, :, :2].reshape(-1, 8) * self.img_size
+            tgt_vis    = (pos_tgt_kpt.view(-1, 4, 3)[:, :, 2] > 0).float() # [M, 4]
 
             loss_kpt_coords = self.wing_loss(pred_xy_px.unsqueeze(0), tgt_xy_px.unsqueeze(0), tgt_vis.unsqueeze(0))
 
-            pred_vis_logits = kpt_preds[pos_mask].view(-1, 4, 3)[:, :, 2]
+            pred_vis_logits = pos_kpt_raw.view(-1, 4, 3)[:, :, 2]
             loss_vis = self.vis_bce(pred_vis_logits, tgt_vis)
 
             loss_kpt = loss_kpt_coords + loss_vis

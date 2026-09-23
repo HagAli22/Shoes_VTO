@@ -6,12 +6,13 @@ Ultra High-Performance Direct-to-VRAM GPU Dataset Loader for BlazeFoot 4-Keypoin
 Optimizations:
   1. Direct-to-VRAM: All training and validation images & targets are preloaded into GPU memory (VRAM).
   2. Zero-Copy Batch Slicing: Batches are indexed directly in GPU VRAM (0 CPU/GPU transfers per epoch).
-  3. GPU-Native Fast Augmentation: Color/contrast/brightness operations executed in parallel on CUDA cores.
+  3. Scale-Aware Geometrical Anchor Matching: Assigns target objects to anchors matching both location and scale.
   4. Audited 4-Keypoint Indices: [11: toe_tip, 1: heel_back, 3: ball_medial, 4: ball_lateral].
 """
 
 import os
 import glob
+import math
 from typing import Dict, Tuple
 import cv2
 import numpy as np
@@ -55,11 +56,10 @@ def load_dataset_to_gpu(
     split: str = "train",
     img_size: int = 320,
     device: torch.device = torch.device("cuda:0")
-) -> Dict[str, torch.Tensor]:
+) -> Dict[str, any]:
     """
     Loads all images and precomputes anchor targets directly into GPU VRAM.
     """
-    # Smart directory resolution
     resolved_root = data_root
     candidate_img_dir = os.path.join(resolved_root, split, "images")
     if not os.path.exists(candidate_img_dir) or len(glob.glob(os.path.join(candidate_img_dir, "*.*"))) == 0:
@@ -83,6 +83,7 @@ def load_dataset_to_gpu(
     anchors = generate_blaze_anchors(img_size)
     num_anchors = len(anchors)
     anchor_centers = anchors[:, :2].clone()
+    anchor_scales  = anchors[:, 2].clone()
 
     print(f"  [⚡ Direct-VRAM] Loading {N} '{split}' images directly into GPU memory ({device})...")
 
@@ -97,7 +98,7 @@ def load_dataset_to_gpu(
         im = cv2.imread(p)
         if im is None:
             im = np.zeros((img_size, img_size, 3), dtype=np.uint8)
-        
+
         h_orig, w_orig = im.shape[:2]
         im_resized = cv2.resize(im, (img_size, img_size), interpolation=cv2.INTER_LINEAR)
         im_rgb = cv2.cvtColor(im_resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
@@ -110,7 +111,7 @@ def load_dataset_to_gpu(
         t_box = torch.zeros((num_anchors, 4), dtype=torch.float32)
         t_kpt = torch.zeros((num_anchors, 12), dtype=torch.float32)
         t_mask = torch.zeros(num_anchors, dtype=torch.bool)
-        # Collect clean ground-truth objects for evaluation / mAP calculation
+
         raw_boxes = []
         raw_classes = []
         raw_kpts = []
@@ -154,10 +155,25 @@ def load_dataset_to_gpu(
 
                     kpts_tensor = torch.tensor(kpts_norm, dtype=torch.float32)
                     box_ctr = torch.tensor([cx, cy], dtype=torch.float32)
-                    dists = torch.norm(anchor_centers - box_ctr, dim=1)
-                    closest_anchors = torch.topk(dists, 6, largest=False).indices
+                    s_foot = math.sqrt(bw * bh)
 
-                    for a_idx in closest_anchors:
+                    # Smart Scale-Aware & Geometric Center Matching
+                    dists = torch.norm(anchor_centers - box_ctr, dim=1) # [1050]
+                    scale_diffs = torch.abs(torch.log(anchor_scales / (s_foot + 1e-6))) # [1050]
+
+                    # Anchors geometrically inside the bounding box
+                    in_box = (
+                        (anchors[:, 0] >= cx - bw * 0.55) & (anchors[:, 0] <= cx + bw * 0.55) &
+                        (anchors[:, 1] >= cy - bh * 0.55) & (anchors[:, 1] <= cy + bh * 0.55)
+                    )
+
+                    cost = dists / (s_foot + 1e-4) + 0.75 * scale_diffs
+                    cost = torch.where(in_box, cost, cost + 5.0)
+
+                    # Match top 6 best matching anchors for this foot
+                    matched_anchors = torch.topk(cost, 6, largest=False).indices
+
+                    for a_idx in matched_anchors:
                         t_mask[a_idx] = True
                         t_cls[a_idx, cls_id] = 1.0
                         t_box[a_idx] = torch.tensor([cx, cy, bw, bh], dtype=torch.float32)
@@ -196,5 +212,6 @@ def load_dataset_to_gpu(
         "target_kpt": all_kpt,
         "target_mask": all_mask,
         "raw_targets": raw_targets,
+        "anchors": anchors.to(device),
         "count": N
     }

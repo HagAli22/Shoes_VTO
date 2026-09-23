@@ -5,11 +5,11 @@ Google BlazeFoot (MediaPipe / BlazePose style) 4-Keypoint Native Perception Netw
 
 Optimized strictly for Path A Contract:
   - Input: [B, 3, 320, 320]
-  - Outputs:
-      - Box Reg:   [B, N, 4]  (cx, cy, w, h)
-      - Class:     [B, N, 2]  (left_foot, right_foot)
-      - 4 Coarse:  [B, N, 12] (4 landmarks: toe_tip, heel_back, ball_medial, ball_lateral)
+  - Multi-Scale Anchors: 1050 (P3: 800, P4: 200, P5: 50)
   - Native Output: [B, 18, 1050] (Zero slicing overhead!)
+      - Rows 0..3: cx, cy, w, h in [0, 1]
+      - Rows 4..5: left_foot, right_foot class probabilities in [0, 1]
+      - Rows 6..17: 4 coarse keypoints (toe_tip, heel_back, ball_medial, ball_lateral)
   - Total Parameters: ~574K parameters (FP32: ~2.30 MB, FP16: ~1.15 MB, INT8: ~0.58 MB)
 """
 
@@ -19,6 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .blazeblock import BlazeBlock, DoubleBlazeBlock
+from .dataset import generate_blaze_anchors
 
 
 class BlazeFoot(nn.Module):
@@ -101,7 +102,7 @@ class BlazeFoot(nn.Module):
                 nn.Conv2d(in_c, in_c, kernel_size=5, padding=2, groups=in_c, bias=False),
                 nn.BatchNorm2d(in_c),
                 nn.PReLU(in_c),
-                nn.Conv2d(in_c, self.num_anchors * (self.num_keypoints * 3), kernel_size=1) # 4 * 3 = 12
+                nn.Conv2d(in_c, self.num_anchors * (self.num_keypoints * 3), kernel_size=1)
             )
         })
 
@@ -149,21 +150,43 @@ class BlazeFoot(nn.Module):
 
 class BlazeFootPathAExport(nn.Module):
     """
-    Direct Export to Path A [1, 18, 1050]:
-      - Rows 0..3: cx, cy, w, h
-      - Rows 4..5: left_foot, right_foot class probabilities
-      - Rows 6..17: 4 coarse keypoints (toe_tip, heel_back, ball_medial, ball_lateral)
+    Direct Export to Path A [1, 18, 1050] with built-in Anchor-Relative Decoding:
+      - Rows 0..3: cx, cy, w, h in [0, 1]
+      - Rows 4..5: left_foot, right_foot class probabilities in [0, 1]
+      - Rows 6..17: 4 coarse keypoints (toe_tip, heel_back, ball_medial, ball_lateral) in [0, 1]
     """
-    def __init__(self, model: BlazeFoot):
+    def __init__(self, model: BlazeFoot, img_size: int = 320):
         super().__init__()
         self.model = model
+        self.register_buffer("anchors", generate_blaze_anchors(img_size))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         cls_logits, box_preds, kpt_preds = self.model(x)
 
-        cls_probs = torch.sigmoid(cls_logits)
-        boxes     = torch.sigmoid(box_preds)
-        kpts      = torch.sigmoid(kpt_preds)
+        # 1. Classification Probabilities
+        cls_probs = torch.sigmoid(cls_logits) # [B, 1050, 2]
+
+        # 2. Anchor-Relative Box Decoding
+        ax = self.anchors[:, 0]
+        ay = self.anchors[:, 1]
+        aw = self.anchors[:, 2]
+        ah = self.anchors[:, 3]
+
+        cx = ax + box_preds[..., 0] * aw
+        cy = ay + box_preds[..., 1] * ah
+        w  = aw * torch.exp(torch.clamp(box_preds[..., 2], -4.0, 4.0))
+        h  = ah * torch.exp(torch.clamp(box_preds[..., 3], -4.0, 4.0))
+        boxes = torch.stack([cx, cy, w, h], dim=-1).clamp(0.0, 1.0) # [B, 1050, 4]
+
+        # 3. Anchor-Relative 4-Keypoint Decoding
+        kpt_out_list = []
+        for k in range(4):
+            kx = ax + kpt_preds[..., k * 3] * aw
+            ky = ay + kpt_preds[..., k * 3 + 1] * ah
+            kv = torch.sigmoid(kpt_preds[..., k * 3 + 2])
+            kpt_out_list.extend([kx.clamp(0.0, 1.0), ky.clamp(0.0, 1.0), kv])
+
+        kpts = torch.stack(kpt_out_list, dim=-1) # [B, 1050, 12]
 
         # Concat [B, 1050, 18] -> Transpose to [B, 18, 1050]
         out = torch.cat([boxes, cls_probs, kpts], dim=-1)

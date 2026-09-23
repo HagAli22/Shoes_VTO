@@ -2,7 +2,7 @@
 train_blazefoot.py
 ──────────────────
 Ultra High-Performance Direct-to-VRAM GPU Training Pipeline for Google BlazeFoot.
-Equipped with YOLOv8-Style Real-Time Validation:
+Equipped with YOLOv8-Style Real-Time Validation & Anchor-Relative Coordinates:
   - Bounding Box: Precision(B), Recall(B), mAP50(B), mAP50-95(B)
   - 4-Keypoint Pose: Precision(P), Recall(P), mAP50(P), mAP50-95(P) (via OKS)
   - Class breakdown table (all, left_foot, right_foot)
@@ -22,7 +22,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, SequentialLR, LinearLR
 from torch.amp import autocast, GradScaler
 
 from .blazefoot_detector import BlazeFoot
-from .dataset import load_dataset_to_gpu
+from .dataset import load_dataset_to_gpu, generate_blaze_anchors
 from .loss import BlazeFootLoss
 from .metrics import evaluate_detections, print_yolo_metrics_table
 
@@ -37,22 +37,27 @@ def decode_predictions(
     cls_preds: torch.Tensor,
     box_preds: torch.Tensor,
     kpt_preds: torch.Tensor,
+    anchors: torch.Tensor,
     img_size: int = 320,
     conf_thresh: float = 0.20,
     nms_iou_thresh: float = 0.45
 ) -> List[Dict]:
     """
-    Decodes model outputs to pixel coordinates and applies batched NMS per image on GPU.
+    Decodes anchor-relative predictions to pixel coordinates and applies batched NMS per image on GPU.
     """
     B = cls_preds.shape[0]
     cls_scores = torch.sigmoid(cls_preds) # [B, 1050, 2]
-    boxes_norm = torch.sigmoid(box_preds) # [B, 1050, 4] (cx, cy, w, h)
-    kpts_norm = torch.sigmoid(kpt_preds)  # [B, 1050, 12]
 
-    cx = boxes_norm[..., 0] * img_size
-    cy = boxes_norm[..., 1] * img_size
-    bw = boxes_norm[..., 2] * img_size
-    bh = boxes_norm[..., 3] * img_size
+    # Decode boxes with anchors
+    ax = anchors[:, 0]
+    ay = anchors[:, 1]
+    aw = anchors[:, 2]
+    ah = anchors[:, 3]
+
+    cx = (ax + box_preds[..., 0] * aw) * img_size
+    cy = (ay + box_preds[..., 1] * ah) * img_size
+    bw = (aw * torch.exp(torch.clamp(box_preds[..., 2], -4.0, 4.0))) * img_size
+    bh = (ah * torch.exp(torch.clamp(box_preds[..., 3], -4.0, 4.0))) * img_size
 
     x1 = (cx - bw / 2.0).clamp(0, img_size)
     y1 = (cy - bh / 2.0).clamp(0, img_size)
@@ -60,11 +65,14 @@ def decode_predictions(
     y2 = (cy + bh / 2.0).clamp(0, img_size)
     boxes_px = torch.stack([x1, y1, x2, y2], dim=-1) # [B, 1050, 4]
 
-    kpts_px = kpts_norm.view(B, 1050, 4, 3)
-    kpts_px = torch.cat([
-        kpts_px[..., :2] * img_size,
-        kpts_px[..., 2:3]
-    ], dim=-1)
+    # Decode keypoints with anchors
+    kpts_list = []
+    for k in range(4):
+        kx = ((ax + kpt_preds[..., k * 3] * aw) * img_size).clamp(0, img_size)
+        ky = ((ay + kpt_preds[..., k * 3 + 1] * ah) * img_size).clamp(0, img_size)
+        kv = torch.sigmoid(kpt_preds[..., k * 3 + 2])
+        kpts_list.append(torch.stack([kx, ky, kv], dim=-1))
+    kpts_px = torch.stack(kpts_list, dim=2) # [B, 1050, 4, 3]
 
     batch_preds = []
     for b in range(B):
@@ -175,6 +183,7 @@ def validate_gpu(
     model: nn.Module,
     val_data: Dict[str, torch.Tensor],
     criterion: BlazeFootLoss,
+    anchors: torch.Tensor,
     compute_map: bool = True
 ) -> Dict[str, any]:
     model.eval()
@@ -203,7 +212,7 @@ def validate_gpu(
     }
 
     if compute_map and raw_targets:
-        decoded_preds = decode_predictions(cls_preds, box_preds, kpt_preds, img_size=320, conf_thresh=0.20)
+        decoded_preds = decode_predictions(cls_preds, box_preds, kpt_preds, anchors=anchors, img_size=320, conf_thresh=0.20)
         eval_metrics = evaluate_detections(decoded_preds, raw_targets, num_classes=2)
         res["metrics"] = eval_metrics
         res["p_box"] = eval_metrics["p_box"]
@@ -243,7 +252,7 @@ def main():
     vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9 if device.type == "cuda" else 0.0
 
     print("=" * 105)
-    print("  [⚡] Google BlazeFoot Direct-to-VRAM GPU Engine with Live YOLOv8 Validation Metrics")
+    print("  [⚡] Google BlazeFoot Direct-to-VRAM GPU Engine with Anchor-Relative Decoding")
     print(f"  Device        : {device} ({gpu_name}, {vram_gb:.1f} GB VRAM)")
     print(f"  Dataset       : {args.data}")
     print(f"  Epochs        : {args.epochs} | Batch Size: {args.batch} | LR0: {args.lr0}")
@@ -263,6 +272,7 @@ def main():
     # 2. Preload 100% of Data Directly into GPU VRAM
     train_data = load_dataset_to_gpu(args.data, split="train", img_size=320, device=device)
     val_data   = load_dataset_to_gpu(args.data, split="valid", img_size=320, device=device)
+    anchors    = val_data["anchors"]
 
     # 3. Setup Optimizer, Warmup Scheduler & Scaler
     criterion = BlazeFootLoss().to(device)
@@ -290,7 +300,7 @@ def main():
         train_metrics = train_one_epoch_gpu(model, train_data, criterion, optimizer, scaler, batch_size=args.batch, augment=True)
         
         # Calculate full YOLO metrics (mAP50, mAP50-95) every epoch
-        val_metrics = validate_gpu(model, val_data, criterion, compute_map=True)
+        val_metrics = validate_gpu(model, val_data, criterion, anchors=anchors, compute_map=True)
         scheduler.step()
 
         elapsed = time.time() - t0
