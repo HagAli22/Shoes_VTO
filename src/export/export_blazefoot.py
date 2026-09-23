@@ -74,15 +74,17 @@ def export_blazefoot(
 
     # 2. Export FP32 ONNX
     fp32_path = os.path.join(output_dir, f"{prefix}-fp32.onnx")
-    torch.onnx.export(
-        export_model,
-        dummy_input,
-        fp32_path,
-        opset_version=opset,
-        input_names=["images"],
-        output_names=["output0"],
-        dynamic_axes=None
-    )
+    export_kwargs = {
+        "opset_version": opset,
+        "input_names": ["images"],
+        "output_names": ["output0"],
+        "dynamic_axes": None
+    }
+    try:
+        torch.onnx.export(export_model, dummy_input, fp32_path, dynamo=False, **export_kwargs)
+    except TypeError:
+        torch.onnx.export(export_model, dummy_input, fp32_path, **export_kwargs)
+
     m_fp32 = onnx.load(fp32_path)
     onnx.checker.check_model(m_fp32)
     fp32_size = os.path.getsize(fp32_path) / 1e6
