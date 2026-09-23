@@ -109,6 +109,10 @@ def load_dataset_to_gpu(
         t_box = torch.zeros((num_anchors, 4), dtype=torch.float32)
         t_kpt = torch.zeros((num_anchors, 12), dtype=torch.float32)
         t_mask = torch.zeros(num_anchors, dtype=torch.bool)
+        # Collect clean ground-truth objects for evaluation / mAP calculation
+        raw_boxes = []
+        raw_classes = []
+        raw_kpts = []
 
         if os.path.exists(lbl_path):
             with open(lbl_path, "r", encoding="utf-8") as f:
@@ -123,16 +127,29 @@ def load_dataset_to_gpu(
                     bw = min(max(bw, 0.001), 1.0)
                     bh = min(max(bh, 0.001), 1.0)
 
+                    # Pixel coordinates for mAP eval
+                    x1_px = (cx - bw / 2.0) * img_size
+                    y1_px = (cy - bh / 2.0) * img_size
+                    x2_px = (cx + bw / 2.0) * img_size
+                    y2_px = (cy + bh / 2.0) * img_size
+                    raw_boxes.append([x1_px, y1_px, x2_px, y2_px])
+                    raw_classes.append(cls_id)
+
                     # 4 Audited Keypoints: [11: toe_tip, 1: heel_back, 3: ball_medial, 4: ball_lateral]
                     kpts_norm = []
+                    kpts_px = []
                     if len(parts) >= 5 + 48:
                         for target_idx in COARSE_KP_INDICES:
                             kx_n = float(parts[5 + target_idx * 3])
                             ky_n = float(parts[6 + target_idx * 3])
                             kv   = float(parts[7 + target_idx * 3])
                             kpts_norm.extend([kx_n, ky_n, kv])
+                            kpts_px.append([kx_n * img_size, ky_n * img_size, kv])
                     else:
                         kpts_norm = [0.0] * 12
+                        kpts_px = [[0.0, 0.0, 0.0]] * 4
+
+                    raw_kpts.append(kpts_px)
 
                     kpts_tensor = torch.tensor(kpts_norm, dtype=torch.float32)
                     box_ctr = torch.tensor([cx, cy], dtype=torch.float32)
@@ -149,6 +166,12 @@ def load_dataset_to_gpu(
         target_box_list.append(t_box)
         target_kpt_list.append(t_kpt)
         target_mask_list.append(t_mask)
+
+        raw_targets.append({
+            "boxes": torch.tensor(raw_boxes, dtype=torch.float32, device=device) if raw_boxes else torch.zeros((0, 4), dtype=torch.float32, device=device),
+            "classes": torch.tensor(raw_classes, dtype=torch.int64, device=device) if raw_classes else torch.zeros((0,), dtype=torch.int64, device=device),
+            "keypoints": torch.tensor(raw_kpts, dtype=torch.float32, device=device) if raw_kpts else torch.zeros((0, 4, 3), dtype=torch.float32, device=device)
+        })
 
     # Stack into contiguous GPU tensors
     all_images = torch.stack(images_list, dim=0).to(device)
@@ -171,5 +194,6 @@ def load_dataset_to_gpu(
         "target_box": all_box,
         "target_kpt": all_kpt,
         "target_mask": all_mask,
+        "raw_targets": raw_targets,
         "count": N
     }
