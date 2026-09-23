@@ -17,7 +17,6 @@ Enhancements:
 Each image (e.g. `img_001.jpg`) gets a matching `img_001.txt` containing:
     <class_id> <cx> <cy> <w> <h> <kp0_x> <kp0_y> <kp0_v> ... <kp15_x> <kp15_y> <kp15_v>
 
-Where:
 Where in Roboflow:
     - class_id: 0 = Foot_Right, 1 = Foot_left
     - cx, cy, w, h: normalized box center and dimensions [0, 1]
@@ -37,7 +36,6 @@ import argparse
 import cv2
 import numpy as np
 from tqdm import tqdm
-from ultralytics import YOLO
 
 # ==============================================================================
 # AUDITED & FROZEN 16-KEYPOINT MAPPING & SKELETON DEFINITION
@@ -326,7 +324,6 @@ def auto_annotate(
     max_vis: int = 100
 ) -> dict:
     """
-    Runs inference on all images in input_dir and generates Roboflow-compatible .txt files.
     Runs automated pre-annotation with audited 16-KP mapping, geometric chirality & physical de-duplication.
     """
     if not os.path.exists(input_dir):
@@ -334,7 +331,6 @@ def auto_annotate(
     
     # Check weights fallback
     if not os.path.exists(weights_path):
-        raise FileNotFoundError(f"Model checkpoint not found: {weights_path}")
         fallback_onnx = "deliverables/stage_a_16kp/models/stage-a-320-16kp-fp32.onnx"
         if os.path.exists(fallback_onnx):
             print(f"[!] Primary weights '{weights_path}' not found, falling back to ONNX deliverable: {fallback_onnx}")
@@ -342,7 +338,6 @@ def auto_annotate(
         else:
             raise FileNotFoundError(f"Model checkpoint not found: {weights_path}")
 
-    # Gather all image files
     # Gather image files
     exts = ("*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp")
     image_files = []
@@ -357,37 +352,22 @@ def auto_annotate(
         return {"total_images": 0, "annotated_images": 0}
 
     print("==================================================================")
-    print("  Roboflow Automated Pre-Annotation Pipeline                     ")
     print("  ROBOFLOW AUTOMATED PRE-ANNOTATION PIPELINE (16-KP AUDITED)      ")
     print(f"  Target Folder : {input_dir}")
     print(f"  Total Images  : {total_images}")
     print(f"  Model Weights : {weights_path}")
-    print(f"  Confidence    : {conf_thresh} | IOU Threshold: {iou_thresh}")
     print(f"  Confidence    : {conf_thresh} | Keypoint Thresh: {kpt_thresh}")
     print(f"  Post-Process  : Geometric Chirality={'ON' if use_geom_chirality else 'OFF'} | De-dup IoU={dedup_iou}")
     print(f"  Resolution    : {imgsz}x{imgsz} | Device: {device}")
     print("==================================================================\n")
 
-    # Load YOLO model
-    print("[1] Loading trained YOLOv8-pose model...")
-    model = YOLO(weights_path)
     # Initialize Detector
     print("[1] Initializing Universal Detector Engine...")
     detector = UniversalFootDetector(weights_path=weights_path, device=device, imgsz=imgsz)
 
-    # Optional: Visual preview folder
     vis_dir = os.path.join(input_dir, "annotation_previews") if save_vis else None
     if vis_dir:
         os.makedirs(vis_dir, exist_ok=True)
-
-    # Keypoint skeleton pairs for visualization
-    skeleton = [
-        (0, 1), (1, 3), (3, 2), (2, 14), (14, 15), (14, 12),
-        (12, 10), (12, 11), (12, 13), (13, 7), (7, 6),
-        (6, 4), (6, 5), (4, 8), (5, 9), (0, 4), (0, 5)
-    ]
-    color_left = (0, 230, 70)     # Green
-    color_right = (0, 160, 255)   # Amber
 
     stats = {
         "total_images": total_images,
@@ -408,22 +388,11 @@ def auto_annotate(
         if os.path.exists(txt_path) and not overwrite:
             continue
 
-        # Inference
-        results = model.predict(
-            source=img_path,
-            conf=conf_thresh,
-            iou=iou_thresh,
-            imgsz=imgsz,
-            device=device,
-            verbose=False
-        )[0]
         img_bgr = cv2.imread(img_path)
         if img_bgr is None:
             continue
         h_img, w_img = img_bgr.shape[:2]
 
-        boxes = results.boxes
-        keypoints = results.keypoints
         detections = detector.predict(
             img_bgr,
             conf_thresh=conf_thresh,
@@ -433,29 +402,18 @@ def auto_annotate(
         )
 
         lines = []
-        vis_frame = cv2.imread(img_path) if save_vis else None
-        h_img, w_img = vis_frame.shape[:2] if save_vis else (0, 0)
         vis_frame = img_bgr.copy() if save_vis else None
 
-        num_dets = len(boxes) if boxes is not None else 0
-
-        if num_dets > 0:
         if len(detections) > 0:
             stats["annotated_images"] += 1
-            stats["total_boxes"] += num_dets
             stats["total_boxes"] += len(detections)
 
-            for i in range(num_dets):
-                cls_id = int(boxes.cls[i].item())
-                conf = float(boxes.conf[i].item())
-                cx, cy, w, h = boxes.xywhn[i].tolist()
             for det in detections:
                 model_cls = det["model_cls_id"]
                 conf = det["conf"]
                 bx1, by1, bx2, by2 = det["bbox"]
                 kpts = det["kpts"]
 
-                if cls_id == 0:
                 # Roboflow Class Mapping:
                 # In Roboflow dataset: Class 0 = Foot_Right, Class 1 = Foot_left
                 # In our detector:    Class 0 = left_foot,  Class 1 = right_foot
@@ -467,116 +425,62 @@ def auto_annotate(
                 else:
                     stats["right_feet_count"] += 1
 
-                # Keypoints extraction
-                kpts_xyn = keypoints.xyn[i].tolist() if keypoints is not None else []
-                kpts_conf = (
-                    keypoints.conf[i].tolist()
-                    if keypoints is not None and keypoints.conf is not None
-                    else [1.0] * len(kpts_xyn)
-                )
                 # Normalized Bounding Box center & dimensions
                 cx = ((bx1 + bx2) / 2.0) / w_img
                 cy = ((by1 + by2) / 2.0) / h_img
                 bw = (bx2 - bx1) / w_img
                 bh = (by2 - by1) / h_img
 
-                # Roboflow class mapping: 0 = Foot_Right, 1 = Foot_left
-                # Model outputs: 0 = left_foot, 1 = right_foot
-                roboflow_cls_id = 1 if cls_id == 0 else 0
-
-                # Format Roboflow YOLO pose line
                 line_parts = [
                     str(roboflow_cls_id),
                     f"{np.clip(cx, 0.0, 1.0):.6f}",
                     f"{np.clip(cy, 0.0, 1.0):.6f}",
-                    f"{np.clip(w, 0.0, 1.0):.6f}",
-                    f"{np.clip(h, 0.0, 1.0):.6f}"
                     f"{np.clip(bw, 0.0, 1.0):.6f}",
                     f"{np.clip(bh, 0.0, 1.0):.6f}"
                 ]
 
-                # Exactly 16 keypoints
                 # Exactly 16 keypoints in audited order (0 to 15)
                 pts_for_vis = []
                 for k_idx in range(16):
-                    if k_idx < len(kpts_xyn):
-                        kx, ky = kpts_xyn[k_idx]
-                        kc = kpts_conf[k_idx]
                     if k_idx in kpts:
                         kx_px, ky_px, kc = kpts[k_idx]
                         kx_n = float(np.clip(kx_px / w_img, 0.0, 1.0))
                         ky_n = float(np.clip(ky_px / h_img, 0.0, 1.0))
 
-                        # Clamp
-                        kx = float(np.clip(kx, 0.0, 1.0))
-                        ky = float(np.clip(ky, 0.0, 1.0))
-
                         # Visibility: 0 = absent, 1 = occluded, 2 = visible
-                        if kx <= 1e-5 and ky <= 1e-5:
                         if kx_px <= 1e-5 and ky_px <= 1e-5:
                             v = 0
-                        elif kc < 0.20:
-                            v = 1
                         elif kc < kpt_thresh:
                             v = 1  # Occluded
                         else:
-                            v = 2
                             v = 2  # Visible
 
                         pts_for_vis.append((int(kx_px), int(ky_px), kc, v))
                     else:
-                        kx, ky, v = 0.0, 0.0, 0
                         kx_n, ky_n, v = 0.0, 0.0, 0
                         pts_for_vis.append((0, 0, 0.0, 0))
 
-                    line_parts.extend([f"{kx:.6f}", f"{ky:.6f}", str(v)])
                     line_parts.extend([f"{kx_n:.6f}", f"{ky_n:.6f}", str(v)])
 
                 lines.append(" ".join(line_parts) + "\n")
 
-                # Visual overlay for preview
                 # Visual Overlay for inspection
                 if save_vis and vis_frame is not None:
-                    col = color_left if cls_id == 0 else color_right
-                    label_name = "Left Foot" if cls_id == 0 else "Right Foot"
                     color_info = COLOR_LEFT if model_cls == 0 else COLOR_RIGHT
                     box_color = color_info["box"]
                     skel_color = color_info["skel"]
                     label_text = f"{'Left' if model_cls == 0 else 'Right'} {conf:.0%}"
 
-                    bx1 = int((cx - w / 2.0) * w_img)
-                    by1 = int((cy - h / 2.0) * h_img)
-                    bx2 = int((cx + w / 2.0) * w_img)
-                    by2 = int((cy + h / 2.0) * h_img)
                     # Draw Bounding Box
                     x1_i, y1_i, x2_i, y2_i = int(bx1), int(by1), int(bx2), int(by2)
                     cv2.rectangle(vis_frame, (x1_i, y1_i), (x2_i, y2_i), box_color, 2, cv2.LINE_AA)
 
-                    cv2.rectangle(vis_frame, (bx1, by1), (bx2, by2), col, 2)
-                    cv2.putText(
-                        vis_frame,
-                        f"{label_name} {conf*100:.0f}%",
-                        (bx1, max(20, by1 - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        col,
-                        2,
-                        cv2.LINE_AA,
-                    )
                     # Header badge
                     font = cv2.FONT_HERSHEY_DUPLEX
                     (tw, th), _ = cv2.getTextSize(label_text, font, 0.55, 1)
                     cv2.rectangle(vis_frame, (x1_i, max(0, y1_i - th - 8)), (x1_i + tw + 10, y1_i), box_color, -1)
                     cv2.putText(vis_frame, label_text, (x1_i + 5, max(th + 2, y1_i - 4)), font, 0.55, (0, 0, 0), 1, cv2.LINE_AA)
 
-                    # Draw keypoints and skeleton
-                    pts = []
-                    for k_idx in range(min(16, len(kpts_xyn))):
-                        kx, ky = kpts_xyn[k_idx]
-                        px, py = int(kx * w_img), int(ky * h_img)
-                        pts.append((px, py))
-                        cv2.circle(vis_frame, (px, py), 4, (0, 255, 255), -1)
-                        cv2.circle(vis_frame, (px, py), 5, (0, 0, 0), 1)
                     # Draw Skeleton connections
                     for p1_i, p2_i in SKELETON_PAIRS:
                         if p1_i < len(pts_for_vis) and p2_i < len(pts_for_vis):
@@ -585,11 +489,6 @@ def auto_annotate(
                             if pt1[3] > 0 and pt2[3] > 0:
                                 cv2.line(vis_frame, (pt1[0], pt1[1]), (pt2[0], pt2[1]), skel_color, 1, cv2.LINE_AA)
 
-                    for p1_i, p2_i in skeleton:
-                        if p1_i < len(pts) and p2_i < len(pts):
-                            p1, p2 = pts[p1_i], pts[p2_i]
-                            if p1 != (0, 0) and p2 != (0, 0):
-                                cv2.line(vis_frame, p1, p2, (200, 200, 200), 1, cv2.LINE_AA)
                     # Draw Keypoints (Solid for visible v=2, Hollow ring for occluded v=1)
                     for k_idx, pt in enumerate(pts_for_vis):
                         px, py, kc, v = pt
@@ -608,14 +507,11 @@ def auto_annotate(
         with open(txt_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
 
-        # Save visual preview (first 50 images to conserve disk space)
-        if save_vis and vis_frame is not None and stats["annotated_images"] <= 50:
         # Save visual preview (up to max_vis images to conserve disk space)
         if save_vis and vis_frame is not None and stats["annotated_images"] <= max_vis:
             vis_path = os.path.join(vis_dir, f"vis_{base_name}.jpg")
             cv2.imwrite(vis_path, vis_frame)
 
-    elapsed = time.time() - t0
     elapsed = max(time.time() - t0, 0.001)
 
     # Step 3: Create Roboflow-compatible data.yaml
@@ -629,11 +525,6 @@ def auto_annotate(
             "  0: Foot_Right\n"
             "  1: Foot_left\n\n"
             "kpt_shape: [16, 3]\n\n"
-            "# 16 Frozen Anatomical Keypoints:\n"
-            "# 0: toe_tip, 1: toe_ground, 2: heel_back, 3: heel_ground,\n"
-            "# 4: ball_medial, 5: ball_lateral, 6: ball_top, 7: instep_top,\n"
-            "# 8: arch_medial, 9: midfoot_lateral, 10: malleolus_medial, 11: malleolus_lateral,\n"
-            "# 12: ankle_center, 13: throat, 14: achilles, 15: shin_mid\n"
             "# Official Frozen 16 Anatomical Keypoints Order:\n"
             "#  0: toe_ground        (Inferior contact point under toe box / lateral toe base)\n"
             "#  1: heel_back         (Posterior-most prominence of calcaneus)\n"
@@ -664,8 +555,6 @@ def auto_annotate(
     print(f"  Images With Detections : {stats['annotated_images']} ({stats['annotated_images']/stats['total_images']*100:.1f}%)")
     print(f"  Empty/Background Images: {stats['empty_images']}")
     print(f"  Total Feet Annotated   : {stats['total_boxes']}")
-    print(f"    - Left Feet (class 0): {stats['left_feet_count']}")
-    print(f"    - Right Feet (class 1: {stats['right_feet_count']}")
     print(f"    - Left Feet (Roboflow Cls 1): {stats['left_feet_count']}")
     print(f"    - Right Feet (Roboflow Cls 0): {stats['right_feet_count']}")
     print(f"  Processing Time        : {elapsed:.2f} s ({stats['total_images']/elapsed:.1f} img/s)")
@@ -678,17 +567,11 @@ def auto_annotate(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Auto-annotate raw foot images for Roboflow.")
-    parser.add_argument("--input_dir", default="data/uploadtoroboflow/7",
-                        help="Path to folder containing raw images")
-    parser.add_argument("--weights", default="outputs/stage_a/run_v2_1/weights/best.pt",
-                        help="YOLO pose weights to use for auto-annotation")
     parser = argparse.ArgumentParser(description="Auto-annotate raw foot images for Roboflow with audited 16 KPs.")
     parser.add_argument("--input_dir", type=str, required=True, help="Path to folder containing raw images")
     parser.add_argument("--weights", default="outputs/stage_a/run_shuffled_v3/weights/best.pt",
                         help="Path to trained YOLO (.pt) or ONNX (.onnx) model")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
-    parser.add_argument("--iou", type=float, default=0.45, help="NMS IOU threshold")
     parser.add_argument("--iou", type=float, default=0.45, help="Per-Class NMS IoU threshold")
     parser.add_argument("--dedup_iou", type=float, default=0.60, help="Cross-class duplicate foot IoU threshold")
     parser.add_argument("--kpt_thresh", type=float, default=0.35, help="Keypoint visibility threshold (v=2 vs v=1)")
@@ -718,4 +601,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -4,9 +4,11 @@ loss.py
 Composite Loss functions for Google BlazeFoot 4-Keypoint Training.
 
 Components:
-  1. Adaptive Wing Loss on 4 Coarse Keypoint coordinates (8 coords: 4 * 2)
-  2. Complete IoU (CIoU) Loss for Bounding Boxes (4 coords: cx, cy, w, h)
-  3. Binary Cross Entropy (BCE) for Foot Classification (left_foot, right_foot)
+  1. Sigmoid Focal Loss for Foot Detection / Classification (Left/Right vs Background)
+     - Down-weights easy background anchors (gamma=1.5, alpha=0.75) to prevent positive score suppression.
+  2. Complete IoU (CIoU) Loss for Bounding Boxes (cx, cy, w, h)
+  3. Adaptive Wing Loss on 4 Coarse Keypoint coordinates in pixel space (omega=10.0, eps=2.0)
+  4. BCE Loss for Keypoint Visibility
 """
 
 import math
@@ -14,6 +16,33 @@ from typing import Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def sigmoid_focal_loss(
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    alpha: float = 0.75,
+    gamma: float = 1.5,
+    reduction: str = "none"
+) -> torch.Tensor:
+    """
+    Original Focal Loss formulation for binary/multilabel classification:
+      FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+    """
+    p = torch.sigmoid(inputs)
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = p * targets + (1.0 - p) * (1.0 - targets)
+    loss = ce_loss * ((1.0 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1.0 - alpha) * (1.0 - targets)
+        loss = alpha_t * loss
+
+    if reduction == "mean":
+        return loss.mean()
+    elif reduction == "sum":
+        return loss.sum()
+    return loss
 
 
 class WingLoss(nn.Module):
@@ -30,7 +59,7 @@ class WingLoss(nn.Module):
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
-        pred, target: [B, N, 8] (4 keypoints x 2 coordinates = 8)
+        pred, target: [B, N, 8] (4 keypoints x 2 coordinates = 8) in pixel scale
         mask: [B, N, 4] (visibility of the 4 keypoints)
         """
         diff = torch.abs(pred - target)
@@ -106,15 +135,25 @@ class BlazeFootLoss(nn.Module):
     """
     Unified Loss for BlazeFoot 4-Keypoint multi-task learning.
     """
-    def __init__(self, lambda_cls: float = 1.0, lambda_box: float = 2.5, lambda_kpt: float = 4.0):
+    def __init__(
+        self,
+        lambda_cls: float = 2.0,
+        lambda_box: float = 3.0,
+        lambda_kpt: float = 0.5,
+        focal_alpha: float = 0.75,
+        focal_gamma: float = 1.5,
+        img_size: int = 320
+    ):
         super().__init__()
         self.lambda_cls = lambda_cls
         self.lambda_box = lambda_box
         self.lambda_kpt = lambda_kpt
+        self.focal_alpha = focal_alpha
+        self.focal_gamma = focal_gamma
+        self.img_size = float(img_size)
 
-        self.cls_bce = nn.BCEWithLogitsLoss(reduction='none')
         self.wing_loss = WingLoss(omega=10.0, epsilon=2.0)
-        self.vis_bce = nn.BCEWithLogitsLoss(reduction='none')
+        self.vis_bce = nn.BCEWithLogitsLoss(reduction='mean')
 
     def forward(
         self,
@@ -130,9 +169,15 @@ class BlazeFootLoss(nn.Module):
         pos_mask = target_mask
         num_pos = pos_mask.sum().clamp(min=1.0)
 
-        # ── 1. Classification Loss (BCE) ──────────────────────────────────
-        cls_loss_all = self.cls_bce(cls_preds, target_cls)
-        loss_cls = cls_loss_all.sum() / num_pos
+        # ── 1. Classification Loss (Sigmoid Focal Loss) ──────────────────
+        focal_loss_all = sigmoid_focal_loss(
+            cls_preds,
+            target_cls,
+            alpha=self.focal_alpha,
+            gamma=self.focal_gamma,
+            reduction="none"
+        )
+        loss_cls = focal_loss_all.sum() / num_pos
 
         # ── 2. Box Loss (CIoU) ───────────────────────────────────────────
         pred_boxes_sig = torch.sigmoid(box_preds)
@@ -143,22 +188,22 @@ class BlazeFootLoss(nn.Module):
         else:
             loss_box = torch.tensor(0.0, device=cls_preds.device)
 
-        # ── 3. 4-Keypoint Loss (Wing Loss + Visibility BCE) ──────────────
+        # ── 3. 4-Keypoint Loss (Pixel-Scale Wing Loss + Visibility BCE) ──
         if pos_mask.any():
             pos_kpt_pred = torch.sigmoid(kpt_preds[pos_mask]) # [M, 12]
             pos_kpt_tgt  = target_kpt[pos_mask]               # [M, 12]
 
-            # 4 Keypoints -> 8 (x,y) coords + 4 visibilities
-            pred_xy = pos_kpt_pred.view(-1, 4, 3)[:, :, :2].reshape(-1, 8)
-            tgt_xy  = pos_kpt_tgt.view(-1, 4, 3)[:, :, :2].reshape(-1, 8)
+            # 4 Keypoints -> 8 (x,y) coords + 4 visibilities (Scaled to pixel space: 320x320)
+            pred_xy_px = pos_kpt_pred.view(-1, 4, 3)[:, :, :2].reshape(-1, 8) * self.img_size
+            tgt_xy_px  = pos_kpt_tgt.view(-1, 4, 3)[:, :, :2].reshape(-1, 8) * self.img_size
             tgt_vis = (pos_kpt_tgt.view(-1, 4, 3)[:, :, 2] > 0).float() # [M, 4]
 
-            loss_kpt_coords = self.wing_loss(pred_xy.unsqueeze(0), tgt_xy.unsqueeze(0), tgt_vis.unsqueeze(0))
+            loss_kpt_coords = self.wing_loss(pred_xy_px.unsqueeze(0), tgt_xy_px.unsqueeze(0), tgt_vis.unsqueeze(0))
 
             pred_vis_logits = kpt_preds[pos_mask].view(-1, 4, 3)[:, :, 2]
-            loss_vis = self.vis_bce(pred_vis_logits, tgt_vis).mean()
+            loss_vis = self.vis_bce(pred_vis_logits, tgt_vis)
 
-            loss_kpt = loss_kpt_coords + 0.5 * loss_vis
+            loss_kpt = loss_kpt_coords + loss_vis
         else:
             loss_kpt = torch.tensor(0.0, device=cls_preds.device)
 

@@ -57,6 +57,17 @@ COLOR_LEFT = {"box": (0, 230, 70), "name": "Left Foot"}
 COLOR_RIGHT = {"box": (0, 160, 255), "name": "Right Foot"}
 
 
+def compute_iou(b1, b2):
+    ix1 = max(b1[0], b2[0])
+    iy1 = max(b1[1], b2[1])
+    ix2 = min(b1[2], b2[2])
+    iy2 = min(b1[3], b2[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    a1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
+    a2 = (b2[2] - b2[0]) * (b2[3] - b2[1])
+    return inter / (a1 + a2 - inter + 1e-7)
+
+
 def letterbox(img, size=320, color=(114, 114, 114)):
     h, w = img.shape[:2]
     r = min(size / w, size / h)
@@ -130,35 +141,67 @@ class BlazeFootVideoEvaluator:
         x2_all = np.clip(((cx + bw / 2.0) - pad_x) / r, 0, orig_w)
         y2_all = np.clip(((cy + bh / 2.0) - pad_y) / r, 0, orig_h)
 
-        detections = []
-        for cls_name, scores, cls_id in [("left_foot", scores_left, 0), ("right_foot", scores_right, 1)]:
-            best_anchor_idx = int(np.argmax(scores))
-            best_score = float(scores[best_anchor_idx])
+        candidates = []
+        for i in range(1050):
+            s_l = float(scores_left[i])
+            s_r = float(scores_right[i])
+            max_s = max(s_l, s_r)
+            if max_s < conf_thresh:
+                continue
 
-            if best_score >= conf_thresh:
-                kpts = []
-                for k in range(4):
-                    kx_px = ((raw[6 + k * 3, best_anchor_idx] * float(self.img_size)) - pad_x) / r
-                    ky_px = ((raw[7 + k * 3, best_anchor_idx] * float(self.img_size)) - pad_y) / r
-                    kv    = float(raw[8 + k * 3, best_anchor_idx])
-                    kpts.append({
-                        "name": KP_NAMES[k],
-                        "x": float(kx_px),
-                        "y": float(ky_px),
-                        "conf": kv,
-                        "color": KP_COLORS[k]
-                    })
+            cls_id = 0 if s_l >= s_r else 1
+            cls_name = "left_foot" if cls_id == 0 else "right_foot"
 
-                detections.append({
-                    "class_id": cls_id,
-                    "class_name": cls_name,
-                    "confidence": best_score,
-                    "bbox": [float(x1_all[best_anchor_idx]), float(y1_all[best_anchor_idx]),
-                             float(x2_all[best_anchor_idx]), float(y2_all[best_anchor_idx])],
-                    "keypoints": kpts
+            kpts = []
+            for k in range(4):
+                kx_px = ((raw[6 + k * 3, i] * float(self.img_size)) - pad_x) / r
+                ky_px = ((raw[7 + k * 3, i] * float(self.img_size)) - pad_y) / r
+                kv    = float(raw[8 + k * 3, i])
+                kpts.append({
+                    "name": KP_NAMES[k],
+                    "x": float(kx_px),
+                    "y": float(ky_px),
+                    "conf": kv,
+                    "color": KP_COLORS[k]
                 })
 
-        return detections
+            candidates.append({
+                "class_id": cls_id,
+                "class_name": cls_name,
+                "confidence": max_s,
+                "bbox": [float(x1_all[i]), float(y1_all[i]), float(x2_all[i]), float(y2_all[i])],
+                "keypoints": kpts
+            })
+
+        # Independent Per-Class NMS
+        nmed = []
+        for target_cls in [0, 1]:
+            cls_dets = [d for d in candidates if d["class_id"] == target_cls]
+            cls_dets.sort(key=lambda d: d["confidence"], reverse=True)
+            kept = []
+            for det in cls_dets:
+                suppress = False
+                for k in kept:
+                    if compute_iou(det["bbox"], k["bbox"]) > 0.45:
+                        suppress = True
+                        break
+                if not suppress:
+                    kept.append(det)
+            nmed.extend(kept)
+
+        # Cross-class duplicate physical foot suppression
+        nmed.sort(key=lambda d: d["confidence"], reverse=True)
+        deduped = []
+        for det in nmed:
+            dup = False
+            for k in deduped:
+                if compute_iou(det["bbox"], k["bbox"]) > 0.60:
+                    dup = True
+                    break
+            if not dup:
+                deduped.append(det)
+
+        return deduped
 
 
 def render_visuals(frame, detections, fps=0.0, lat_ms=0.0, show_labels=True):

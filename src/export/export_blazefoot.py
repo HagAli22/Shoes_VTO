@@ -82,7 +82,7 @@ def export_blazefoot(
     }
     try:
         torch.onnx.export(export_model, dummy_input, fp32_path, dynamo=False, **export_kwargs)
-    except TypeError:
+    except (TypeError, Exception):
         torch.onnx.export(export_model, dummy_input, fp32_path, **export_kwargs)
 
     m_fp32 = onnx.load(fp32_path)
