@@ -54,15 +54,14 @@ def export_blazefoot(
 
     # 1. Load PyTorch Checkpoint
     checkpoint = torch.load(weights_path, map_location="cpu")
-    model = BlazeFoot(num_classes=2, num_keypoints=16)
-    if "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"])
-    else:
-        model.load_state_dict(checkpoint)
     sd = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
-    # Deduce num_keypoints from head_p3.kpt.3.weight shape: (num_anchors * kp * 3) -> 2 * kp * 3 = 6 * kp
-    kpt_out_channels = sd["head_p3.kpt.3.weight"].shape[0]
-    num_kp = kpt_out_channels // 6 # 24 // 6 = 4 keypoints
+    
+    # Deduce num_keypoints: config first or from head weights shape: 2 * num_kp * 3 = 6 * num_kp
+    if isinstance(checkpoint, dict) and "config" in checkpoint and "num_keypoints" in checkpoint["config"]:
+        num_kp = checkpoint["config"]["num_keypoints"]
+    else:
+        kpt_out_channels = sd["head_p3.kpt.3.weight"].shape[0]
+        num_kp = kpt_out_channels // 6 # 24 // 6 = 4 keypoints
 
     model = BlazeFoot(num_classes=2, num_keypoints=num_kp)
     model.load_state_dict(sd)
