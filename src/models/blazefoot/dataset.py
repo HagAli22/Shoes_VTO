@@ -6,10 +6,10 @@ High-Performance PyTorch Dataset and Anchor Matching for BlazeFoot 4-Keypoint Tr
 Loads annotations from data/shuffled_v3 (YOLO-Pose format):
   Line format: cls cx cy w h kx0 ky0 kv0 ... kx15 ky15 kv15
 Extracts only the 4 Coarse Keypoints from the 16 annotated landmarks:
-  - Keypoint 0: toe_tip
-  - Keypoint 2: heel_back
-  - Keypoint 4: ball_medial
-  - Keypoint 5: ball_lateral
+  - Keypoint 11: toe_tip
+  - Keypoint 1: heel_back
+  - Keypoint 3: ball_medial
+  - Keypoint 4: ball_lateral
 
 Features:
   - In-Memory RAM Caching (cache_ram=True): Preloads all images into RAM for maximum GPU throughput.
@@ -65,8 +65,20 @@ class BlazeFootDataset(Dataset):
         self.img_size = img_size
         self.is_train = is_train
         self.cache_ram = cache_ram
-        self.img_dir = os.path.join(data_root, split, "images")
-        self.lbl_dir = os.path.join(data_root, split, "labels")
+
+        # Smart directory resolution (handles data/shuffled_v3, data/data/shuffled_v3, or root)
+        resolved_root = data_root
+        candidate_img_dir = os.path.join(resolved_root, split, "images")
+        if not os.path.exists(candidate_img_dir) or len(glob.glob(os.path.join(candidate_img_dir, "*.*"))) == 0:
+            for alt_sub in ["shuffled_v3", "data/shuffled_v3", os.path.join("..", split, "images")]:
+                alt_dir = os.path.join(resolved_root, alt_sub, split, "images") if ".." not in alt_sub else os.path.normpath(os.path.join(resolved_root, alt_sub))
+                if os.path.exists(alt_dir) and len(glob.glob(os.path.join(alt_dir, "*.*"))) > 0:
+                    candidate_img_dir = alt_dir
+                    resolved_root = os.path.dirname(os.path.dirname(alt_dir))
+                    break
+
+        self.img_dir = os.path.join(resolved_root, split, "images") if os.path.exists(os.path.join(resolved_root, split, "images")) else candidate_img_dir
+        self.lbl_dir = os.path.join(os.path.dirname(self.img_dir), "labels")
 
         self.img_paths = sorted(glob.glob(os.path.join(self.img_dir, "*.*")))
         self.img_paths = [p for p in self.img_paths if p.lower().endswith(('.jpg', '.jpeg', '.png'))]
@@ -88,7 +100,7 @@ class BlazeFootDataset(Dataset):
         if is_train:
             self.transform = A.Compose([
                 A.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.4, hue=0.015, p=0.7),
-                A.HorizontalFlip(p=0.5),
+                A.ShiftScaleRotate(shift_limit=0.06, scale_limit=0.10, rotate_limit=15, p=0.6, border_mode=cv2.BORDER_CONSTANT, value=(114, 114, 114)),
                 A.Resize(img_size, img_size),
                 A.Normalize(mean=[0.0, 0.0, 0.0], std=[1.0, 1.0, 1.0]),
                 ToTensorV2()
