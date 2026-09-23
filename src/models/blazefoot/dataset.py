@@ -91,6 +91,7 @@ def load_dataset_to_gpu(
     target_box_list = []
     target_kpt_list = []
     target_mask_list = []
+    raw_targets = []
 
     for p in img_paths:
         im = cv2.imread(p)

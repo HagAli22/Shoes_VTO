@@ -291,3 +291,4 @@ def print_yolo_metrics_table(metrics: Dict, title: str = "Validation Results"):
         print(f"  {cname:<12} {'--':>7} {cdata['instances']:>10d} | {cdata['p_box']:>7.3f} {cdata['r_box']:>6.3f} {cdata['map50_box']:>7.3f} {cdata['map_box']:>10.3f} | {cdata['p_kpt']:>7.3f} {cdata['r_kpt']:>6.3f} {cdata['map50_kpt']:>7.3f} {cdata['map_kpt']:>10.3f}")
 
     print("=" * 88 + "\n")
+
