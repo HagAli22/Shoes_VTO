@@ -141,7 +141,7 @@ class BlazeFootLoss(nn.Module):
         self,
         lambda_cls: float = 2.0,
         lambda_box: float = 3.0,
-        lambda_kpt: float = 0.5,
+        lambda_kpt: float = 2.5,
         focal_alpha: float = 0.75,
         focal_gamma: float = 1.5,
         img_size: int = 320

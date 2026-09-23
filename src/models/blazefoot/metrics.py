@@ -16,8 +16,8 @@ import torch
 import torchvision.ops as ops
 
 
-# COCO-style keypoint sigmas for foot keypoints
-FOOT_KP_SIGMAS = np.array([0.026, 0.026, 0.026, 0.026], dtype=np.float32)
+# Foot-scale keypoint sigmas relative to foot bbox
+FOOT_KP_SIGMAS = np.array([0.10, 0.10, 0.10, 0.10], dtype=np.float32)
 
 
 def box_iou_batch(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:

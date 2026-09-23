@@ -25,6 +25,15 @@ This document maintains a permanent, comprehensive record of all architectural u
 
 ## 📜 Version History & Detailed Updates
 
+### 🎯 v1.3.1 — Keypoint Loss Weighting & Foot OKS Sigma Calibration
+- **Date:** 2026-09-24
+- **Key Enhancements:**
+  1. **Keypoint Loss Re-weighting (`loss.py`):** Increased `lambda_kpt` from $0.5 \to 2.5$ so keypoints receive equal optimization priority alongside boxes.
+  2. **Calibrated Foot OKS Sigmas (`metrics.py`):** Set $\sigma = 0.10$ relative to foot bounding box scale (standard foot pose evaluation tolerance).
+  3. **Optimal Validation Thresholds (`train_blazefoot.py`):** Set validation NMS confidence to $0.35$ and IoU to $0.50$ for balanced Precision and Recall.
+
+---
+
 ### 🚀 v1.3.0 — Anchor-Relative Coordinate Decoding & Scale-Aware Matching
 - **Date:** 2026-09-24
 - **Problem Solved:**
@@ -92,3 +101,4 @@ src/models/blazefoot/
 ├── metrics.py                # YOLOv8-style Box & Pose (OKS) mAP50 and mAP50-95 GPU evaluation
 └── train_blazefoot.py        # Direct-to-VRAM training script with live epoch metric logging
 ```
+

@@ -39,8 +39,8 @@ def decode_predictions(
     kpt_preds: torch.Tensor,
     anchors: torch.Tensor,
     img_size: int = 320,
-    conf_thresh: float = 0.20,
-    nms_iou_thresh: float = 0.45
+    conf_thresh: float = 0.35,
+    nms_iou_thresh: float = 0.50
 ) -> List[Dict]:
     """
     Decodes anchor-relative predictions to pixel coordinates and applies batched NMS per image on GPU.
@@ -212,7 +212,7 @@ def validate_gpu(
     }
 
     if compute_map and raw_targets:
-        decoded_preds = decode_predictions(cls_preds, box_preds, kpt_preds, anchors=anchors, img_size=320, conf_thresh=0.20)
+        decoded_preds = decode_predictions(cls_preds, box_preds, kpt_preds, anchors=anchors, img_size=320, conf_thresh=0.35, nms_iou_thresh=0.50)
         eval_metrics = evaluate_detections(decoded_preds, raw_targets, num_classes=2)
         res["metrics"] = eval_metrics
         res["p_box"] = eval_metrics["p_box"]
