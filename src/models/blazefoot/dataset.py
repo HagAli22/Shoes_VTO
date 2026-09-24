@@ -170,8 +170,8 @@ def load_dataset_to_gpu(
                     cost = dists / (s_foot + 1e-4) + 0.75 * scale_diffs
                     cost = torch.where(in_box, cost, cost + 5.0)
 
-                    # Match top 6 best matching anchors for this foot
-                    matched_anchors = torch.topk(cost, 6, largest=False).indices
+                    # Match top 3 best matching anchors for this foot (sharp localization)
+                    matched_anchors = torch.topk(cost, 3, largest=False).indices
 
                     for a_idx in matched_anchors:
                         t_mask[a_idx] = True

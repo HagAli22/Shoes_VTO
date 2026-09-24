@@ -230,9 +230,9 @@ def validate_gpu(
 def main():
     parser = argparse.ArgumentParser(description="Direct-to-VRAM BlazeFoot Training with YOLO-Style Real-Time Metrics.")
     parser.add_argument("--data", default="data/shuffled_v3", help="Dataset directory")
-    parser.add_argument("--epochs", type=int, default=200, help="Number of training epochs")
-    parser.add_argument("--batch", type=int, default=256, help="Batch size (e.g. 256 for A100)")
-    parser.add_argument("--lr0", type=float, default=0.003, help="Initial learning rate")
+    parser.add_argument("--epochs", type=int, default=300, help="Number of training epochs")
+    parser.add_argument("--batch", type=int, default=64, help="Batch size (e.g. 64 for optimal gradient steps)")
+    parser.add_argument("--lr0", type=float, default=0.0015, help="Initial learning rate")
     parser.add_argument("--num_workers", type=int, default=0, help="Unused (VRAM resident)")
     parser.add_argument("--cache_ram", action="store_true", default=True, help="VRAM resident mode")
     parser.add_argument("--device", default="0", help="GPU device ID or 'cpu'")
