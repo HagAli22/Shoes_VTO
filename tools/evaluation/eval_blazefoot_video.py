@@ -36,7 +36,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # 4 Coarse Keypoint Names & Colors (BGR)
-KP_NAMES = ["toe_tip", "heel_back", "ball_medial", "ball_lateral"]
+KP_NAMES = ["toe_tip", "heel", "ball_medial", "ball_lateral"]
 KP_COLORS = [
     (255, 255, 0),   # 0: toe_tip (Cyan)
     (0, 0, 255),     # 1: heel_back (Red)

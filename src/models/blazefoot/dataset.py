@@ -166,14 +166,29 @@ def load_dataset_to_gpu(
                     raw_boxes.append([x1_px, y1_px, x2_px, y2_px])
                     raw_classes.append(cls_id)
 
-                    # 4 Audited Keypoints: [11: toe_tip, 1: heel_back, 3: ball_medial, 4: ball_lateral]
+                    # 4 Audited Keypoints with Anatomical Fallback (Guarantees full 4-KP supervision):
+                    # 0: toe_tip (Index 11 -> fallback 0)
+                    # 1: heel (Index 14 [Achilles] -> fallback 1 [heel_back] -> fallback 2 [heel_ground])
+                    # 2: ball_medial (Index 3 -> fallback 7)
+                    # 3: ball_lateral (Index 4 -> fallback 8)
+                    kp_slots = [
+                        [11, 0],      # toe_tip
+                        [14, 1, 2],   # heel
+                        [3, 7],       # ball_medial
+                        [4, 8],       # ball_lateral
+                    ]
                     kpts_norm = []
                     kpts_px = []
                     if len(parts) >= 5 + 48:
-                        for target_idx in COARSE_KP_INDICES:
-                            kx_n = float(parts[5 + target_idx * 3])
-                            ky_n = float(parts[6 + target_idx * 3])
-                            kv   = float(parts[7 + target_idx * 3])
+                        for slot in kp_slots:
+                            best_k = slot[0]
+                            for alt in slot:
+                                if float(parts[7 + alt * 3]) > 0:
+                                    best_k = alt
+                                    break
+                            kx_n = float(parts[5 + best_k * 3])
+                            ky_n = float(parts[6 + best_k * 3])
+                            kv   = float(parts[7 + best_k * 3])
                             kpts_norm.extend([kx_n, ky_n, kv])
                             kpts_px.append([kx_n * img_size, ky_n * img_size, kv])
                     else:

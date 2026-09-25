@@ -36,10 +36,10 @@ KEYPOINT_NAMES_16 = [
 
 # Mapping 4 Coarse Landmarks -> Teacher 16-KP indices
 COARSE_KP_INDEX_MAP = {
-    0: {"name": "toe_tip", "teacher_idx": 11},
-    1: {"name": "heel_back", "teacher_idx": 1},
-    2: {"name": "ball_medial", "teacher_idx": 3},
-    3: {"name": "ball_lateral", "teacher_idx": 4}
+    0: {"name": "toe_tip", "teacher_idx": 11, "fallback": 0},
+    1: {"name": "heel", "teacher_idx": 14, "fallback": 1},
+    2: {"name": "ball_medial", "teacher_idx": 3, "fallback": 7},
+    3: {"name": "ball_lateral", "teacher_idx": 4, "fallback": 8}
 }
 
 
@@ -152,7 +152,12 @@ def decode_teacher_output(raw_output, orig_w, orig_h, scale, pad_x, pad_y, conf_
             kpts_4 = []
             for coarse_i in range(4):
                 info = COARSE_KP_INDEX_MAP[coarse_i]
-                t_kp = det["keypoints_16"][info["teacher_idx"]]
+                t_idx = info["teacher_idx"]
+                t_kp = det["keypoints_16"][t_idx]
+                if t_kp["conf"] < 0.20 and "fallback" in info:
+                    fb_kp = det["keypoints_16"][info["fallback"]]
+                    if fb_kp["conf"] > t_kp["conf"]:
+                        t_kp = fb_kp
                 kpts_4.append({
                     "name": str(info["name"]),
                     "x": float(t_kp["x"]),

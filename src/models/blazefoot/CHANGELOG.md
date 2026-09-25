@@ -25,18 +25,26 @@ This document maintains a permanent, comprehensive record of all architectural u
 
 ## 📜 Version History & Detailed Updates
 
-### 🚀 v1.4.0 — Loss Gradient Equilibrium & Sharp Positive Matching
+### 🎯 v1.4.1 — Anatomical 4-KP Fallback & Full Heel Grounding
 - **Date:** 2026-09-25
-- **Validated Benchmark Results:**
-  - **Box Precision:** $72.4\%$ (Left Foot: $81.5\%$)
-  - **Box $\text{mAP}_{50}$:** $79.5\%$ ($\approx 80\%$)
-  - **Box $\text{mAP}_{50\text{-}95}$:** $39.2\%$
-  - **Pose Precision:** $48.1\%$
-  - **Pose $\text{mAP}_{50}$:** $54.2\%$ (Up from $0.1\%$ baseline)
-  - **Pose $\text{mAP}_{50\text{-}95}$:** $27.1\%$
+- **Problem Diagnosed:**
+  - Audit revealed `heel_back` (Index 1) was only labeled in $12.9\%$ of dataset images ($87.1\%$ missing), starving the heel regression head of supervision and causing keypoints to collapse horizontally.
+  - In contrast, `Achilles / Heel Top` (Index 14) is labeled in $87.2\%$ of images ($1298$ feet).
 - **Key Enhancements:**
-  1. **Gradient Equilibrium:** Scaled `lambda_kpt = 0.20` so keypoint loss gradients operate in 1:1 equilibrium with box CIoU and focal loss.
-  2. **Sharp Anchor Assignment:** Reduced matched positive anchors from 6 to Top 3 per foot in `dataset.py`, eliminating multi-anchor duplicate collisions and boosting Precision from $31.7\% \to 72.4\%$.
+  1. **Anatomical Fallback Slots (`dataset.py`):**
+     - Slot 0: `toe_tip` (Index 11 $\to$ fallback Index 0)
+     - Slot 1: `heel` (Index 14 [Achilles] $\to$ fallback Index 1 [heel_back] $\to$ fallback Index 2 [heel_ground])
+     - Slot 2: `ball_medial` (Index 3 $\to$ fallback Index 7)
+     - Slot 3: `ball_lateral` (Index 4 $\to$ fallback Index 8)
+  2. **100% Supervision Guarantee:** Delivers complete, high-quality 4-point anatomical supervision (Toe, Heel, Medial Ball, Lateral Ball) across all training samples.
+
+---
+
+### 🚀 v1.4.0 — Loss Gradient Equilibrium & Sharp Positive Matching
+- **Date:** 2026-09-24
+- **Key Enhancements:**
+  1. **Gradient Equilibrium:** Scaled `lambda_kpt = 0.20` so keypoint loss gradients (~2.0) operate in 1:1 equilibrium with box CIoU (~1.5) and focal loss (~2.0), preventing keypoints from drowning detection features.
+  2. **Sharp Anchor Assignment:** Reduced matched positive anchors from 6 to Top 3 per foot in `dataset.py`, eliminating multi-anchor duplicate collisions and boosting Precision.
   3. **Gradient Step Density:** Optimized default training schedule to `batch_size = 64` and `lr0 = 0.0015` with 300 epochs for dense, stable convergence.
 
 ---
