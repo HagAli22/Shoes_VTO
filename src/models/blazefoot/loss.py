@@ -211,16 +211,16 @@ class BlazeFootLoss(nn.Module):
             pos_kpt_raw = kpt_preds[pos_mask] # [M, 12]
             pos_tgt_kpt = target_kpt[pos_mask] # [M, 12]
 
-            # Decode keypoints relative to the predicted box bounds with tanh bounding
+            # Decode keypoints relative to the predicted box bounds
             dec_cx = pos_dec_boxes[:, 0]
             dec_cy = pos_dec_boxes[:, 1]
-            half_dec_w = pos_dec_boxes[:, 2] * 0.5
-            half_dec_h = pos_dec_boxes[:, 3] * 0.5
+            dec_w  = pos_dec_boxes[:, 2]
+            dec_h  = pos_dec_boxes[:, 3]
 
             dec_kpts_px = []
             for k in range(4):
-                dec_kx = (dec_cx + torch.tanh(pos_kpt_raw[:, k * 3]) * half_dec_w) * self.img_size
-                dec_ky = (dec_cy + torch.tanh(pos_kpt_raw[:, k * 3 + 1]) * half_dec_h) * self.img_size
+                dec_kx = (dec_cx + pos_kpt_raw[:, k * 3] * dec_w) * self.img_size
+                dec_ky = (dec_cy + pos_kpt_raw[:, k * 3 + 1] * dec_h) * self.img_size
                 dec_kpts_px.extend([dec_kx, dec_ky])
 
             pred_xy_px = torch.stack(dec_kpts_px, dim=-1) # [M, 8]
