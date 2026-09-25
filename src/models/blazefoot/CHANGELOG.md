@@ -23,7 +23,18 @@ This document maintains a permanent, comprehensive record of all architectural u
 
 ---
 
-## 📜 Version History & Detailed Updates
+### 🚀 v1.5.0 — Box-Relative Landmark Formulation & YOLO-Pose Scaled L1 Loss
+- **Date:** 2026-09-25
+- **Problem Solved:**
+  - Keypoints previously anchored to grid center ($a_x, a_y$) underfit and stayed inside the foot center.
+- **Architectural Breakthrough (YOLOv8-Pose Parity):**
+  1. **Box-Relative Landmark Decoding:**
+     $$kx_k = cx + t_{kx, k} \cdot w, \quad ky_k = cy + t_{ky, k} \cdot h$$
+     Naturally stretches keypoints to toe tip ($t_{ky} \approx -0.45$), heel ($t_{ky} \approx +0.45$), and lateral/medial borders ($t_{kx} \approx \pm 0.35$).
+  2. **Scale-Normalized L1 + Wing Loss:**
+     Directly minimizes distance normalized by foot scale $s_{\text{box}} = \sqrt{w \cdot h}$ for true sub-pixel perimeter alignment.
+
+---
 
 ### 🎯 v1.4.1 — Anatomical 4-KP Fallback & Full Heel Grounding
 - **Date:** 2026-09-25

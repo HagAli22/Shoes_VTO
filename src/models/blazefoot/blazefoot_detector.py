@@ -178,11 +178,11 @@ class BlazeFootPathAExport(nn.Module):
         h  = ah * torch.exp(torch.clamp(box_preds[..., 3], -4.0, 4.0))
         boxes = torch.stack([cx, cy, w, h], dim=-1).clamp(0.0, 1.0) # [B, 1050, 4]
 
-        # 3. Anchor-Relative 4-Keypoint Decoding
+        # 3. Box-Relative 4-Keypoint Decoding (Anatomically anchored to foot bounds)
         kpt_out_list = []
         for k in range(4):
-            kx = ax + kpt_preds[..., k * 3] * aw
-            ky = ay + kpt_preds[..., k * 3 + 1] * ah
+            kx = cx + kpt_preds[..., k * 3] * w
+            ky = cy + kpt_preds[..., k * 3 + 1] * h
             kv = torch.sigmoid(kpt_preds[..., k * 3 + 2])
             kpt_out_list.extend([kx.clamp(0.0, 1.0), ky.clamp(0.0, 1.0), kv])
 

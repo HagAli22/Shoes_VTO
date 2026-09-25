@@ -206,27 +206,39 @@ class BlazeFootLoss(nn.Module):
         else:
             loss_box = torch.tensor(0.0, device=cls_preds.device)
 
-        # ── 3. Keypoint Loss (Pixel-Scale Wing Loss on Anchor-Decoded KPs) ──
+        # ── 3. Keypoint Loss (Box-Relative Landmark Formulation) ─────────
         if pos_mask.any():
             pos_kpt_raw = kpt_preds[pos_mask] # [M, 12]
             pos_tgt_kpt = target_kpt[pos_mask] # [M, 12]
 
+            # Decode keypoints relative to the predicted box bounds
+            dec_cx = pos_dec_boxes[:, 0]
+            dec_cy = pos_dec_boxes[:, 1]
+            dec_w  = pos_dec_boxes[:, 2]
+            dec_h  = pos_dec_boxes[:, 3]
+
             dec_kpts_px = []
             for k in range(4):
-                dec_kx = (ax + pos_kpt_raw[:, k * 3] * aw) * self.img_size
-                dec_ky = (ay + pos_kpt_raw[:, k * 3 + 1] * ah) * self.img_size
+                dec_kx = (dec_cx + pos_kpt_raw[:, k * 3] * dec_w) * self.img_size
+                dec_ky = (dec_cy + pos_kpt_raw[:, k * 3 + 1] * dec_h) * self.img_size
                 dec_kpts_px.extend([dec_kx, dec_ky])
 
             pred_xy_px = torch.stack(dec_kpts_px, dim=-1) # [M, 8]
             tgt_xy_px  = pos_tgt_kpt.view(-1, 4, 3)[:, :, :2].reshape(-1, 8) * self.img_size
             tgt_vis    = (pos_tgt_kpt.view(-1, 4, 3)[:, :, 2] > 0).float() # [M, 4]
 
-            loss_kpt_coords = self.wing_loss(pred_xy_px.unsqueeze(0), tgt_xy_px.unsqueeze(0), tgt_vis.unsqueeze(0))
+            # Wing Loss + Box-Scale Normalized L1 (YOLO-Pose style)
+            loss_wing = self.wing_loss(pred_xy_px.unsqueeze(0), tgt_xy_px.unsqueeze(0), tgt_vis.unsqueeze(0))
+            
+            s_box = torch.sqrt(dec_w * dec_h) * self.img_size # [M]
+            mask_xy = tgt_vis.repeat_interleave(2, dim=-1)     # [M, 8]
+            l1_diff = torch.abs(pred_xy_px - tgt_xy_px) * mask_xy # [M, 8]
+            norm_l1 = (l1_diff.sum(dim=-1) / (s_box.clamp(min=10.0) * 8.0)).mean()
 
             pred_vis_logits = pos_kpt_raw.view(-1, 4, 3)[:, :, 2]
             loss_vis = self.vis_bce(pred_vis_logits, tgt_vis)
 
-            loss_kpt = loss_kpt_coords + loss_vis
+            loss_kpt = loss_wing * 0.10 + norm_l1 * 2.0 + loss_vis
         else:
             loss_kpt = torch.tensor(0.0, device=cls_preds.device)
 

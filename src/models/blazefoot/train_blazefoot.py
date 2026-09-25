@@ -65,11 +65,11 @@ def decode_predictions(
     y2 = (cy + bh / 2.0).clamp(0, img_size)
     boxes_px = torch.stack([x1, y1, x2, y2], dim=-1) # [B, 1050, 4]
 
-    # Decode keypoints with anchors
+    # Decode keypoints relative to predicted box bounds (cx, cy, bw, bh)
     kpts_list = []
     for k in range(4):
-        kx = ((ax + kpt_preds[..., k * 3] * aw) * img_size).clamp(0, img_size)
-        ky = ((ay + kpt_preds[..., k * 3 + 1] * ah) * img_size).clamp(0, img_size)
+        kx = (cx + kpt_preds[..., k * 3] * bw).clamp(0, img_size)
+        ky = (cy + kpt_preds[..., k * 3 + 1] * bh).clamp(0, img_size)
         kv = torch.sigmoid(kpt_preds[..., k * 3 + 2])
         kpts_list.append(torch.stack([kx, ky, kv], dim=-1))
     kpts_px = torch.stack(kpts_list, dim=2) # [B, 1050, 4, 3]
