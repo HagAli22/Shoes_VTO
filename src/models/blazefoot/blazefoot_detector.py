@@ -178,7 +178,7 @@ class BlazeFootPathAExport(nn.Module):
         h  = ah * torch.exp(torch.clamp(box_preds[..., 3], -4.0, 4.0))
         boxes = torch.stack([cx, cy, w, h], dim=-1).clamp(0.0, 1.0) # [B, 1050, 4]
 
-        # 3. Tanh-Bounded Box-Relative 4-Keypoint Decoding (Strictly constrained within [-w/2, +w/2])
+        # 3. Tanh-Bounded Box-Relative 4-Keypoint Decoding (Strictly bounded inside foot bounds)
         half_w = w * 0.5
         half_h = h * 0.5
         kpt_out_list = []

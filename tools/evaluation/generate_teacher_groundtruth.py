@@ -37,7 +37,7 @@ KEYPOINT_NAMES_16 = [
 # Mapping 4 Coarse Landmarks -> Teacher 16-KP indices
 COARSE_KP_INDEX_MAP = {
     0: {"name": "toe_tip", "teacher_idx": 11, "fallback": 0},
-    1: {"name": "heel", "teacher_idx": 14, "fallback": 1},
+    1: {"name": "heel_ground", "teacher_idx": 2, "fallback": 1},
     2: {"name": "ball_medial", "teacher_idx": 3, "fallback": 7},
     3: {"name": "ball_lateral", "teacher_idx": 4, "fallback": 8}
 }

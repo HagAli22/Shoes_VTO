@@ -19,8 +19,8 @@ import numpy as np
 import torch
 
 # Audited 4 Coarse Keypoint Indices from 16-KP Frozen Contract:
-# [toe_tip=11, heel_back=1, ball_medial=3, ball_lateral=4]
-COARSE_KP_INDICES = [11, 1, 3, 4]
+# [toe_tip=11, heel_ground=2, ball_medial=3, ball_lateral=4]
+COARSE_KP_INDICES = [11, 2, 3, 4]
 
 
 def generate_blaze_anchors(img_size: int = 320) -> torch.Tensor:
@@ -168,12 +168,12 @@ def load_dataset_to_gpu(
 
                     # 4 Audited Keypoints with Anatomical Fallback (Guarantees full 4-KP supervision):
                     # 0: toe_tip (Index 11 -> fallback 0)
-                    # 1: heel (Index 14 [Achilles] -> fallback 1 [heel_back] -> fallback 2 [heel_ground])
+                    # 1: heel_ground (Index 2 -> fallback 1 [heel_back] -> fallback 14 [achilles])
                     # 2: ball_medial (Index 3 -> fallback 7)
                     # 3: ball_lateral (Index 4 -> fallback 8)
                     kp_slots = [
                         [11, 0],      # toe_tip
-                        [14, 1, 2],   # heel
+                        [2, 1, 14],   # heel_ground
                         [3, 7],       # ball_medial
                         [4, 8],       # ball_lateral
                     ]
