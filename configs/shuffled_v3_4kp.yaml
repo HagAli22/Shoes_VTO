@@ -1,0 +1,12 @@
+path: data/shuffled_v3_4kp
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 2
+names:
+  0: left_foot
+  1: right_foot
+
+kpt_shape: [4, 3]
+flip_idx: [0, 1, 3, 2]
