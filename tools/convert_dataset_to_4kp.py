@@ -70,10 +70,7 @@ def convert_label_line_16_to_4(line: str, remap_classes: bool = False) -> str:
             for kx, ky, kv in kpts_16:
                 repaired.extend([f"{kx:.6f}", f"{ky:.6f}", str(kv)])
             return " ".join(repaired)
-        else:
-            return ""
-
-        # Function to pick keypoint with fallback
+        # Helper to pick keypoint with safe fallbacks
         def get_kp(primary_idx, fallbacks=()):
             if primary_idx < len(kpts_16) and kpts_16[primary_idx][2] > 0:
                 return kpts_16[primary_idx]
@@ -84,10 +81,15 @@ def convert_label_line_16_to_4(line: str, remap_classes: bool = False) -> str:
                 return kpts_16[primary_idx]
             return (0.0, 0.0, 0)
 
-        kp0 = get_kp(0, (1, 11))        # toe_tip
-        kp1 = get_kp(2, (3, 13, 12, 14)) # heel (heel_back/heel_ground/achilles)
-        kp2 = get_kp(4, (3, 7))          # ball_medial
-        kp3 = get_kp(5, (8, 9))          # ball_lateral
+        # Exact 4 anatomical perimeter corners of the foot:
+        # 0: Toe Tip      -> Index 0 (fallback Index 11)
+        # 1: Heel         -> Index 2 (fallback Index 12, 13, 14)
+        # 2: Ball Medial  -> Index 3 (fallback Index 7)
+        # 3: Ball Lateral -> Index 4 (fallback Index 8, 9)
+        kp0 = get_kp(0, (11, 1))          # toe_tip (Front)
+        kp1 = get_kp(2, (12, 13, 14))     # heel (Back - heel_ground/heel_back/achilles)
+        kp2 = get_kp(3, (7,))             # ball_medial (Inner ball)
+        kp3 = get_kp(4, (8, 9))           # ball_lateral (Outer ball)
 
         four_kpts = [kp0, kp1, kp2, kp3]
 
