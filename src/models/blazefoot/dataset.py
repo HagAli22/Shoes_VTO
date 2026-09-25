@@ -51,6 +51,46 @@ def generate_blaze_anchors(img_size: int = 320) -> torch.Tensor:
     return torch.tensor(anchors, dtype=torch.float32)
 
 
+def find_split_dirs(data_root: str, split: str) -> Tuple[str, str]:
+    """
+    Finds (img_dir, lbl_dir) with zero configuration, searching all standard Colab & local paths recursively.
+    """
+    candidates = [
+        os.path.join(data_root, split, "images"),
+        os.path.join(data_root, "data", split, "images"),
+        os.path.join(data_root, "shuffled_v3", split, "images"),
+        os.path.join(data_root, "data", "shuffled_v3", split, "images"),
+        os.path.join("data", split, "images"),
+        os.path.join("data", "shuffled_v3", split, "images"),
+        os.path.join("data", "data", "shuffled_v3", split, "images"),
+        os.path.join("/content/Shoes_VTO/data/data/shuffled_v3", split, "images"),
+        os.path.join("/content/Shoes_VTO/data/shuffled_v3", split, "images"),
+        os.path.join("/content/Shoes_VTO/data", split, "images"),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            imgs = [p for p in glob.glob(os.path.join(c, "*.*")) if p.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            if len(imgs) > 0:
+                lbl_dir = os.path.join(os.path.dirname(c), "labels")
+                return c, lbl_dir
+
+    # Recursive fallback search
+    search_roots = [data_root, "data", "."]
+    for root in search_roots:
+        if not os.path.exists(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            p_base = os.path.basename(dirpath)
+            p_parent = os.path.basename(os.path.dirname(dirpath))
+            if p_base == "images" and p_parent in [split, "val" if split == "valid" else "valid" if split == "val" else split]:
+                imgs = [p for p in filenames if p.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                if len(imgs) > 0:
+                    lbl_dir = os.path.join(os.path.dirname(dirpath), "labels")
+                    return dirpath, lbl_dir
+
+    raise FileNotFoundError(f"Could not locate dataset split '{split}' images anywhere in '{data_root}' or workspace.")
+
+
 def load_dataset_to_gpu(
     data_root: str,
     split: str = "train",
@@ -60,18 +100,7 @@ def load_dataset_to_gpu(
     """
     Loads all images and precomputes anchor targets directly into GPU VRAM.
     """
-    resolved_root = data_root
-    candidate_img_dir = os.path.join(resolved_root, split, "images")
-    if not os.path.exists(candidate_img_dir) or len(glob.glob(os.path.join(candidate_img_dir, "*.*"))) == 0:
-        for alt_sub in ["shuffled_v3", "data/shuffled_v3", os.path.join("..", split, "images")]:
-            alt_dir = os.path.join(resolved_root, alt_sub, split, "images") if ".." not in alt_sub else os.path.normpath(os.path.join(resolved_root, alt_sub))
-            if os.path.exists(alt_dir) and len(glob.glob(os.path.join(alt_dir, "*.*"))) > 0:
-                candidate_img_dir = alt_dir
-                resolved_root = os.path.dirname(os.path.dirname(alt_dir))
-                break
-
-    img_dir = os.path.join(resolved_root, split, "images") if os.path.exists(os.path.join(resolved_root, split, "images")) else candidate_img_dir
-    lbl_dir = os.path.join(os.path.dirname(img_dir), "labels")
+    img_dir, lbl_dir = find_split_dirs(data_root, split)
 
     img_paths = sorted(glob.glob(os.path.join(img_dir, "*.*")))
     img_paths = [p for p in img_paths if p.lower().endswith(('.jpg', '.jpeg', '.png'))]
