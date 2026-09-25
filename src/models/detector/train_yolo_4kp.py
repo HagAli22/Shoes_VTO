@@ -95,14 +95,26 @@ def train_4kp(
     )
 
     elapsed_min = (time.time() - t0) / 60.0
-    best_ckpt = Path(project) / name / "weights" / "best.pt"
+
+    # Locate actual saved checkpoint from Ultralytics save_dir
+    actual_save_dir = Path(getattr(results, "save_dir", Path(project) / name))
+    actual_best = actual_save_dir / "weights" / "best.pt"
+    
+    target_weights_dir = Path(project) / name / "weights"
+    target_weights_dir.mkdir(parents=True, exist_ok=True)
+    target_best = target_weights_dir / "best.pt"
+
+    if actual_best.exists() and str(actual_best.resolve()) != str(target_best.resolve()):
+        import shutil
+        shutil.copy2(actual_best, target_best)
+        shutil.copy2(actual_save_dir / "weights" / "last.pt", target_weights_dir / "last.pt") if (actual_save_dir / "weights" / "last.pt").exists() else None
 
     print("\n" + "=" * 70)
     print("  Training Finished Successfully!")
     print(f"  Time Elapsed   : {elapsed_min:.2f} minutes")
-    print(f"  Best Checkpoint: {best_ckpt}")
+    print(f"  Best Checkpoint: {target_best}")
     print("=" * 70)
-    return str(best_ckpt)
+    return str(target_best)
 
 
 def main():
