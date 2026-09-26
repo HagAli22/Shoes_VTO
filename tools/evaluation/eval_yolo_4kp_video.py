@@ -16,6 +16,13 @@ import os
 import sys
 import time
 import argparse
+from pathlib import Path
+
+# Ensure project root is in sys.path
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import cv2
 import numpy as np
 from ultralytics import YOLO

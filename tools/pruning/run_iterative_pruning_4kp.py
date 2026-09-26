@@ -16,6 +16,12 @@ import csv
 import time
 import argparse
 from pathlib import Path
+
+# Ensure project root is in sys.path
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from ultralytics import YOLO
 
 from src.models.pruning.pruner import prune_yolo_model, measure_model_size_and_params

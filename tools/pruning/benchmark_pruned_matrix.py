@@ -17,6 +17,13 @@ import sys
 import csv
 import time
 import argparse
+from pathlib import Path
+
+# Ensure project root is in sys.path
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import numpy as np
 import onnxruntime as ort
 from ultralytics import YOLO
