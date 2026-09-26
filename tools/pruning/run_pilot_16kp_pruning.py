@@ -29,15 +29,30 @@ from src.models.pruning.train_pruned import train_pruned_model
 from tools.pruning.export_pruned_onnx import export_and_verify_pruned_model
 
 
+def resolve_data_yaml(candidate_yaml: str) -> str:
+    if os.path.exists(candidate_yaml):
+        return candidate_yaml
+    fallbacks = [
+        "configs/shuffled_v3_16kp.yaml",
+        "data/shuffled_v3/data.yaml",
+        "configs/shuffled_v3_4kp.yaml",
+    ]
+    for c in fallbacks:
+        if os.path.exists(c):
+            return c
+    return candidate_yaml
+
+
 def run_pilot_experiment(
     baseline_weights: str = "outputs/stage_a/run_shuffled_v3/weights/best.pt",
-    data_yaml: str = "data/shuffled_v3/data.yaml",
+    data_yaml: str = "configs/shuffled_v3_16kp.yaml",
     device: str = "0",
     finetune_epochs: int = 35,
     batch_size: int = 32,
     output_dir: str = "experiments/pilot_16kp",
     report_csv: str = "experiments/reports/pilot_16kp_results.csv",
 ):
+    data_yaml = resolve_data_yaml(data_yaml)
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(os.path.dirname(os.path.abspath(report_csv)), exist_ok=True)
 
