@@ -1,0 +1,9 @@
+﻿Model_Name,Family,Format,File_Size_MB,Budget_Compliant (<5MB),Box_Precision,Box_Recall,Box_mAP50,Pose_Precision,Pose_Recall,Pose_mAP50,Pose_mAP50-95,Latency_ms,FPS,Model_Path
+best.pt,16-KP,PyTorch,6.46,NO,0.8656,0.8566,0.9266,0.8588,0.7753,0.8596,0.3758,69.32,14.4,outputs/stage_a/run_shuffled_v3/weights/best.pt
+stage-a-320-16kp-fp32.onnx,16-KP,ONNX,12.59,NO,0.0,0.0,0.0,0.0,0.0,0.0,0.0,19.35,51.7,deliverables/stage_a_16kp/models/stage-a-320-16kp-fp32.onnx
+best.pt,4-KP,PyTorch,6.11,NO,0.9325,0.8701,0.9208,0.9459,0.92,0.9625,0.8392,67.61,14.8,outputs/stage1_4kp/finetune_shuffled_v3/weights/best.pt
+stage-a-320-yolo4kp-fp32.onnx,4-KP,ONNX,11.85,NO,0.0,0.0,0.0,0.0,0.0,0.0,0.0,20.68,48.4,outputs/stage1_4kp/finetune_shuffled_v3/stage-a-320-yolo4kp-fp32.onnx
+stage-a-320-yolo4kp-p1.onnx,4-KP,ONNX,11.85,NO,0.0,0.0,0.0,0.0,0.0,0.0,0.0,26.96,37.1,experiments/pruned_4kp/exports\stage-a-320-yolo4kp-p1.onnx
+stage-a-320-yolo4kp-p2.onnx,4-KP,ONNX,11.85,NO,0.0,0.0,0.0,0.0,0.0,0.0,0.0,20.76,48.2,experiments/pruned_4kp/exports\stage-a-320-yolo4kp-p2.onnx
+stage-a-320-yolo4kp-p3.onnx,4-KP,ONNX,11.85,NO,0.0,0.0,0.0,0.0,0.0,0.0,0.0,18.63,53.7,experiments/pruned_4kp/exports\stage-a-320-yolo4kp-p3.onnx
+stage-a-320-yolo4kp-p4.onnx,4-KP,ONNX,11.85,NO,0.0,0.0,0.0,0.0,0.0,0.0,0.0,17.34,57.7,experiments/pruned_4kp/exports\stage-a-320-yolo4kp-p4.onnx

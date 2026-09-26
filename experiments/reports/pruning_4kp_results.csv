@@ -1,0 +1,6 @@
+Stage,Pruning_Ratio,Params,Est_FP32_MB,ONNX_FP32_MB,Box_mAP50,Pose_mAP50,Pose_Recall,Checkpoint
+Baseline,0.0,3083466,11.76,12.42,0.9208,0.9625,0.92,outputs/stage1_4kp/finetune_shuffled_v3/weights/best.pt
+P1,0.2,2845834,10.86,11.85,0.9019,0.9117,0.8348,experiments\pruned_4kp\yolo_4kp_p1_r20\weights\best.pt
+P2,0.35,2721242,10.38,11.85,0.9057,0.9242,0.8463,experiments\pruned_4kp\yolo_4kp_p2_r35\weights\best.pt
+P3,0.5,2610522,9.96,11.85,0.9043,0.921,0.8468,experiments\pruned_4kp\yolo_4kp_p3_r50\weights\best.pt
+P4,0.65,2412106,9.2,11.85,0.9112,0.9286,0.8721,experiments\pruned_4kp\yolo_4kp_p4_r65\weights\best.pt

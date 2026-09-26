@@ -72,7 +72,7 @@ def benchmark_single_model(
     # Validation via Ultralytics if dataset exists
     if has_dataset:
         try:
-            model = YOLO(model_path)
+            model = YOLO(model_path, task="pose")
             # Use CPU for onnx validation to avoid provider mismatch warnings
             val_device = "cpu" if is_onnx else device
             val_res = model.val(data=resolved_yaml, imgsz=320, split="test", device=val_device, verbose=False)

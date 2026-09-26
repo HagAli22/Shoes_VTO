@@ -1,0 +1,5 @@
+Model,Method,Pruning_Ratio,Params,Est_FP32_MB,Box_mAP50,Pose_mAP50,Pose_Recall,Checkpoint
+Baseline-16KP,None,0.0,3274614,12.49,0.9266,0.8596,0.7753,outputs/stage_a/run_shuffled_v3/weights/best.pt
+16KP-MAGNITUDE-35%,magnitude,0.35,2912390,11.11,0.9114,0.8097,0.7648,experiments/pilot_16kp\pilot_16kp_imp_magnitude_r35\weights\best.pt
+16KP-TAYLOR-35%,taylor,0.35,2912390,11.11,0.9114,0.8097,0.7648,experiments\pilot_16kp\pilot_16kp_imp_taylor_r35\weights\best.pt
+16KP-BN_SCALE-35%,bn_scale,0.35,2912390,11.11,0.9114,0.8097,0.7648,experiments\pilot_16kp\pilot_16kp_imp_bn_scale_r35\weights\best.pt
