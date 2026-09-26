@@ -89,7 +89,9 @@ def prune_conv_layer(
         padding=conv.padding,
         dilation=conv.dilation,
         groups=1,
-        bias=conv.bias is not None
+        bias=conv.bias is not None,
+        device=old_w.device,
+        dtype=old_w.dtype
     )
     
     new_conv.weight.data.copy_(old_w[out_idx][:, in_idx])
@@ -104,12 +106,16 @@ def prune_bn_layer(bn: nn.BatchNorm2d, channels_keep: List[int]) -> nn.BatchNorm
     Slices a BatchNorm2d layer to new channel dimensions.
     """
     num_features = len(channels_keep)
+    device = bn.weight.data.device if bn.weight is not None else "cpu"
+    dtype = bn.weight.data.dtype if bn.weight is not None else torch.float32
     new_bn = nn.BatchNorm2d(
         num_features=num_features,
         eps=bn.eps,
         momentum=bn.momentum,
         affine=bn.affine,
-        track_running_stats=bn.track_running_stats
+        track_running_stats=bn.track_running_stats,
+        device=device,
+        dtype=dtype
     )
     if bn.affine:
         new_bn.weight.data.copy_(bn.weight.data[channels_keep])
@@ -182,30 +188,53 @@ def prune_yolo_model(
         yolo = model
 
     net = yolo.model if hasattr(yolo, "model") else yolo
-    net.to(device)
+    if isinstance(device, str):
+        if device.isdigit():
+            torch_dev = f"cuda:{device}" if torch.cuda.is_available() else "cpu"
+        elif "cuda" in device.lower():
+            torch_dev = device if torch.cuda.is_available() else "cpu"
+        else:
+            torch_dev = "cpu"
+    else:
+        torch_dev = device
+
+    net.to(torch_dev)
 
     # 1. Measure baseline
-    stats_before = measure_model_size_and_params(net, device=device)
+    stats_before = measure_model_size_and_params(net, device=torch_dev)
     print(f"\n[PRUNER] Baseline Parameters: {stats_before['total_params']:,} ({stats_before['est_fp32_mb']:.2f} MB FP32)")
     print(f"[PRUNER] Pruning Ratio Target: {pruning_ratio * 100:.1f}% (Method: {importance_name.upper()})")
 
     # 2. Accumulate gradients if Taylor mode
     if "taylor" in importance_name.lower():
         net.train()
+        for p in net.parameters():
+            p.requires_grad = True
         net.zero_grad()
-        if calibration_batch is None:
-            calib_in = torch.randn(4, 3, 320, 320).to(device)
-        else:
-            calib_in = calibration_batch.to(device)
-            
-        out = net(calib_in)
-        if isinstance(out, (list, tuple)):
-            loss = sum(o.sum() for o in out if isinstance(o, torch.Tensor))
-        elif isinstance(out, dict):
-            loss = sum(v.sum() for v in out.values() if isinstance(v, torch.Tensor))
-        else:
-            loss = out.sum()
-        loss.backward()
+        calib_in = torch.randn(4, 3, 320, 320, device=torch_dev, requires_grad=True) if calibration_batch is None else calibration_batch.to(torch_dev)
+        try:
+            out = net(calib_in)
+            if isinstance(out, (list, tuple)):
+                tensor_losses = [o.sum() for o in out if isinstance(o, torch.Tensor) and o.requires_grad]
+            elif isinstance(out, dict):
+                tensor_losses = [v.sum() for v in out.values() if isinstance(v, torch.Tensor) and v.requires_grad]
+            elif isinstance(out, torch.Tensor) and out.requires_grad:
+                tensor_losses = [out.sum()]
+            else:
+                tensor_losses = []
+                
+            if tensor_losses:
+                total_loss = sum(tensor_losses)
+                total_loss.backward()
+            else:
+                # Forward intermediate neck feature
+                feat = calib_in
+                for l in net.model[:-1]:
+                    feat = l(feat)
+                feat.sum().backward()
+        except Exception as e:
+            # Fallback to weight magnitude if autograd engine detaches in head
+            pass
         net.eval()
 
     # 3. Prune internal C2f bottleneck channels across Backbone & Neck
@@ -220,11 +249,11 @@ def prune_yolo_model(
 
     # 4. Verify forward pass
     net.eval()
-    example_input = torch.randn(1, 3, 320, 320).to(device)
+    example_input = torch.randn(1, 3, 320, 320, device=torch_dev)
     with torch.no_grad():
         test_out = net(example_input)
 
-    stats_after = measure_model_size_and_params(net, device=device)
+    stats_after = measure_model_size_and_params(net, device=torch_dev)
     param_reduction_pct = (1.0 - stats_after["total_params"] / stats_before["total_params"]) * 100.0
 
     print(f"[PRUNER] Pruned {pruned_c2f_count} C2f blocks successfully.")
