@@ -119,6 +119,8 @@ def main():
     parser.add_argument("--lrf", type=float, default=0.01, help="Final learning rate factor")
     parser.add_argument("--patience", type=int, default=40, help="Early stopping patience")
     parser.add_argument("--freeze", type=int, default=0, help="Number of backbone layers to freeze (e.g. 10 for fine-tuning)")
+    parser.add_argument("--fliplr", type=float, default=0.0, help="Horizontal flip probability (Default 0.0 because foot chirality is asymmetric)")
+    parser.add_argument("--agnostic_nms", action="store_true", help="Enable class-agnostic NMS during validation")
     
     # Output Settings
     parser.add_argument("--project", default="outputs/stage_a", help="Destination project directory")
@@ -175,12 +177,13 @@ def main():
         "translate": 0.1,
         "scale": 0.5,
         "flipud": 0.0,
-        "fliplr": 0.5,
+        "fliplr": args.fliplr,
         "mosaic": 0.5,
         "mixup": 0.0,
         "erasing": 0.3,
         "close_mosaic": 10,
         "exist_ok": args.exist_ok,
+        "agnostic_nms": args.agnostic_nms,
     }
 
     if args.freeze > 0:
@@ -203,7 +206,7 @@ def main():
         print("\n[*] Running final validation on best checkpoint...")
         try:
             val_model = YOLO(str(best_ckpt))
-            metrics = val_model.val(data=args.data, imgsz=args.imgsz, device=args.device)
+            metrics = val_model.val(data=args.data, imgsz=args.imgsz, device=args.device, agnostic_nms=args.agnostic_nms)
             print(f"  [+] Validation Results:")
             if hasattr(metrics, "box") and metrics.box:
                 print(f"      Box mAP@50:    {metrics.box.map50 * 100:.2f}%")
