@@ -17,17 +17,17 @@ pip install ultralytics onnxruntime opencv-python numpy
 ### 2. Run Demo (PyTorch or ONNX)
 
 ```bash
-# Run on full video using the trained 13-KP PyTorch checkpoint:
+# Run on full video using the state-of-the-art v7 13-KP PyTorch checkpoint:
 python deliverables/stage_a_13kp/demo/run_video_demo.py \
-    --weights outputs/stage_a/run_v4_13kp/weights/best.pt \
+    --weights deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.pt \
     --video data/test_video.mp4 \
-    --output deliverables/stage_a_13kp/demo/annotated_output_13kp.mp4
+    --output deliverables/stage_a_13kp/demo/annotated_output_v7_unfreeze_noflip.mp4
 
 # Or run with the exported ONNX model:
 python deliverables/stage_a_13kp/demo/run_video_demo.py \
-    --weights outputs/stage_a/run_v4_13kp/weights/best.onnx \
+    --weights deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.onnx \
     --video data/test_video.mp4 \
-    --output deliverables/stage_a_13kp/demo/annotated_output_13kp.mp4
+    --output deliverables/stage_a_13kp/demo/annotated_output_v7_unfreeze_noflip.mp4
 ```
 
 ---
