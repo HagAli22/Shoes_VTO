@@ -187,7 +187,11 @@
   </div>
 
 </div><!-- #app -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
 <script>
+// Configure ORT WASM & JSEP paths from CDN explicitly
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+
 /* ─── 13-KP Schema ─────────────────────────────────────────────────────────── */
 const KP_NAMES = [
   'toe_ground','heel_back','heel_ground','ball_medial','ball_lateral',
@@ -338,20 +342,31 @@ async function loadModel(provider) {
   ort.env.wasm.numThreads = cores;
   ort.env.wasm.simd = true;
 
+  const providerConfig = provider === 'webgpu'
+    ? [{ name: 'webgpu', deviceType: 'gpu', powerPreference: 'high-performance' }]
+    : ['wasm'];
+
   try {
     session = await ort.InferenceSession.create(MODEL_URL, {
-      executionProviders: [provider],
+      executionProviders: providerConfig,
       graphOptimizationLevel: 'all',
+      enableCpuMemArena: true,
     });
 
     // Warmup (avoids cold-start artifacts in live FPS)
     const dummy = new ort.Tensor('float32', new Float32Array(1*3*320*320), [1,3,320,320]);
-    for (let i = 0; i < 3; i++) await session.run({[session.inputNames[0]]: dummy});
+    for (let i = 0; i < 2; i++) await session.run({[session.inputNames[0]]: dummy});
 
     chipEl.textContent = `⚡ ${provider.toUpperCase()}`;
     chipEl.style.color = '#00ff75';
     showToast(`✅ Model ready (${provider.toUpperCase()})`, 2000);
   } catch(e) {
+    if (provider === 'webgpu') {
+      console.warn('WebGPU failed, falling back to WASM:', e);
+      showToast('⚠️ WebGPU not available, falling back to WASM...', 3500);
+      provSel.value = 'wasm';
+      return loadModel('wasm');
+    }
     chipEl.textContent = '❌ ERROR';
     chipEl.style.color = '#fc8181';
     showToast(`Model failed: ${e.message}`, 6000);
@@ -640,6 +655,16 @@ provSel.addEventListener('change', async (e) => {
 async function init() {
   resize();
   startCamera();
+  if (navigator.gpu) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) {
+        provSel.value = 'webgpu';
+      }
+    } catch(e) {
+      console.warn('WebGPU check error:', e);
+    }
+  }
   await loadModel(provSel.value);
   loop();
 }

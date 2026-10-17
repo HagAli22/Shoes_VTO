@@ -61,7 +61,8 @@
     <div class="info-item"><div class="key">Browser</div><div class="val" id="di-browser">—</div></div>
     <div class="info-item"><div class="key">Platform</div><div class="val" id="di-platform">—</div></div>
     <div class="info-item"><div class="key">CPU Cores</div><div class="val" id="di-cores">—</div></div>
-    <div class="info-item"><div class="key">WebGPU</div><div class="val" id="di-webgpu">Checking…</div></div>
+    <div class="info-item"><div class="key">WebGPU Support</div><div class="val" id="di-webgpu">Checking…</div></div>
+    <div class="info-item" style="grid-column: 1 / -1"><div class="key">Multi-threading (Cross-Origin Isolated)</div><div class="val" id="di-isolated">Checking…</div></div>
   </div>
 </div>
 
@@ -80,6 +81,8 @@
   </div>
   <div class="row" style="margin-top:10px">
     <button id="run-btn" onclick="runAll()">▶ Run Full Benchmark</button>
+    <button id="run-wgpu-btn" onclick="runOnly('webgpu')" style="background:#2b6cb0;margin-left:8px">⚡ WebGPU Only</button>
+    <button id="run-wasm-btn" onclick="runOnly('wasm')" style="background:#285e61;margin-left:8px">🧠 WASM Only</button>
     <button class="stop" onclick="doStop()" style="margin-left:8px">⏹ Stop</button>
   </div>
   <div id="status" class="status info">Ready. Press "Run Full Benchmark" to start.</div>
@@ -109,6 +112,9 @@
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
 <script>
+// Configure ORT WASM & JSEP paths from CDN explicitly
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/';
+
 /* ── State ────────────────────────────────────────────────── */
 let stopped = false;
 const allResults = [];
@@ -171,6 +177,15 @@ async function detectDevice() {
   document.getElementById('di-cores').textContent =
     `${navigator.hardwareConcurrency || '?'} logical cores`;
 
+  const isoEl = document.getElementById('di-isolated');
+  if (window.crossOriginIsolated) {
+    isoEl.innerHTML = `<span class="badge badge-ok">✅ Isolated (Multi-thread active)</span>`;
+    log('Cross-Origin Isolated: YES (SharedArrayBuffer enabled)', '#9ae6b4');
+  } else {
+    isoEl.innerHTML = `<span class="badge badge-warn">⚠️ Not Isolated (Single-thread fallback — Server must send COOP/COEP)</span>`;
+    log('Cross-Origin Isolated: NO (COOP/COEP missing — WASM fallback to 1T)', '#f6ad55');
+  }
+
   const wgpuEl = document.getElementById('di-webgpu');
   if (navigator.gpu) {
     try {
@@ -178,16 +193,18 @@ async function detectDevice() {
       if (adapter) {
         const info = adapter.info || {};
         wgpuEl.innerHTML = `<span class="badge badge-ok">✅ Supported</span>`;
-        log(`WebGPU adapter: ${info.vendor || 'unknown vendor'} / ${info.architecture || 'unknown arch'}`, '#9ae6b4');
+        log(`WebGPU adapter: ${info.vendor || 'GPU'} / ${info.architecture || ''}`, '#9ae6b4');
       } else {
         wgpuEl.innerHTML = `<span class="badge badge-warn">⚠️ No Adapter</span>`;
+        log('WebGPU requestAdapter returned null', '#f6ad55');
       }
     } catch(e) {
       wgpuEl.innerHTML = `<span class="badge badge-warn">⚠️ ${e.message}</span>`;
+      log(`WebGPU error: ${e.message}`, '#fc8181');
     }
   } else {
     wgpuEl.innerHTML = `<span class="badge badge-err">❌ Not Supported</span>`;
-    log('WebGPU not available — only WASM tests will run.', '#f6ad55');
+    log('WebGPU not supported in this browser.', '#f6ad55');
   }
 }
 
@@ -205,7 +222,19 @@ async function benchmarkOne(label, modelUrl, providerConfig, warmupN, benchN) {
     });
   } catch(e) {
     log(`  ❌ Load failed: ${e.message}`, '#fc8181');
-    return null;
+    return {
+      label,
+      coldLoadMs: 'ERR',
+      coldInferMs: 'ERR',
+      p50: 'ERR',
+      p95: 'ERR',
+      mean: 'ERR',
+      min: 'ERR',
+      max: 'ERR',
+      fps: '0.0',
+      error: e.message,
+      runs: 0,
+    };
   }
   const coldLoadMs = performance.now() - t_load0;
 
@@ -215,7 +244,24 @@ async function benchmarkOne(label, modelUrl, providerConfig, warmupN, benchN) {
 
   // Cold first inference
   const t_cold_infer0 = performance.now();
-  await session.run({ [inputName]: tensor });
+  try {
+    await session.run({ [inputName]: tensor });
+  } catch(e) {
+    log(`  ❌ Cold infer failed: ${e.message}`, '#fc8181');
+    return {
+      label,
+      coldLoadMs: coldLoadMs.toFixed(1),
+      coldInferMs: 'ERR',
+      p50: 'ERR',
+      p95: 'ERR',
+      mean: 'ERR',
+      min: 'ERR',
+      max: 'ERR',
+      fps: '0.0',
+      error: e.message,
+      runs: 0,
+    };
+  }
   const coldInferMs = performance.now() - t_cold_infer0;
 
   log(`  Cold load: ${coldLoadMs.toFixed(0)} ms | Cold infer: ${coldInferMs.toFixed(0)} ms`, '#a0aec0');
@@ -262,10 +308,12 @@ async function benchmarkOne(label, modelUrl, providerConfig, warmupN, benchN) {
 }
 
 /* ── Run all benchmarks ──────────────────────────────────── */
-async function runAll() {
+async function runAll(onlyTarget = null) {
   stopped = false;
   allResults.length = 0;
   document.getElementById('run-btn').disabled = true;
+  document.getElementById('run-wgpu-btn').disabled = true;
+  document.getElementById('run-wasm-btn').disabled = true;
   document.getElementById('results-wrap').innerHTML =
     '<p style="color:#4a5568;font-size:0.85rem">Running…</p>';
 
@@ -279,16 +327,22 @@ async function runAll() {
   ort.env.wasm.simd = true;
 
   const jobs = [];
-  if (hasWebGPU) {
-    jobs.push({ label: 'WebGPU (FP32)', providers: ['webgpu'] });
+  if ((!onlyTarget || onlyTarget === 'webgpu') && hasWebGPU) {
+    jobs.push({
+      label: 'WebGPU (GPU)',
+      providers: [{ name: 'webgpu', deviceType: 'gpu', powerPreference: 'high-performance' }]
+    });
   }
-  jobs.push(
-    { label: `WASM Multi-Thread (FP32, ${cores}T)`, providers: ['wasm'] },
-  );
+  if (!onlyTarget || onlyTarget === 'wasm') {
+    jobs.push({
+      label: `WASM Multi-Thread (${cores}T)`,
+      providers: ['wasm']
+    });
+  }
 
   log(`\n=== Benchmark Start ===`, '#63b3ed');
   log(`Model: ${modelUrl}`, '#a0aec0');
-  log(`ONNX Runtime Web: ${ort.env?.versions?.ortWeb || ort.version || '1.20'}`, '#a0aec0');
+  log(`ONNX Runtime Web: ${ort.env?.versions?.ortWeb || ort.version || '1.20.1'}`, '#a0aec0');
   log(`CPU Cores used for WASM: ${cores}`, '#a0aec0');
 
   for (let i = 0; i < jobs.length; i++) {
@@ -301,11 +355,17 @@ async function runAll() {
 
   renderResults();
   document.getElementById('run-btn').disabled = false;
+  document.getElementById('run-wgpu-btn').disabled = false;
+  document.getElementById('run-wasm-btn').disabled = false;
   setStatus(
     stopped ? 'Stopped.' : `✅ Done! ${allResults.length} backend(s) benchmarked.`,
     stopped ? 'warn' : 'ok'
   );
   setPbar(100);
+}
+
+function runOnly(target) {
+  runAll(target);
 }
 
 /* ── Render results table ────────────────────────────────── */
