@@ -3,84 +3,105 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shoes VTO — Stage A ONNX Browser Benchmark</title>
+  <title>Shoes VTO v7 — WebGPU / WASM Benchmark</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e2e8f0; padding: 20px; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e2e8f0; padding: 20px; max-width: 960px; margin: 0 auto; }
     h1 { font-size: 1.4rem; color: #63b3ed; margin-bottom: 4px; }
     .subtitle { color: #718096; font-size: 0.85rem; margin-bottom: 20px; }
-    .card { background: #1a202c; border: 1px solid #2d3748; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    .card h2 { font-size: 1rem; color: #90cdf4; margin-bottom: 12px; }
+    .card { background: #1a202c; border: 1px solid #2d3748; border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+    .card h2 { font-size: 1rem; color: #90cdf4; margin-bottom: 14px; }
     .row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
-    label { font-size: 0.8rem; color: #a0aec0; min-width: 90px; }
-    select, input[type=number] { background: #2d3748; color: #e2e8f0; border: 1px solid #4a5568; border-radius: 4px; padding: 6px 10px; font-size: 0.85rem; width: 220px; }
-    button { background: #3182ce; color: #fff; border: none; border-radius: 5px; padding: 10px 22px; cursor: pointer; font-size: 0.9rem; font-weight: 600; }
+    label { font-size: 0.8rem; color: #a0aec0; min-width: 100px; }
+    input[type=text]  { background: #2d3748; color: #e2e8f0; border: 1px solid #4a5568; border-radius: 5px; padding: 7px 10px; font-size: 0.82rem; width: 380px; }
+    input[type=number]{ background: #2d3748; color: #e2e8f0; border: 1px solid #4a5568; border-radius: 5px; padding: 7px 10px; font-size: 0.82rem; width: 90px; }
+    button { background: #3182ce; color: #fff; border: none; border-radius: 6px; padding: 10px 22px; cursor: pointer; font-size: 0.9rem; font-weight: 600; transition: background 0.15s; }
+    button:hover { background: #2b6cb0; }
     button:disabled { background: #4a5568; cursor: not-allowed; }
-    button.danger { background: #c53030; }
-    .status { font-size: 0.85rem; padding: 8px 12px; border-radius: 4px; margin-top: 8px; }
+    button.stop { background: #c53030; }
+    button.copy { background: #285e61; font-size: 0.78rem; padding: 6px 14px; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; margin-left: 10px; }
+    .badge-ok   { background: #1c4532; color: #9ae6b4; border: 1px solid #276749; }
+    .badge-warn { background: #744210; color: #fbd38d; border: 1px solid #975a16; }
+    .badge-err  { background: #742a2a; color: #feb2b2; border: 1px solid #9b2c2c; }
+    .status { font-size: 0.85rem; padding: 9px 14px; border-radius: 6px; margin: 10px 0; }
     .status.info  { background: #2a4365; color: #90cdf4; }
-    .status.warn  { background: #744210; color: #fbd38d; }
     .status.ok    { background: #1c4532; color: #9ae6b4; }
+    .status.warn  { background: #744210; color: #fbd38d; }
     .status.error { background: #742a2a; color: #feb2b2; }
+    .progress { height: 5px; background: #2d3748; border-radius: 3px; margin: 8px 0; overflow: hidden; }
+    .progress-bar { height: 100%; background: linear-gradient(90deg, #3182ce, #63b3ed); border-radius: 3px; transition: width 0.15s; }
     table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-    th { background: #2d3748; color: #90cdf4; padding: 8px 10px; text-align: left; font-weight: 600; }
-    td { padding: 7px 10px; border-bottom: 1px solid #2d3748; }
+    th { background: #2d3748; color: #90cdf4; padding: 9px 12px; text-align: left; font-weight: 700; }
+    td { padding: 8px 12px; border-bottom: 1px solid #2d3748; }
     tr:last-child td { border-bottom: none; }
-    td.good  { color: #68d391; font-weight: 700; }
-    td.warn  { color: #f6ad55; font-weight: 700; }
-    td.bad   { color: #fc8181; font-weight: 700; }
-    .progress { height: 4px; background: #2d3748; border-radius: 2px; margin-top: 8px; overflow: hidden; }
-    .progress-bar { height: 100%; background: #3182ce; border-radius: 2px; transition: width 0.2s; }
-    #log { background: #0d1117; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.78rem; color: #a0aec0; max-height: 200px; overflow-y: auto; margin-top: 8px; }
-    .copy-btn { background: #285e61; font-size: 0.75rem; padding: 5px 12px; margin-left: 8px; }
-    #markdown-output { background: #0d1117; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.75rem; color: #a0aec0; max-height: 250px; overflow-y: auto; white-space: pre; margin-top: 8px; }
+    .g { color: #68d391; font-weight: 700; }
+    .w { color: #f6ad55; font-weight: 700; }
+    .b { color: #fc8181; font-weight: 700; }
+    pre { background: #0d1117; border: 1px solid #2d3748; border-radius: 6px; padding: 14px; font-family: monospace; font-size: 0.76rem; color: #a0aec0; max-height: 280px; overflow-y: auto; white-space: pre-wrap; margin-top: 10px; }
+    #log { background: #0d1117; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.76rem; color: #718096; max-height: 180px; overflow-y: auto; margin-top: 10px; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+    .info-item { background: #2d3748; border-radius: 6px; padding: 10px 14px; }
+    .info-item .key { font-size: 0.72rem; color: #718096; margin-bottom: 3px; }
+    .info-item .val { font-size: 0.88rem; color: #e2e8f0; font-weight: 600; }
   </style>
 </head>
 <body>
 
-<h1>👟 Shoes VTO — Stage A ONNX Browser Benchmark</h1>
-<p class="subtitle">Measures real WebGPU & WASM inference latency directly in this browser tab.</p>
+<h1>👟 Shoes VTO v7 — Browser Inference Benchmark</h1>
+<p class="subtitle">
+  Measures real WebGPU &amp; WASM latency for <code>stage-a-320-13kp-v7.onnx</code>
+  (12.4 MB · FP32 · Input 1×3×320×320 → Output 1×45×2100)
+</p>
 
+<!-- Device Info -->
+<div class="card" id="device-card">
+  <h2>🖥️ Device Info</h2>
+  <div class="info-grid" id="device-info">
+    <div class="info-item"><div class="key">Browser</div><div class="val" id="di-browser">—</div></div>
+    <div class="info-item"><div class="key">Platform</div><div class="val" id="di-platform">—</div></div>
+    <div class="info-item"><div class="key">CPU Cores</div><div class="val" id="di-cores">—</div></div>
+    <div class="info-item"><div class="key">WebGPU</div><div class="val" id="di-webgpu">Checking…</div></div>
+  </div>
+</div>
+
+<!-- Config -->
 <div class="card">
   <h2>⚙️ Configuration</h2>
   <div class="row">
-    <label>Model (FP32):</label>
-    <input type="text" id="fp32-path" value="../../deliverables/stage_a_16kp/models/stage-a-320-16kp-fp32.onnx" style="width:420px" />
+    <label>Model URL:</label>
+    <input type="text" id="model-url" value="/deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.onnx" style="width:440px" />
   </div>
   <div class="row">
-    <label>Model (FP16):</label>
-    <input type="text" id="fp16-path" value="../../deliverables/stage_a_16kp/models/stage-a-320-16kp-fp16.onnx" style="width:420px" />
-  </div>
-  <div class="row">
-    <label>Model (INT8):</label>
-    <input type="text" id="int8-path" value="../../deliverables/stage_a_16kp/models/stage-a-320-16kp-int8.onnx" style="width:420px" />
-  </div>
-  <div class="row">
-    <label>Warm Runs:</label>
-    <input type="number" id="warm-runs" value="50" min="10" max="500" style="width:100px" />
     <label>Warmup Runs:</label>
-    <input type="number" id="warmup-runs" value="10" min="5" max="50" style="width:100px" />
+    <input type="number" id="warmup-n" value="15" min="5" max="50" />
+    <label>Benchmark Runs:</label>
+    <input type="number" id="bench-n" value="100" min="20" max="500" />
   </div>
-  <div class="row" style="margin-top:8px">
-    <button id="run-btn" onclick="runBenchmark()">▶ Run Full Benchmark</button>
-    <button class="danger" onclick="stopBenchmark()" style="margin-left:8px">⏹ Stop</button>
+  <div class="row" style="margin-top:10px">
+    <button id="run-btn" onclick="runAll()">▶ Run Full Benchmark</button>
+    <button class="stop" onclick="doStop()" style="margin-left:8px">⏹ Stop</button>
   </div>
-  <div id="status" class="status info">Ready. Click "Run Full Benchmark" to start.</div>
-  <div class="progress"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
+  <div id="status" class="status info">Ready. Press "Run Full Benchmark" to start.</div>
+  <div class="progress"><div class="progress-bar" id="pbar" style="width:0%"></div></div>
 </div>
 
+<!-- Results -->
 <div class="card">
   <h2>📊 Results</h2>
-  <div id="results-container">
-    <p style="color:#718096;font-size:0.85rem">No benchmark run yet.</p>
-  </div>
+  <div id="results-wrap"><p style="color:#4a5568;font-size:0.85rem">No results yet.</p></div>
 </div>
 
+<!-- Export -->
 <div class="card">
-  <h2>📋 Markdown Report <button class="copy-btn" onclick="copyMarkdown()">📋 Copy</button></h2>
-  <div id="markdown-output"># Waiting for benchmark results...</div>
+  <h2>📋 Export Results
+    <button class="copy" style="margin-left:10px" onclick="copyMd()">📋 Copy Markdown</button>
+    <button class="copy" style="margin-left:6px" onclick="copyJson()">{ } Copy JSON</button>
+  </h2>
+  <pre id="md-out"># Waiting for benchmark…</pre>
 </div>
 
+<!-- Log -->
 <div class="card">
   <h2>🪵 Log</h2>
   <div id="log">&gt; Ready.</div>
@@ -88,17 +109,19 @@
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
 <script>
+/* ── State ────────────────────────────────────────────────── */
 let stopped = false;
-const results = [];
+const allResults = [];
+let jsonResults = {};
 
-function log(msg, color = '#a0aec0') {
+/* ── Logging ─────────────────────────────────────────────── */
+function log(msg, color = '#718096') {
   const el = document.getElementById('log');
-  const line = document.createElement('div');
-  line.style.color = color;
-  line.textContent = `> ${msg}`;
-  el.appendChild(line);
+  const d = document.createElement('div');
+  d.style.color = color;
+  d.textContent = `> ${msg}`;
+  el.appendChild(d);
   el.scrollTop = el.scrollHeight;
-  console.log(msg);
 }
 
 function setStatus(msg, type = 'info') {
@@ -107,225 +130,264 @@ function setStatus(msg, type = 'info') {
   el.textContent = msg;
 }
 
-function setProgress(pct) {
-  document.getElementById('progress-bar').style.width = `${pct}%`;
+function setPbar(pct) {
+  document.getElementById('pbar').style.width = `${Math.min(100, pct)}%`;
 }
 
-function stopBenchmark() {
-  stopped = true;
-  setStatus('Stopped by user.', 'warn');
+function doStop() { stopped = true; setStatus('Stopped by user.', 'warn'); }
+
+/* ── Stats helpers ───────────────────────────────────────── */
+function pct(arr, p) {
+  const s = [...arr].sort((a,b) => a-b);
+  return s[Math.max(0, Math.ceil(p/100*s.length)-1)];
+}
+function mean(arr) { return arr.reduce((a,b)=>a+b,0)/arr.length; }
+
+function classify(ms, ok=12, warn=25) {
+  if (ms <= ok)   return 'g';
+  if (ms <= warn) return 'w';
+  return 'b';
+}
+function classifyFps(fps) {
+  if (fps >= 60) return 'g';
+  if (fps >= 30) return 'w';
+  return 'b';
 }
 
-function percentile(arr, p) {
-  const sorted = [...arr].sort((a, b) => a - b);
-  const idx = Math.ceil((p / 100) * sorted.length) - 1;
-  return sorted[Math.max(0, idx)];
+/* ── Device detection ────────────────────────────────────── */
+async function detectDevice() {
+  const ua = navigator.userAgent;
+  document.getElementById('di-browser').textContent =
+    ua.includes('Edg') ? 'Edge' :
+    ua.includes('Chrome') ? 'Chrome' :
+    ua.includes('Firefox') ? 'Firefox' :
+    ua.includes('Safari') ? 'Safari' : 'Unknown';
+
+  document.getElementById('di-platform').textContent =
+    ua.includes('Android') ? 'Android (Mobile)' :
+    ua.includes('iPhone') || ua.includes('iPad') ? 'iOS (Mobile)' :
+    navigator.platform || 'Desktop';
+
+  document.getElementById('di-cores').textContent =
+    `${navigator.hardwareConcurrency || '?'} logical cores`;
+
+  const wgpuEl = document.getElementById('di-webgpu');
+  if (navigator.gpu) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) {
+        const info = adapter.info || {};
+        wgpuEl.innerHTML = `<span class="badge badge-ok">✅ Supported</span>`;
+        log(`WebGPU adapter: ${info.vendor || 'unknown vendor'} / ${info.architecture || 'unknown arch'}`, '#9ae6b4');
+      } else {
+        wgpuEl.innerHTML = `<span class="badge badge-warn">⚠️ No Adapter</span>`;
+      }
+    } catch(e) {
+      wgpuEl.innerHTML = `<span class="badge badge-warn">⚠️ ${e.message}</span>`;
+    }
+  } else {
+    wgpuEl.innerHTML = `<span class="badge badge-err">❌ Not Supported</span>`;
+    log('WebGPU not available — only WASM tests will run.', '#f6ad55');
+  }
 }
 
-function colorLatency(ms, thresholdOk = 12, thresholdWarn = 20) {
-  if (ms <= thresholdOk) return 'good';
-  if (ms <= thresholdWarn) return 'warn';
-  return 'bad';
-}
+/* ── Core benchmark function ─────────────────────────────── */
+async function benchmarkOne(label, modelUrl, providerConfig, warmupN, benchN) {
+  log(`\n[${label}] Loading model...`, '#90cdf4');
 
-function colorFPS(fps) {
-  if (fps >= 60) return 'good';
-  if (fps >= 30) return 'warn';
-  return 'bad';
-}
-
-async function benchmarkOne(label, modelPath, provider, inputDtype, warmupRuns, warmRuns) {
-  log(`Loading [${label}] via ${provider}...`, '#90cdf4');
-  
-  const sessionOptions = { executionProviders: [provider] };
-
-  // Cold start: measure load time
-  const t_load_start = performance.now();
   let session;
+  const t_load0 = performance.now();
   try {
-    session = await ort.InferenceSession.create(modelPath, sessionOptions);
-  } catch (e) {
-    log(`  [ERROR] ${e.message}`, '#fc8181');
+    session = await ort.InferenceSession.create(modelUrl, {
+      executionProviders: providerConfig,
+      graphOptimizationLevel: 'all',
+      enableCpuMemArena: true,
+    });
+  } catch(e) {
+    log(`  ❌ Load failed: ${e.message}`, '#fc8181');
     return null;
   }
-  const t_load_end = performance.now();
-  const coldLoad = t_load_end - t_load_start;
+  const coldLoadMs = performance.now() - t_load0;
 
   const inputName = session.inputNames[0];
-  const data = new (inputDtype === 'float16' ? Float16Array : Float32Array)(1 * 3 * 320 * 320);
-  if (inputDtype === 'float16') {
-    const float16Tensor = new ort.Tensor('float16', data, [1, 3, 320, 320]);
-    var feeds = { [inputName]: float16Tensor };
-  } else {
-    const float32Tensor = new ort.Tensor('float32', data, [1, 3, 320, 320]);
-    var feeds = { [inputName]: float32Tensor };
-  }
+  const dummy = new Float32Array(1 * 3 * 320 * 320); // zeros — fast, deterministic
+  const tensor = new ort.Tensor('float32', dummy, [1, 3, 320, 320]);
 
-  // Cold inference
-  const t_cold0 = performance.now();
-  await session.run(feeds);
-  const coldInfer = performance.now() - t_cold0;
+  // Cold first inference
+  const t_cold_infer0 = performance.now();
+  await session.run({ [inputName]: tensor });
+  const coldInferMs = performance.now() - t_cold_infer0;
+
+  log(`  Cold load: ${coldLoadMs.toFixed(0)} ms | Cold infer: ${coldInferMs.toFixed(0)} ms`, '#a0aec0');
 
   // Warmup
-  log(`  Warming up (${warmupRuns} runs)...`, '#718096');
-  for (let i = 0; i < warmupRuns; i++) {
+  log(`  Warming up (${warmupN} runs)…`, '#718096');
+  for (let i = 0; i < warmupN; i++) {
     if (stopped) return null;
-    await session.run(feeds);
+    await session.run({ [inputName]: tensor });
   }
 
-  // Warm benchmark
-  log(`  Benchmarking (${warmRuns} runs)...`, '#718096');
+  // Timed benchmark
+  log(`  Benchmarking (${benchN} runs)…`, '#718096');
   const timings = [];
-  for (let i = 0; i < warmRuns; i++) {
+  for (let i = 0; i < benchN; i++) {
     if (stopped) return null;
     const t0 = performance.now();
-    await session.run(feeds);
+    await session.run({ [inputName]: tensor });
     timings.push(performance.now() - t0);
-    setProgress(((i + 1) / warmRuns) * 100);
+    setPbar((i+1)/benchN * 100);
   }
 
-  const p50 = percentile(timings, 50);
-  const p95 = percentile(timings, 95);
-  const mean = timings.reduce((a, b) => a + b, 0) / timings.length;
-  const fps = 1000 / p50;
+  const p50 = pct(timings, 50);
+  const p95 = pct(timings, 95);
+  const avg  = mean(timings);
+  const fps  = 1000 / p50;
 
-  const result = {
-    label, modelPath, provider, inputDtype,
-    coldLoad: coldLoad.toFixed(1),
-    coldInfer: coldInfer.toFixed(1),
+  log(`  ✓ p50=${p50.toFixed(1)}ms | p95=${p95.toFixed(1)}ms | FPS=${fps.toFixed(0)}`, '#68d391');
+
+  try { session.release(); } catch(e) {}
+
+  return {
+    label,
+    coldLoadMs: coldLoadMs.toFixed(1),
+    coldInferMs: coldInferMs.toFixed(1),
     p50: p50.toFixed(2),
     p95: p95.toFixed(2),
-    mean: mean.toFixed(2),
+    mean: avg.toFixed(2),
     min: Math.min(...timings).toFixed(2),
     max: Math.max(...timings).toFixed(2),
     fps: fps.toFixed(1),
-    outputShape: Object.values(session.outputNames)
+    runs: benchN,
   };
-
-  log(`  ✓ p50=${p50.toFixed(1)}ms | p95=${p95.toFixed(1)}ms | FPS=${fps.toFixed(0)}`, '#9ae6b4');
-  return result;
 }
 
-async function runBenchmark() {
+/* ── Run all benchmarks ──────────────────────────────────── */
+async function runAll() {
   stopped = false;
-  results.length = 0;
-
-  const fp32Path = document.getElementById('fp32-path').value;
-  const fp16Path = document.getElementById('fp16-path').value;
-  const int8Path = document.getElementById('int8-path').value;
-  const warmRuns = parseInt(document.getElementById('warm-runs').value);
-  const warmupRuns = parseInt(document.getElementById('warmup-runs').value);
-
+  allResults.length = 0;
   document.getElementById('run-btn').disabled = true;
-  document.getElementById('results-container').innerHTML = '<p style="color:#718096;font-size:0.85rem">Running...</p>';
+  document.getElementById('results-wrap').innerHTML =
+    '<p style="color:#4a5568;font-size:0.85rem">Running…</p>';
 
-  // Device info
-  const ua = navigator.userAgent;
-  const deviceInfo = `${navigator.platform} | ${ua.includes('Mobile') ? 'Mobile' : 'Desktop'} | ${ua.slice(0, 60)}`;
-  log(`Device: ${deviceInfo}`, '#90cdf4');
-  log(`ONNX Runtime Web version: ${ort.version || 'unknown'}`, '#90cdf4');
+  const modelUrl  = document.getElementById('model-url').value;
+  const warmupN   = parseInt(document.getElementById('warmup-n').value);
+  const benchN    = parseInt(document.getElementById('bench-n').value);
 
-  const benchmarks = [
-    { label: 'FP32 (WebGPU)',     path: fp32Path, provider: 'webgpu',  dtype: 'float32' },
-    { label: 'FP32 (WASM)',       path: fp32Path, provider: 'wasm',    dtype: 'float32' },
-    { label: 'FP16 (WebGPU)',     path: fp16Path, provider: 'webgpu',  dtype: 'float16' },
-    { label: 'INT8 (WASM)',       path: int8Path, provider: 'wasm',    dtype: 'float32' },
-  ];
+  const hasWebGPU = !!navigator.gpu;
+  const cores = Math.min(navigator.hardwareConcurrency || 2, 4);
+  ort.env.wasm.numThreads = cores;
+  ort.env.wasm.simd = true;
 
-  const totalSteps = benchmarks.length;
-  for (let i = 0; i < benchmarks.length; i++) {
+  const jobs = [];
+  if (hasWebGPU) {
+    jobs.push({ label: 'WebGPU (FP32)', providers: ['webgpu'] });
+  }
+  jobs.push(
+    { label: `WASM Multi-Thread (FP32, ${cores}T)`, providers: ['wasm'] },
+  );
+
+  log(`\n=== Benchmark Start ===`, '#63b3ed');
+  log(`Model: ${modelUrl}`, '#a0aec0');
+  log(`ONNX Runtime Web: ${ort.env?.versions?.ortWeb || ort.version || '1.20'}`, '#a0aec0');
+  log(`CPU Cores used for WASM: ${cores}`, '#a0aec0');
+
+  for (let i = 0; i < jobs.length; i++) {
     if (stopped) break;
-    const b = benchmarks[i];
-    setStatus(`[${i+1}/${totalSteps}] Benchmarking ${b.label}...`, 'info');
-    setProgress(0);
-    const r = await benchmarkOne(b.label, b.path, b.provider, b.dtype, warmupRuns, warmRuns);
-    if (r) results.push(r);
+    setStatus(`[${i+1}/${jobs.length}] Running ${jobs[i].label}…`, 'info');
+    setPbar(0);
+    const r = await benchmarkOne(jobs[i].label, modelUrl, jobs[i].providers, warmupN, benchN);
+    if (r) allResults.push(r);
   }
 
-  renderResults(results, deviceInfo);
+  renderResults();
   document.getElementById('run-btn').disabled = false;
-  setStatus(stopped ? 'Stopped.' : `✅ Done! ${results.length} models benchmarked.`, stopped ? 'warn' : 'ok');
-  setProgress(100);
+  setStatus(
+    stopped ? 'Stopped.' : `✅ Done! ${allResults.length} backend(s) benchmarked.`,
+    stopped ? 'warn' : 'ok'
+  );
+  setPbar(100);
 }
 
-function renderResults(results, deviceInfo) {
-  const now = new Date().toISOString();
-  const browser = navigator.userAgent;
+/* ── Render results table ────────────────────────────────── */
+function renderResults() {
+  if (!allResults.length) return;
 
-  let html = `<table>
+  const now = new Date().toISOString();
+  const ua  = navigator.userAgent;
+  const device = `${ua.includes('Android') ? 'Android' : ua.includes('iPhone') ? 'iOS' : 'Desktop'} | ${navigator.platform}`;
+
+  let html = `
+  <table>
     <tr>
-      <th>Model / Provider</th>
+      <th>Backend</th>
       <th>Cold Load</th>
       <th>Cold Infer</th>
-      <th>Warm p50</th>
+      <th>Warm p50 ↓</th>
       <th>Warm p95</th>
-      <th>Min</th>
-      <th>Max</th>
-      <th>FPS (p50)</th>
+      <th>Min / Max</th>
+      <th>FPS ↑</th>
       <th>≤12ms?</th>
     </tr>`;
 
   const mdRows = [];
-  for (const r of results) {
-    const pClass = colorLatency(parseFloat(r.p50));
-    const fClass = colorFPS(parseFloat(r.fps));
-    const ok12 = parseFloat(r.p50) <= 12 ? '✅' : '❌';
+  for (const r of allResults) {
+    const p50f  = parseFloat(r.p50);
+    const fpsf  = parseFloat(r.fps);
+    const ok12  = p50f <= 12 ? '✅' : '❌';
 
-    html += `<tr>
+    html += `
+    <tr>
       <td><strong>${r.label}</strong></td>
-      <td>${r.coldLoad} ms</td>
-      <td>${r.coldInfer} ms</td>
-      <td class="${pClass}">${r.p50} ms</td>
-      <td>${r.p95} ms</td>
-      <td>${r.min} ms</td>
-      <td>${r.max} ms</td>
-      <td class="${fClass}">${r.fps} FPS</td>
+      <td>${r.coldLoadMs} ms</td>
+      <td>${r.coldInferMs} ms</td>
+      <td class="${classify(p50f)}">${r.p50} ms</td>
+      <td class="${classify(parseFloat(r.p95))}">${r.p95} ms</td>
+      <td>${r.min} / ${r.max} ms</td>
+      <td class="${classifyFps(fpsf)}">${r.fps} FPS</td>
       <td>${ok12}</td>
     </tr>`;
 
-    mdRows.push(`| **${r.label}** | ${r.coldLoad} ms | ${r.coldInfer} ms | **${r.p50} ms** | ${r.p95} ms | **${r.fps} FPS** | ${ok12} |`);
+    mdRows.push(`| **${r.label}** | ${r.coldLoadMs} ms | ${r.coldInferMs} ms | **${r.p50} ms** | ${r.p95} ms | ${r.min}/${r.max} ms | **${r.fps} FPS** | ${ok12} |`);
   }
 
-  html += `</table>
-    <p style="color:#718096;font-size:0.75rem;margin-top:10px">
-      Measured: ${now} | Browser: ${browser.slice(0, 80)}...
-    </p>`;
+  html += `</table><p style="color:#4a5568;font-size:0.72rem;margin-top:10px">Measured ${now} · ORT-Web v${ort.env?.versions?.ortWeb || '1.20'} · ${ua.slice(0,80)}</p>`;
+  document.getElementById('results-wrap').innerHTML = html;
 
-  document.getElementById('results-container').innerHTML = html;
+  const md = `# Shoes VTO v7 — Browser Benchmark Results
 
-  const md = `# Stage A Browser & Mobile Performance Report
+> **Model:** stage-a-320-13kp-v7.onnx (12.4 MB, FP32, Input: [1,3,320,320])
+> **Measured:** ${now.slice(0,19).replace('T',' ')} UTC
+> **Device:** ${device}
+> **Browser:** ${ua.slice(0,100)}
+> **Warmup:** ${document.getElementById('warmup-n').value} runs · **Benchmark:** ${document.getElementById('bench-n').value} runs
 
-> **Measurement Method:** ONNX Runtime Web v${ort.version || '1.20'} — real browser inference.
-> **Date:** ${now.slice(0, 10)}
-> **Browser / UA:** ${browser.slice(0, 120)}
-> **Device Info:** ${deviceInfo}
-> **Warm Iterations:** ${document.getElementById('warm-runs').value} per model after ${document.getElementById('warmup-runs').value} warmup runs.
+## WebGPU / WASM Latency
 
----
-
-## Browser WebGPU / WASM Benchmark
-
-| Model / Provider | Cold Load | Cold Infer | Warm p50 | Warm p95 | FPS (p50) | ≤12 ms? |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| Backend | Cold Load | Cold Infer | Warm p50 | Warm p95 | Min/Max | FPS | ≤12ms? |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 ${mdRows.join('\n')}
 
----
-
-## Stage A Latency Requirements
-
-| Requirement | Target | Measured p50 | Status |
-| :--- | :--- | :--- | :--- |
-| Stage A acquisition / recovery | ≤ 12 ms | See table above | See table |
+*Green = ≤12 ms · Orange = 12–25 ms · Red = >25 ms*
 `;
 
-  document.getElementById('markdown-output').textContent = md;
+  document.getElementById('md-out').textContent = md;
+
+  jsonResults = {
+    timestamp: now,
+    device: device,
+    browser: ua.slice(0,150),
+    model: 'stage-a-320-13kp-v7.onnx',
+    ort_web_version: ort.env?.versions?.ortWeb || '1.20',
+    results: allResults,
+  };
 }
 
-function copyMarkdown() {
-  const text = document.getElementById('markdown-output').textContent;
-  navigator.clipboard.writeText(text).then(() => alert('Copied to clipboard!'));
-}
+/* ── Copy helpers ────────────────────────────────────────── */
+function copyMd()   { navigator.clipboard.writeText(document.getElementById('md-out').textContent).then(()=>alert('Markdown copied!')); }
+function copyJson() { navigator.clipboard.writeText(JSON.stringify(jsonResults, null, 2)).then(()=>alert('JSON copied!')); }
+
+/* ── Init ────────────────────────────────────────────────── */
+detectDevice();
 </script>
 </body>
 </html>
-

@@ -3,475 +3,648 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Shoes VTO — Mobile AR Perception</title>
-  <!-- ONNX Runtime Web -->
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/ort.min.js"></script>
+  <title>Shoes VTO v7 — Mobile Live</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
   <style>
     :root {
-      --primary: #00f0ff;
       --green: #00ff75;
       --orange: #ff9500;
+      --cyan: #00f0ff;
       --bg: #000;
-      --card: rgba(18, 20, 28, 0.85);
+      --card: rgba(14, 16, 28, 0.88);
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-    html, body {
-      width: 100%; height: 100%; height: 100dvh;
-      background: #000; color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      overflow: hidden; position: fixed;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+    html, body { width: 100%; height: 100%; height: 100dvh; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow: hidden; position: fixed; }
+    #app { position: relative; width: 100%; height: 100%; max-width: 520px; margin: 0 auto; }
 
-    #app {
-      position: relative; width: 100%; height: 100%;
-      display: flex; flex-direction: column; justify-content: space-between;
-      max-width: 500px; margin: 0 auto;
-    }
+    /* Camera layer */
+    #viewport { position: absolute; inset: 0; z-index: 1; background: #000; overflow: hidden; }
+    video, canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    canvas { z-index: 2; }
 
-    /* Fullscreen Camera & Canvas */
-    #viewport {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      z-index: 1; background: #000; overflow: hidden;
-    }
-    video, canvas {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      object-fit: cover;
-    }
-
-    /* Top HUD Panel */
+    /* TOP HUD */
     #top-hud {
       position: relative; z-index: 10;
-      margin: 12px 14px 0 14px;
-      padding: 10px 14px;
+      margin: 12px 12px 0;
+      padding: 10px 14px 10px;
       background: var(--card);
-      border-radius: 14px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
     }
+    .hud-title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
+    .hud-title { font-size: 13px; font-weight: 800; color: var(--cyan); letter-spacing: 0.3px; }
+    #engine-chip { font-size: 10px; font-weight: 700; padding: 2px 9px; border-radius: 12px; background: rgba(0,255,117,0.12); color: var(--green); border: 1px solid rgba(0,255,117,0.3); }
 
-    .hud-title-row {
-      display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
-    }
-    .hud-title {
-      font-size: 14px; font-weight: 700; color: var(--primary);
-    }
-    .hud-chip {
-      font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
-      background: rgba(0, 255, 117, 0.15); color: var(--green); border: 1px solid rgba(0, 255, 117, 0.3);
-    }
+    /* Provider selector */
+    .select-box { width: 100%; padding: 7px 10px; margin-bottom: 7px; background: #141722; color: #fff; border: 1px solid rgba(255,255,255,0.15); border-radius: 9px; font-size: 11px; font-weight: 600; outline: none; cursor: pointer; }
 
-    .select-box {
-      width: 100%; padding: 8px 10px; margin-bottom: 6px;
-      background: #141722; color: #fff;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: 8px; font-size: 12px; font-weight: 600;
-      outline: none; cursor: pointer;
-    }
-
-    .stats-row {
-      display: flex; justify-content: space-between; gap: 6px;
-      padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.08);
-    }
-    .stat-item {
-      flex: 1; display: flex; flex-direction: column; align-items: center;
-      background: rgba(0, 0, 0, 0.25); padding: 3px 4px; border-radius: 6px;
-    }
-    .stat-lbl { font-size: 8px; color: #8e94a5; text-transform: uppercase; font-weight: 700; }
-    .stat-val { font-size: 13px; font-weight: 700; color: #fff; }
+    /* Stats */
+    .stats-row { display: flex; gap: 5px; }
+    .stat { flex: 1; display: flex; flex-direction: column; align-items: center; background: rgba(0,0,0,0.22); padding: 4px 3px; border-radius: 7px; }
+    .stat-lbl { font-size: 7.5px; color: #6e7a94; text-transform: uppercase; font-weight: 700; }
+    .stat-val { font-size: 14px; font-weight: 700; color: #fff; }
     .val-green { color: var(--green); }
+    .val-cyan  { color: var(--cyan); }
+    .val-orange{ color: var(--orange); }
 
-    .indicator-row {
-      display: flex; gap: 6px; margin-top: 6px;
-    }
-    .badge {
-      flex: 1; padding: 5px 6px; border-radius: 6px; font-size: 11px; font-weight: 700;
-      text-align: center; transition: all 0.2s;
-    }
-    .badge-left { background: rgba(0, 255, 117, 0.1); color: #88ffb8; border: 1px solid rgba(0, 255, 117, 0.25); }
-    .badge-right { background: rgba(255, 149, 0, 0.1); color: #ffd188; border: 1px solid rgba(255, 149, 0, 0.25); }
-    .badge-active-l { background: var(--green) !important; color: #000 !important; }
-    .badge-active-r { background: var(--orange) !important; color: #000 !important; }
+    /* Foot badges */
+    .badge-row { display: flex; gap: 6px; margin-top: 7px; }
+    .badge { flex: 1; padding: 5px 6px; border-radius: 7px; font-size: 11px; font-weight: 700; text-align: center; transition: all 0.15s; }
+    .badge-left  { background: rgba(0,255,117,0.08); color: #78f5aa; border: 1px solid rgba(0,255,117,0.22); }
+    .badge-right { background: rgba(255,149,0,0.08);  color: #ffd08a; border: 1px solid rgba(255,149,0,0.22); }
+    .on-left  { background: var(--green) !important; color: #000 !important; border-color: var(--green) !important; }
+    .on-right { background: var(--orange) !important; color: #000 !important; border-color: var(--orange) !important; }
 
-    /* Bottom Control Bar */
+    /* BOTTOM controls */
     #bottom-hud {
-      position: relative; z-index: 10;
-      margin: 0 14px 16px 14px;
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 10;
+      padding: 0 12px 16px;
       display: flex; gap: 8px;
     }
     .btn {
-      flex: 1; padding: 12px 10px; border-radius: 12px; border: none;
-      background: var(--card); color: #fff; font-size: 13px; font-weight: 600;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-      display: flex; align-items: center; justify-content: center; gap: 6px;
-      cursor: pointer;
+      flex: 1; padding: 13px 8px; border-radius: 14px; border: none;
+      background: var(--card); color: #fff; font-size: 12px; font-weight: 700;
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      cursor: pointer; transition: transform 0.1s;
     }
-    .btn:active { background: rgba(40, 44, 60, 0.9); transform: scale(0.97); }
+    .btn:active { transform: scale(0.95); }
+    .btn-bench { background: rgba(99,179,237,0.18); border-color: rgba(99,179,237,0.35); color: #90cdf4; }
 
-    /* Floating Mini Toast Status (Non-blocking) */
+    /* Toast */
     #toast {
-      position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.85); color: #00f0ff; padding: 6px 14px;
-      border-radius: 20px; font-size: 12px; font-weight: 600; z-index: 20;
-      border: 1px solid rgba(0, 240, 255, 0.3); pointer-events: none;
-      transition: opacity 0.3s ease;
+      position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.88); color: var(--cyan); padding: 6px 16px;
+      border-radius: 22px; font-size: 12px; font-weight: 600; z-index: 20;
+      border: 1px solid rgba(0,240,255,0.28); pointer-events: none;
+      transition: opacity 0.3s; white-space: nowrap;
     }
+
+    /* Benchmark modal overlay */
+    #bench-overlay {
+      display: none; position: absolute; inset: 0; z-index: 30;
+      background: rgba(0,0,0,0.92); flex-direction: column;
+      align-items: center; justify-content: center; padding: 24px;
+      backdrop-filter: blur(6px);
+    }
+    #bench-overlay.visible { display: flex; }
+    .bench-card {
+      background: #12141e; border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 18px; padding: 22px; width: 100%; max-width: 400px;
+    }
+    .bench-title { font-size: 16px; font-weight: 800; color: var(--cyan); margin-bottom: 14px; }
+    .bench-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.07); font-size: 13px; }
+    .bench-row:last-of-type { border-bottom: none; }
+    .bench-key { color: #8e94a5; }
+    .bench-val { color: #fff; font-weight: 700; }
+    .bench-val.green { color: var(--green); }
+    .bench-val.orange{ color: var(--orange); }
+    .bench-val.red   { color: #fc8181; }
+    #bench-pbar-wrap { height: 5px; background: #2d3748; border-radius: 3px; margin: 14px 0; overflow: hidden; }
+    #bench-pbar { height: 100%; background: linear-gradient(90deg, #3182ce, #63b3ed); border-radius: 3px; width: 0%; transition: width 0.1s; }
+    .bench-btn-row { display: flex; gap: 8px; margin-top: 14px; }
+    .bench-btn { flex: 1; padding: 11px; border-radius: 10px; border: none; font-size: 13px; font-weight: 700; cursor: pointer; }
+    .bench-btn-run  { background: #3182ce; color: #fff; }
+    .bench-btn-close{ background: #2d3748; color: #a0aec0; }
+    #bench-status { font-size: 11px; color: #718096; margin-top: 8px; min-height: 16px; text-align: center; }
+    .bench-md-wrap { margin-top: 12px; }
+    .bench-md { background: #0d1117; border: 1px solid #2d3748; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 10px; color: #718096; max-height: 120px; overflow-y: auto; white-space: pre; }
+    .copy-btn { width: 100%; padding: 8px; margin-top: 6px; border-radius: 8px; border: 1px solid #285e61; background: transparent; color: #81e6d9; font-size: 12px; font-weight: 700; cursor: pointer; }
   </style>
 </head>
 <body>
-  <div id="app">
-    <!-- Camera Viewport -->
-    <div id="viewport">
-      <video id="video" playsinline autoplay muted></video>
-      <canvas id="canvas"></canvas>
+<div id="app">
+
+  <!-- Camera -->
+  <div id="viewport">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <!-- Top HUD -->
+  <div id="top-hud">
+    <div class="hud-title-row">
+      <div class="hud-title">👟 Shoes VTO — 13-KP Live</div>
+      <div id="engine-chip">⏳ LOADING</div>
     </div>
 
-    <!-- Top HUD -->
-    <div id="top-hud">
-      <div class="hud-title-row">
-        <div class="hud-title">👟 Shoes VTO Live</div>
-        <div class="hud-chip" id="engine-chip">⚡ READY</div>
-      </div>
+    <select id="provider-select" class="select-box">
+      <option value="webgpu">⚡ WebGPU (GPU — Fastest)</option>
+      <option value="wasm" selected>🧠 WASM (CPU — Compatible)</option>
+    </select>
 
-      <select id="model-select" class="select-box">
-        <option value="/models/stage-a-320-compact-int8.onnx" selected>⚡ Compact v3 (INT8 - 1.46 MB) [Ultra Fast]</option>
-        <option value="/models/stage-a-320-compact-fp16.onnx">⚡ Compact v3 (FP16 - 2.49 MB) [Balanced]</option>
-        <option value="/models/stage-a-320-shuffled-int8.onnx">🎯 Full Model v3 (INT8 - 3.50 MB)</option>
-        <option value="/models/stage-a-320-shuffled-fp16.onnx">🎯 Full Model v3 (FP16 - 6.63 MB) [82.8% Pose]</option>
-      </select>
-
-      <div class="stats-row">
-        <div class="stat-item">
-          <span class="stat-lbl">FPS</span>
-          <span class="stat-val val-green" id="fps-val">--</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-lbl">Latency</span>
-          <span class="stat-val" id="lat-val">-- ms</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-lbl">Feet Visible</span>
-          <span class="stat-val" id="count-val">0</span>
-        </div>
-      </div>
-
-      <div class="indicator-row">
-        <div class="badge badge-left" id="badge-left">Left Foot: None</div>
-        <div class="badge badge-right" id="badge-right">Right Foot: None</div>
-      </div>
+    <div class="stats-row">
+      <div class="stat"><span class="stat-lbl">FPS</span><span class="stat-val val-green" id="fps-val">--</span></div>
+      <div class="stat"><span class="stat-lbl">Latency</span><span class="stat-val val-cyan" id="lat-val">-- ms</span></div>
+      <div class="stat"><span class="stat-lbl">Conf</span><span class="stat-val" id="conf-val">0.35</span></div>
+      <div class="stat"><span class="stat-lbl">Feet</span><span class="stat-val val-orange" id="count-val">0</span></div>
     </div>
 
-    <!-- Toast message -->
-    <div id="toast">📷 Starting Camera...</div>
-
-    <!-- Bottom Controls -->
-    <div id="bottom-hud">
-      <button class="btn" id="btn-flip">🔄 Flip Camera</button>
-      <button class="btn" id="btn-skel">🦴 Skeleton ON</button>
+    <div class="badge-row">
+      <div class="badge badge-left"  id="badge-left">Left: —</div>
+      <div class="badge badge-right" id="badge-right">Right: —</div>
     </div>
   </div>
 
-  <script>
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    const fpsVal = document.getElementById('fps-val');
-    const latVal = document.getElementById('lat-val');
-    const countVal = document.getElementById('count-val');
-    const badgeLeft = document.getElementById('badge-left');
-    const badgeRight = document.getElementById('badge-right');
-    const modelSelect = document.getElementById('model-select');
-    const btnFlip = document.getElementById('btn-flip');
-    const btnSkel = document.getElementById('btn-skel');
-    const toast = document.getElementById('toast');
-    const engineChip = document.getElementById('engine-chip');
+  <!-- Toast -->
+  <div id="toast">📷 Starting…</div>
 
-    let session = null;
-    let facingMode = "environment";
-    let isInferring = false;
-    let showSkeleton = true;
+  <!-- Bottom Controls -->
+  <div id="bottom-hud">
+    <button class="btn" id="btn-flip">🔄 Flip</button>
+    <button class="btn" id="btn-skel">🦴 Skeleton</button>
+    <button class="btn btn-bench" id="btn-bench">📊 Benchmark</button>
+  </div>
 
-    function showToast(msg, duration = 2500) {
-      toast.innerText = msg;
-      toast.style.opacity = '1';
-      if (duration > 0) {
-        setTimeout(() => { toast.style.opacity = '0'; }, duration);
-      }
+  <!-- Benchmark Modal -->
+  <div id="bench-overlay">
+    <div class="bench-card">
+      <div class="bench-title">📊 Inference Benchmark</div>
+      <div id="bench-rows">
+        <div class="bench-row"><span class="bench-key">Warmup runs</span><span class="bench-val">15</span></div>
+        <div class="bench-row"><span class="bench-key">Benchmark runs</span><span class="bench-val" id="br-n">100</span></div>
+        <div class="bench-row"><span class="bench-key">Status</span><span class="bench-val" id="br-status">Ready</span></div>
+      </div>
+      <div id="bench-pbar-wrap"><div id="bench-pbar"></div></div>
+      <div id="bench-result-rows" style="display:none">
+        <div class="bench-row"><span class="bench-key">Backend</span><span class="bench-val" id="br-backend">—</span></div>
+        <div class="bench-row"><span class="bench-key">Warm p50</span><span class="bench-val" id="br-p50">—</span></div>
+        <div class="bench-row"><span class="bench-key">Warm p95</span><span class="bench-val" id="br-p95">—</span></div>
+        <div class="bench-row"><span class="bench-key">Min / Max</span><span class="bench-val" id="br-minmax">—</span></div>
+        <div class="bench-row"><span class="bench-key">FPS (p50)</span><span class="bench-val" id="br-fps">—</span></div>
+      </div>
+      <div id="bench-status"></div>
+      <div class="bench-md-wrap" id="bench-md-wrap" style="display:none">
+        <pre class="bench-md" id="bench-md">—</pre>
+        <button class="copy-btn" onclick="copyBenchMd()">📋 Copy Results</button>
+      </div>
+      <div class="bench-btn-row">
+        <button class="bench-btn bench-btn-run" id="bench-run-btn" onclick="runBench()">▶ Run</button>
+        <button class="bench-btn bench-btn-close" onclick="closeBench()">✕ Close</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- #app -->
+<script>
+/* ─── 13-KP Schema ─────────────────────────────────────────────────────────── */
+const KP_NAMES = [
+  'toe_ground','heel_back','heel_ground','ball_medial','ball_lateral',
+  'instep_top','arch_medial','midfoot_lateral','malleolus_medial',
+  'malleolus_lateral','toe_tip','throat','achilles'
+];
+
+// Skeleton connections (index pairs) matching run_video_demo.py
+const SKELETON = [
+  [2,1],[2,6],[6,3],[3,10],[10,0],[0,4],[4,7],[7,2],  // foot contour
+  [10,5],[5,11],                                        // instep/dorsum
+  [8,11],[9,11],                                        // malleolus → throat
+  [12,1],[12,9]                                         // achilles
+];
+
+const KP_COLORS = [
+  '#ff6b6b','#ffd166','#06d6a0','#118ab2','#ef476f',
+  '#ffd166','#06d6a0','#118ab2','#ff6b6b','#ffd166',
+  '#06d6a0','#ffffff','#a78bfa'
+];
+
+const CONF_THRESH = 0.35;
+const NUM_ANCHORS = 2100;
+const NUM_KPS     = 13;
+const MODEL_URL   = '/deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.onnx';
+
+/* ─── DOM refs ─────────────────────────────────────────────────────────────── */
+const video     = document.getElementById('video');
+const canvas    = document.getElementById('canvas');
+const ctx       = canvas.getContext('2d');
+const fpsEl     = document.getElementById('fps-val');
+const latEl     = document.getElementById('lat-val');
+const countEl   = document.getElementById('count-val');
+const blEl      = document.getElementById('badge-left');
+const brEl      = document.getElementById('badge-right');
+const chipEl    = document.getElementById('engine-chip');
+const toast     = document.getElementById('toast');
+const provSel   = document.getElementById('provider-select');
+
+let session     = null;
+let facingMode  = 'environment';
+let showSkeleton= true;
+let isInferring = false;
+
+let frameCount  = 0;
+let lastFpsTime = performance.now();
+let rollingLat  = 0;
+
+/* ─── Utils ────────────────────────────────────────────────────────────────── */
+function showToast(msg, dur = 2500) {
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  if (dur > 0) setTimeout(() => toast.style.opacity = '0', dur);
+}
+
+function pct(arr, p) {
+  const s = [...arr].sort((a,b)=>a-b);
+  return s[Math.max(0, Math.ceil(p/100*s.length)-1)];
+}
+
+function colorFps(fps) {
+  return fps >= 30 ? '#00ff75' : fps >= 15 ? '#ff9500' : '#fc8181';
+}
+
+/* ─── NMS (greedy IoU) ─────────────────────────────────────────────────────── */
+function iou(a, b) {
+  const ix1 = Math.max(a.x1, b.x1), iy1 = Math.max(a.y1, b.y1);
+  const ix2 = Math.min(a.x2, b.x2), iy2 = Math.min(a.y2, b.y2);
+  const inter = Math.max(0, ix2-ix1) * Math.max(0, iy2-iy1);
+  if (!inter) return 0;
+  const ua = (a.x2-a.x1)*(a.y2-a.y1), ub = (b.x2-b.x1)*(b.y2-b.y1);
+  return inter / (ua + ub - inter);
+}
+
+function nms(dets, thresh = 0.45) {
+  dets.sort((a,b)=>b.conf-a.conf);
+  const keep = [];
+  const used = new Uint8Array(dets.length);
+  for (let i = 0; i < dets.length; i++) {
+    if (used[i]) continue;
+    keep.push(dets[i]);
+    for (let j = i+1; j < dets.length; j++) {
+      if (!used[j] && iou(dets[i], dets[j]) > thresh) used[j] = 1;
     }
+  }
+  return keep;
+}
 
-    // Direct Camera Activation
-    async function startCameraDirect() {
-      try {
-        if (video.srcObject) {
-          video.srcObject.getTracks().forEach(t => t.stop());
-        }
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: facingMode },
-            width: { ideal: 640 },
-            height: { ideal: 480 }
-          },
-          audio: false
-        });
-        video.srcObject = stream;
-        await video.play();
-        resize();
-        showToast("📷 Camera Active! Loading Model...", 1500);
-        return true;
-      } catch (err) {
-        showToast("⚠️ Camera Error: " + err.message, 5000);
-        return false;
-      }
-    }
+/* ─── Camera ───────────────────────────────────────────────────────────────── */
+async function startCamera() {
+  try {
+    if (video.srcObject) video.srcObject.getTracks().forEach(t=>t.stop());
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: {ideal: facingMode}, width:{ideal:640}, height:{ideal:480} },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    resize();
+  } catch(e) {
+    showToast('⚠️ Camera error: ' + e.message, 5000);
+  }
+}
 
-    function resize() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    }
-    window.addEventListener('resize', resize);
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
 
-    // Static Reusable Canvas & Buffer (Zero GC)
-    const offCanvas = document.createElement('canvas');
-    offCanvas.width = 320;
-    offCanvas.height = 320;
-    const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
-    const floatBuffer = new Float32Array(3 * 320 * 320);
+/* ─── Preprocessing (reusable buffers, zero GC) ──────────────────────────── */
+const offCanvas = document.createElement('canvas');
+offCanvas.width = offCanvas.height = 320;
+const offCtx = offCanvas.getContext('2d', {willReadFrequently: true});
+const floatBuf = new Float32Array(3 * 320 * 320);
 
-    let frameCount = 0;
-    let lastFpsTime = performance.now();
+function preprocess() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return null;
 
-    async function loadModel(url) {
-      const modelName = url.split('/').pop();
-      engineChip.innerText = "⏳ LOADING...";
-      engineChip.style.color = "#ffaa00";
+  offCtx.fillStyle = '#7f7f7f';
+  offCtx.fillRect(0, 0, 320, 320);
 
-      try {
-        if (session) {
-          try { await session.release(); } catch(e){}
-        }
+  const r = Math.min(320/vw, 320/vh);
+  const nw = Math.round(vw*r), nh = Math.round(vh*r);
+  const dx = (320-nw)/2, dy = (320-nh)/2;
 
-        ort.env.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 2, 4);
-        ort.env.wasm.simd = true;
+  offCtx.drawImage(video, dx, dy, nw, nh);
+  const px = offCtx.getImageData(0, 0, 320, 320).data;
 
-        session = await ort.InferenceSession.create(url, {
-          executionProviders: ['wasm'],
-          graphOptimizationLevel: 'all'
-        });
+  const plane = 320*320;
+  for (let i = 0, pi = 0; i < plane; i++, pi += 4) {
+    floatBuf[i]           = px[pi]   * 0.003921569; // R
+    floatBuf[plane + i]   = px[pi+1] * 0.003921569; // G
+    floatBuf[plane*2 + i] = px[pi+2] * 0.003921569; // B
+  }
 
-        engineChip.innerText = "⚡ RUNNING";
-        engineChip.style.color = "#00ff75";
-        showToast(`✅ Model Ready: ${modelName}`, 2000);
-      } catch (err) {
-        engineChip.innerText = "❌ ERROR";
-        engineChip.style.color = "#ff3b30";
-        showToast("Model Load Failed: " + err.message, 5000);
-      }
-    }
+  return { tensor: new ort.Tensor('float32', floatBuf, [1,3,320,320]), r, dx, dy, vw, vh };
+}
 
-    function preprocess() {
-      const vw = video.videoWidth, vh = video.videoHeight;
-      if (!vw || !vh) return null;
+/* ─── Model loading ────────────────────────────────────────────────────────── */
+async function loadModel(provider) {
+  chipEl.textContent = '⏳ LOADING';
+  chipEl.style.color = '#ff9500';
+  session = null;
 
-      offCtx.fillStyle = '#727272';
-      offCtx.fillRect(0, 0, 320, 320);
+  const cores = Math.min(navigator.hardwareConcurrency || 2, 4);
+  ort.env.wasm.numThreads = cores;
+  ort.env.wasm.simd = true;
 
-      const r = Math.min(320 / vw, 320 / vh);
-      const nw = Math.round(vw * r), nh = Math.round(vh * r);
-      const dx = (320 - nw) / 2, dy = (320 - nh) / 2;
-
-      offCtx.drawImage(video, dx, dy, nw, nh);
-      const imgData = offCtx.getImageData(0, 0, 320, 320).data;
-
-      const plane = 320 * 320;
-      const p2 = plane * 2;
-      let pIdx = 0;
-
-      for (let i = 0; i < plane; i++) {
-        floatBuffer[i]         = imgData[pIdx]     * 0.00392156862;
-        floatBuffer[plane + i] = imgData[pIdx + 1] * 0.00392156862;
-        floatBuffer[p2 + i]    = imgData[pIdx + 2] * 0.00392156862;
-        pIdx += 4;
-      }
-
-      return {
-        tensor: new ort.Tensor('float32', floatBuffer, [1, 3, 320, 320]),
-        r, dx, dy, vw, vh
-      };
-    }
-
-    async function loop() {
-      if (!session || isInferring || video.readyState < 2) {
-        requestAnimationFrame(loop);
-        return;
-      }
-
-      isInferring = true;
-      const t0 = performance.now();
-      const pre = preprocess();
-
-      if (pre) {
-        try {
-          const inputName = session.inputNames[0];
-          const results = await session.run({ [inputName]: pre.tensor });
-          const raw = results[session.outputNames[0]].data;
-          const dt = performance.now() - t0;
-
-          frameCount++;
-          const now = performance.now();
-          if (now - lastFpsTime >= 1000) {
-            fpsVal.innerText = Math.round((frameCount * 1000) / (now - lastFpsTime));
-            latVal.innerText = `${dt.toFixed(0)} ms`;
-            frameCount = 0;
-            lastFpsTime = now;
-          }
-
-          drawDetections(raw, pre);
-        } catch (e) {
-          console.error(e);
-        }
-      }
-
-      isInferring = false;
-      requestAnimationFrame(loop);
-    }
-
-    function drawDetections(raw, pre) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const numAnchors = 2100;
-      const { r, dx, dy, vw, vh } = pre;
-
-      const sx = canvas.width / vw;
-      const sy = canvas.height / vh;
-      const scale = Math.max(sx, sy);
-      const offX = (canvas.width - vw * scale) / 2;
-      const offY = (canvas.height - vh * scale) / 2;
-
-      let leftBest = null, rightBest = null;
-      const thresh = 0.30;
-
-      for (let i = 0; i < numAnchors; i++) {
-        const sL = raw[4 * numAnchors + i];
-        const sR = raw[5 * numAnchors + i];
-
-        if (sL > thresh && (!leftBest || sL > leftBest.score)) {
-          leftBest = extractBox(raw, i, numAnchors, 'Left Foot', sL, r, dx, dy, scale, offX, offY);
-        }
-        if (sR > thresh && (!rightBest || sR > rightBest.score)) {
-          rightBest = extractBox(raw, i, numAnchors, 'Right Foot', sR, r, dx, dy, scale, offX, offY);
-        }
-      }
-
-      const activeList = [leftBest, rightBest].filter(Boolean);
-      countVal.innerText = activeList.length;
-
-      badgeLeft.innerText = leftBest ? `Left: ${(leftBest.score * 100).toFixed(0)}%` : "Left: None";
-      badgeLeft.className = leftBest ? "badge badge-left badge-active-l" : "badge badge-left";
-
-      badgeRight.innerText = rightBest ? `Right: ${(rightBest.score * 100).toFixed(0)}%` : "Right: None";
-      badgeRight.className = rightBest ? "badge badge-right badge-active-r" : "badge badge-right";
-
-      activeList.forEach(d => renderBox(d));
-    }
-
-    function extractBox(raw, idx, N, label, score, r, dx, dy, scale, offX, offY) {
-      const cx = raw[0 * N + idx], cy = raw[1 * N + idx];
-      const w  = raw[2 * N + idx], h  = raw[3 * N + idx];
-
-      const x1 = ((cx - w / 2 - dx) / r) * scale + offX;
-      const y1 = ((cy - h / 2 - dy) / r) * scale + offY;
-      const x2 = ((cx + w / 2 - dx) / r) * scale + offX;
-      const y2 = ((cy + h / 2 - dy) / r) * scale + offY;
-
-      const kpts = [];
-      for (let k = 0; k < 4; k++) {
-        const kx = ((raw[(6 + k * 3) * N + idx] - dx) / r) * scale + offX;
-        const ky = ((raw[(7 + k * 3) * N + idx] - dy) / r) * scale + offY;
-        const kv = raw[(8 + k * 3) * N + idx];
-        kpts.push({ x: kx, y: ky, v: kv });
-      }
-      return { label, score, x1, y1, x2, y2, kpts, isLeft: label.includes('Left') };
-    }
-
-    function renderBox(d) {
-      const color = d.isLeft ? '#00ff75' : '#ff9500';
-      const bw = d.x2 - d.x1;
-      const bh = d.y2 - d.y1;
-
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
-      ctx.strokeRect(d.x1, d.y1, bw, bh);
-
-      // Corner Brackets
-      const cLen = Math.min(20, bw / 4, bh / 4);
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(d.x1, d.y1 + cLen); ctx.lineTo(d.x1, d.y1); ctx.lineTo(d.x1 + cLen, d.y1); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(d.x2 - cLen, d.y1); ctx.lineTo(d.x2, d.y1); ctx.lineTo(d.x2, d.y1 + cLen); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(d.x1, d.y2 - cLen); ctx.lineTo(d.x1, d.y2); ctx.lineTo(d.x1 + cLen, d.y2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(d.x2 - cLen, d.y2); ctx.lineTo(d.x2, d.y2); ctx.lineTo(d.x2, d.y2 - cLen); ctx.stroke();
-
-      // Tag
-      ctx.fillStyle = color;
-      ctx.fillRect(d.x1, Math.max(0, d.y1 - 22), 110, 22);
-      ctx.fillStyle = '#000';
-      ctx.font = 'bold 12px sans-serif';
-      ctx.fillText(`${d.label} ${(d.score * 100).toFixed(0)}%`, d.x1 + 6, Math.max(15, d.y1 - 6));
-
-      // Skeleton
-      if (showSkeleton && d.kpts) {
-        const k = d.kpts;
-        const pairs = [[0, 2], [2, 1], [1, 3], [3, 0], [2, 3]];
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-        ctx.lineWidth = 2;
-
-        pairs.forEach(([p1, p2]) => {
-          if (k[p1].v > 0.2 && k[p2].v > 0.2) {
-            ctx.beginPath();
-            ctx.moveTo(k[p1].x, k[p1].y);
-            ctx.lineTo(k[p2].x, k[p2].y);
-            ctx.stroke();
-          }
-        });
-
-        const kpCols = ['#ff2a55', '#00b4d8', '#ffd166', '#f72585'];
-        k.forEach((pt, i) => {
-          if (pt.v > 0.2) {
-            ctx.fillStyle = kpCols[i];
-            ctx.beginPath();
-            ctx.arc(pt.x, pt.y, 5, 0, 2 * Math.PI);
-            ctx.fill();
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-          }
-        });
-      }
-    }
-
-    btnFlip.addEventListener('click', async () => {
-      facingMode = facingMode === "environment" ? "user" : "environment";
-      await startCameraDirect();
+  try {
+    session = await ort.InferenceSession.create(MODEL_URL, {
+      executionProviders: [provider],
+      graphOptimizationLevel: 'all',
     });
 
-    btnSkel.addEventListener('click', () => {
-      showSkeleton = !showSkeleton;
-      btnSkel.innerText = showSkeleton ? "🦴 Skeleton ON" : "🦴 Skeleton OFF";
-    });
+    // Warmup (avoids cold-start artifacts in live FPS)
+    const dummy = new ort.Tensor('float32', new Float32Array(1*3*320*320), [1,3,320,320]);
+    for (let i = 0; i < 3; i++) await session.run({[session.inputNames[0]]: dummy});
 
-    modelSelect.addEventListener('change', async (e) => {
-      await loadModel(e.target.value);
-    });
+    chipEl.textContent = `⚡ ${provider.toUpperCase()}`;
+    chipEl.style.color = '#00ff75';
+    showToast(`✅ Model ready (${provider.toUpperCase()})`, 2000);
+  } catch(e) {
+    chipEl.textContent = '❌ ERROR';
+    chipEl.style.color = '#fc8181';
+    showToast(`Model failed: ${e.message}`, 6000);
+    console.error(e);
+  }
+}
 
-    // Instant Start
-    async function startDirect() {
-      // 1. Start camera immediately
-      startCameraDirect();
-      // 2. Load model concurrently
-      await loadModel(modelSelect.value);
-      // 3. Start inference loop
-      loop();
+/* ─── Decode ONNX output ────────────────────────────────────────────────────
+   Output: Float32Array from [1, 45, 2100]
+   Layout: [feature_i * 2100 + anchor_j]
+   Features:
+     0-3:   cx, cy, w, h  (pixel coords, imgsz=320)
+     4:     left_foot score (already sigmoid)
+     5:     right_foot score (already sigmoid)
+     6+k*3: kp_x (pixel)
+     7+k*3: kp_y (pixel)
+     8+k*3: kp_visibility (0-1)
+─────────────────────────────────────────────────────────────────────────── */
+function decodeOutput(raw, pre) {
+  const { r, dx, dy, vw, vh } = pre;
+  const N = NUM_ANCHORS;
+
+  // Scale from model-space (320px) → canvas display-space
+  const sx = canvas.width / vw;
+  const sy = canvas.height / vh;
+  const scale = Math.max(sx, sy);
+  const offX = (canvas.width  - vw*scale) / 2;
+  const offY = (canvas.height - vh*scale) / 2;
+
+  const dets = [];
+
+  for (let i = 0; i < N; i++) {
+    const sL = raw[4*N + i]; // left_foot
+    const sR = raw[5*N + i]; // right_foot
+    const maxScore = Math.max(sL, sR);
+    if (maxScore < CONF_THRESH) continue;
+
+    const classId = sL >= sR ? 0 : 1;
+    const cx = raw[0*N + i];
+    const cy = raw[1*N + i];
+    const w  = raw[2*N + i];
+    const h  = raw[3*N + i];
+
+    // Convert letterbox → video → canvas coords
+    const x1 = ((cx - w/2 - dx)/r)*scale + offX;
+    const y1 = ((cy - h/2 - dy)/r)*scale + offY;
+    const x2 = ((cx + w/2 - dx)/r)*scale + offX;
+    const y2 = ((cy + h/2 - dy)/r)*scale + offY;
+
+    const kps = [];
+    for (let k = 0; k < NUM_KPS; k++) {
+      const kx = ((raw[(6+k*3  )*N + i] - dx)/r)*scale + offX;
+      const ky = ((raw[(6+k*3+1)*N + i] - dy)/r)*scale + offY;
+      const kv =   raw[(6+k*3+2)*N + i];
+      kps.push({x: kx, y: ky, v: kv});
     }
-    startDirect();
-  </script>
+
+    dets.push({ classId, conf: maxScore, x1, y1, x2, y2, kps });
+  }
+
+  return nms(dets, 0.45);
+}
+
+/* ─── Rendering ────────────────────────────────────────────────────────────── */
+function drawDetections(dets) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  let hasLeft = false, hasRight = false;
+  let leftConf = 0, rightConf = 0;
+
+  for (const d of dets) {
+    const isLeft  = d.classId === 0;
+    const color   = isLeft ? '#00ff75' : '#ff9500';
+    const label   = isLeft ? 'Left Foot' : 'Right Foot';
+    if (isLeft)  { hasLeft  = true; leftConf  = d.conf; }
+    else         { hasRight = true; rightConf = d.conf; }
+
+    const bw = d.x2 - d.x1, bh = d.y2 - d.y1;
+
+    // Bounding box
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(d.x1, d.y1, bw, bh);
+
+    // Corner brackets
+    const cLen = Math.min(18, bw/4, bh/4);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+    const corners = [[d.x1,d.y1,1,1],[d.x2,d.y1,-1,1],[d.x1,d.y2,1,-1],[d.x2,d.y2,-1,-1]];
+    for (const [cx2,cy2,sx2,sy2] of corners) {
+      ctx.beginPath();
+      ctx.moveTo(cx2, cy2 + cLen*sy2); ctx.lineTo(cx2, cy2); ctx.lineTo(cx2 + cLen*sx2, cy2);
+      ctx.stroke();
+    }
+
+    // Label tag
+    const tagW = 118, tagH = 22;
+    ctx.fillStyle = color;
+    ctx.fillRect(d.x1, Math.max(0, d.y1 - tagH), tagW, tagH);
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText(`${label} ${(d.conf*100).toFixed(0)}%`, d.x1+5, Math.max(15, d.y1-6));
+
+    // Skeleton
+    if (showSkeleton) {
+      for (const [a, b] of SKELETON) {
+        const pa = d.kps[a], pb = d.kps[b];
+        if (pa.v < 0.15 || pb.v < 0.15) continue;
+        ctx.strokeStyle = `rgba(255,255,255,${Math.min(pa.v, pb.v)*0.75 + 0.25})`;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+      }
+
+      for (let k = 0; k < d.kps.length; k++) {
+        const kp = d.kps[k];
+        if (kp.v < 0.15) continue;
+        const radius = kp.v >= 0.35 ? 5 : 3;
+        ctx.beginPath(); ctx.arc(kp.x, kp.y, radius, 0, 2*Math.PI);
+        ctx.fillStyle = KP_COLORS[k];
+        ctx.fill();
+        if (kp.v >= 0.35) {
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        }
+      }
+    }
+  }
+
+  // Update foot badges
+  countEl.textContent = dets.length;
+  blEl.textContent = hasLeft  ? `Left: ${(leftConf*100).toFixed(0)}%`  : 'Left: —';
+  brEl.textContent = hasRight ? `Right: ${(rightConf*100).toFixed(0)}%` : 'Right: —';
+  blEl.className = `badge badge-left${hasLeft  ? ' on-left'  : ''}`;
+  brEl.className = `badge badge-right${hasRight ? ' on-right' : ''}`;
+}
+
+/* ─── Inference loop ───────────────────────────────────────────────────────── */
+async function loop() {
+  if (!session || isInferring || video.readyState < 2) {
+    requestAnimationFrame(loop); return;
+  }
+  isInferring = true;
+
+  const pre = preprocess();
+  if (pre) {
+    const t0 = performance.now();
+    try {
+      const out = await session.run({[session.inputNames[0]]: pre.tensor});
+      const raw = out[session.outputNames[0]].data;
+      const lat = performance.now() - t0;
+
+      rollingLat = 0.8 * rollingLat + 0.2 * lat;
+      frameCount++;
+
+      const now = performance.now();
+      if (now - lastFpsTime >= 800) {
+        const fps = Math.round(frameCount * 1000 / (now - lastFpsTime));
+        fpsEl.textContent = fps;
+        fpsEl.style.color = colorFps(fps);
+        latEl.textContent = `${rollingLat.toFixed(0)} ms`;
+        frameCount = 0;
+        lastFpsTime = now;
+      }
+
+      drawDetections(decodeOutput(raw, pre));
+    } catch(e) {
+      console.error('Inference error:', e);
+    }
+  }
+
+  isInferring = false;
+  requestAnimationFrame(loop);
+}
+
+/* ─── Benchmark modal ──────────────────────────────────────────────────────── */
+const BENCH_WARMUP = 15;
+const BENCH_N = 100;
+let benchRunning = false;
+
+function closeBench() {
+  document.getElementById('bench-overlay').classList.remove('visible');
+  benchRunning = false;
+}
+
+async function runBench() {
+  if (!session) { alert('Model not loaded yet.'); return; }
+  benchRunning = true;
+  document.getElementById('bench-run-btn').disabled = true;
+  document.getElementById('bench-md-wrap').style.display = 'none';
+  document.getElementById('bench-result-rows').style.display = 'none';
+  document.getElementById('bench-status').textContent = 'Preparing…';
+
+  const provider = provSel.value;
+  const dummy = new ort.Tensor('float32', new Float32Array(1*3*320*320), [1,3,320,320]);
+
+  // Warmup
+  document.getElementById('bench-status').textContent = `Warming up (${BENCH_WARMUP} runs)…`;
+  for (let i = 0; i < BENCH_WARMUP; i++) {
+    if (!benchRunning) break;
+    await session.run({[session.inputNames[0]]: dummy});
+  }
+
+  // Timed runs
+  const timings = [];
+  document.getElementById('bench-status').textContent = `Benchmarking…`;
+  for (let i = 0; i < BENCH_N; i++) {
+    if (!benchRunning) break;
+    const t0 = performance.now();
+    await session.run({[session.inputNames[0]]: dummy});
+    timings.push(performance.now() - t0);
+    document.getElementById('bench-pbar').style.width = `${(i+1)/BENCH_N*100}%`;
+  }
+
+  if (!benchRunning) return;
+
+  const p50 = pct(timings, 50);
+  const p95 = pct(timings, 95);
+  const fps = 1000 / p50;
+  const mn  = Math.min(...timings);
+  const mx  = Math.max(...timings);
+
+  function colorVal(ms) { return ms<=12?'green':ms<=25?'orange':'red'; }
+
+  document.getElementById('br-backend').textContent = provider.toUpperCase();
+  document.getElementById('br-p50').textContent     = `${p50.toFixed(1)} ms`;
+  document.getElementById('br-p50').className       = `bench-val ${colorVal(p50)}`;
+  document.getElementById('br-p95').textContent     = `${p95.toFixed(1)} ms`;
+  document.getElementById('br-p95').className       = `bench-val ${colorVal(p95)}`;
+  document.getElementById('br-minmax').textContent  = `${mn.toFixed(1)} / ${mx.toFixed(1)} ms`;
+  document.getElementById('br-fps').textContent     = `${fps.toFixed(0)} FPS`;
+  document.getElementById('br-fps').className       = `bench-val ${fps>=60?'green':fps>=30?'orange':'red'}`;
+  document.getElementById('bench-result-rows').style.display = 'block';
+  document.getElementById('bench-status').textContent = '✅ Done!';
+
+  const ua = navigator.userAgent.slice(0,100);
+  const now = new Date().toISOString();
+  const md = `## Mobile Benchmark — stage-a-320-13kp-v7.onnx
+Date: ${now.slice(0,19)}
+Device: ${ua}
+Backend: ${provider.toUpperCase()}
+Warmup: ${BENCH_WARMUP} | Runs: ${BENCH_N}
+
+| Metric | Value |
+|:---|:---|
+| Warm p50 | ${p50.toFixed(2)} ms |
+| Warm p95 | ${p95.toFixed(2)} ms |
+| Min / Max | ${mn.toFixed(2)} / ${mx.toFixed(2)} ms |
+| FPS (p50) | ${fps.toFixed(1)} |`;
+
+  document.getElementById('bench-md').textContent = md;
+  document.getElementById('bench-md-wrap').style.display = 'block';
+  document.getElementById('bench-run-btn').disabled = false;
+  benchRunning = false;
+
+  window._lastBenchMd = md;
+}
+
+function copyBenchMd() {
+  navigator.clipboard.writeText(window._lastBenchMd || '')
+    .then(()=>showToast('📋 Copied!'))
+    .catch(()=>{ /* fallback for non-secure */ alert(window._lastBenchMd); });
+}
+
+/* ─── Control buttons ──────────────────────────────────────────────────────── */
+document.getElementById('btn-flip').addEventListener('click', async () => {
+  facingMode = facingMode === 'environment' ? 'user' : 'environment';
+  await startCamera();
+});
+
+document.getElementById('btn-skel').addEventListener('click', () => {
+  showSkeleton = !showSkeleton;
+  document.getElementById('btn-skel').textContent = showSkeleton ? '🦴 Skeleton' : '🦴 Off';
+});
+
+document.getElementById('btn-bench').addEventListener('click', () => {
+  document.getElementById('bench-overlay').classList.add('visible');
+  document.getElementById('bench-pbar').style.width = '0%';
+  document.getElementById('bench-result-rows').style.display = 'none';
+  document.getElementById('bench-md-wrap').style.display = 'none';
+  document.getElementById('bench-status').textContent = 'Ready — tap ▶ Run';
+});
+
+provSel.addEventListener('change', async (e) => {
+  await loadModel(e.target.value);
+});
+
+/* ─── Startup ──────────────────────────────────────────────────────────────── */
+async function init() {
+  resize();
+  startCamera();
+  await loadModel(provSel.value);
+  loop();
+}
+
+init();
+</script>
 </body>
 </html>
