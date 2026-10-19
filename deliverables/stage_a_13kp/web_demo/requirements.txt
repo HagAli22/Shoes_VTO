@@ -1,0 +1,16 @@
+# Web Demo Requirements
+# Stage A 13-KP Shoes VTO
+
+# Flask web framework
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# ONNX Runtime
+onnxruntime>=1.16.0
+
+# Computer Vision
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Optional: GPU support (uncomment if CUDA available)
+# onnxruntime-gpu>=1.16.0

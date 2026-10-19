@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Shoes VTO - Client-Side Benchmarking</title>
+    
+    <!-- ONNX Runtime Web v1.21.0 with WebGPU and all execution providers -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.all.min.js" crossorigin="anonymous"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 14px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        h1 {
+            color: #1f2937;
+            margin-bottom: 6px;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .subtitle {
+            color: #6b7280;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+
+        .badge {
+            display: inline-block;
+            background: #10b981;
+            color: white;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        /* Precision Selector */
+        .precision-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 16px;
+        }
+
+        .precision-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: #334155;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .precision-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+
+        .btn-precision {
+            background: white;
+            border: 2px solid #cbd5e1;
+            border-radius: 10px;
+            padding: 10px 6px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .btn-precision:hover:not(:disabled) {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+
+        .btn-precision.active {
+            border-color: #4f46e5;
+            background: #eef2ff;
+            box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+        }
+
+        .btn-precision.active .p-name {
+            color: #4f46e5;
+        }
+
+        .p-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 3px;
+        }
+
+        .p-size {
+            font-size: 11px;
+            color: #64748b;
+            font-weight: 500;
+        }
+
+        .p-tag {
+            font-size: 9px;
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: #e2e8f0;
+            color: #475569;
+            display: inline-block;
+            margin-top: 4px;
+            font-weight: 600;
+        }
+
+        .btn-precision.active .p-tag {
+            background: #c7d2fe;
+            color: #3730a3;
+        }
+
+        /* Camera display */
+        .camera-container {
+            position: relative;
+            width: 100%;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 16px;
+            aspect-ratio: 4 / 3;
+            max-height: 520px;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            object-fit: cover;
+        }
+
+        /* Stats */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .stat-card {
+            background: #f9fafb;
+            padding: 10px 8px;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 10px;
+            color: #6b7280;
+            margin-bottom: 3px;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            color: #1f2937;
+            font-weight: 800;
+        }
+
+        .stat-unit {
+            font-size: 11px;
+            color: #9ca3af;
+            font-weight: normal;
+        }
+
+        .controls {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        button.btn-ctrl {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #4f46e5;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #4338ca;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .status {
+            padding: 10px 14px;
+            border-radius: 8px;
+            margin-bottom: 14px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .status.info {
+            background: #eff6ff;
+            color: #1e40af;
+            border: 1px solid #bfdbfe;
+        }
+
+        .status.success {
+            background: #f0fdf4;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+        }
+
+        .status.error {
+            background: #fef2f2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        /* Benchmark table */
+        .table-container {
+            overflow-x: auto;
+            margin-top: 14px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            text-align: left;
+        }
+
+        th, td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        th {
+            background: #f1f5f9;
+            color: #475569;
+            font-weight: 700;
+        }
+
+        tr.active-row {
+            background: #f5f3ff;
+            font-weight: 700;
+        }
+
+        @media (max-width: 640px) {
+            body { padding: 8px; }
+            .container { padding: 14px; }
+            h1 { font-size: 20px; }
+            .stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+            .stat-value { font-size: 18px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            <span>🏃 Shoes VTO</span>
+            <span id="backendBadge" class="badge">WASM (SIMD)</span>
+        </h1>
+        <p class="subtitle">Real-time foot keypoints running on device across model precisions</p>
+
+        <!-- Precision Selector -->
+        <div class="precision-box">
+            <div class="precision-title">
+                <span>Select Model Precision:</span>
+                <span id="activeModelName" style="color: #4f46e5; font-size: 11px;">INT8 Active</span>
+            </div>
+            <div class="precision-grid" style="grid-template-columns: repeat(5, 1fr);">
+                <button id="btn-turbo192" class="btn-precision" onclick="switchPrecision('turbo192')">
+                    <div class="p-name">🚀 Turbo 192</div>
+                    <div class="p-size">3.28 MB (192×192)</div>
+                    <div class="p-tag" style="background: #bbf7d0; color: #166534;">30-60 FPS</div>
+                </button>
+                <button id="btn-int8" class="btn-precision active" onclick="switchPrecision('int8')">
+                    <div class="p-name">⚡ INT8</div>
+                    <div class="p-size">3.30 MB (256×256)</div>
+                    <div class="p-tag">WASM 4T</div>
+                </button>
+                <button id="btn-fp16" class="btn-precision" onclick="switchPrecision('fp16')">
+                    <div class="p-name">🟡 FP16</div>
+                    <div class="p-size">6.22 MB (256×256)</div>
+                    <div class="p-tag">Half Float (GPU)</div>
+                </button>
+                <button id="btn-orig320" class="btn-precision" onclick="switchPrecision('orig320')">
+                    <div class="p-name">🏛️ Original 320</div>
+                    <div class="p-size">12.39 MB (320×320)</div>
+                    <div class="p-tag" style="background: #fed7aa; color: #9a3412;">Unquantized</div>
+                </button>
+                <button id="btn-fp32" class="btn-precision" onclick="switchPrecision('fp32')">
+                    <div class="p-name">🔵 FP32</div>
+                    <div class="p-size">12.36 MB (256×256)</div>
+                    <div class="p-tag">Full Float</div>
+                </button>
+            </div>
+        </div>
+
+        <div id="status" class="status info">Initializing INT8 model...</div>
+        <div id="progress-container" style="display:none; margin-bottom: 14px; background: #e5e7eb; border-radius: 8px; height: 10px; overflow: hidden;">
+            <div id="progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width 0.15s ease;"></div>
+        </div>
+
+        <!-- Real-time Stats -->
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-label">Model Latency</div>
+                <div class="stat-value">
+                    <span id="latency">--</span><span class="stat-unit"> ms</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Inference FPS</div>
+                <div class="stat-value">
+                    <span id="fps">--</span><span class="stat-unit"> fps</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Camera FPS</div>
+                <div class="stat-value">
+                    <span id="cameraFps">60</span><span class="stat-unit"> fps</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Detections</div>
+                <div class="stat-value">
+                    <span id="detections">0</span><span class="stat-unit"> /2 max</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Video & Overlay Canvas -->
+        <div class="camera-container">
+            <video id="video" autoplay playsinline muted></video>
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <div class="controls">
+            <button id="startCamera" class="btn-ctrl btn-primary" disabled>📷 Start Camera</button>
+            <button id="stopCamera" class="btn-ctrl btn-danger" style="display: none;">⏹ Stop Camera</button>
+        </div>
+
+        <!-- Comparison Table -->
+        <div class="table-container">
+            <div style="font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 6px;">
+                📊 Phone Benchmark Comparison:
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Precision</th>
+                        <th>File Size</th>
+                        <th>Weight Type</th>
+                        <th>Measured Latency</th>
+                        <th>Inference Rate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr id="row-turbo192">
+                        <td>🚀 <strong>Turbo 192</strong></td>
+                        <td>3.28 MB</td>
+                        <td>8-bit Quantized</td>
+                        <td id="lat-turbo192">Not tested</td>
+                        <td id="fps-turbo192">--</td>
+                    </tr>
+                    <tr id="row-int8" class="active-row">
+                        <td>⚡ <strong>INT8</strong></td>
+                        <td>3.30 MB</td>
+                        <td>8-bit Quantized</td>
+                        <td id="lat-int8">Testing...</td>
+                        <td id="fps-int8">--</td>
+                    </tr>
+                    <tr id="row-fp16">
+                        <td>🟡 <strong>FP16</strong></td>
+                        <td>6.22 MB</td>
+                        <td>16-bit Float</td>
+                        <td id="lat-fp16" style="color: #6b7280; font-style: italic;">Requires WebGPU</td>
+                        <td id="fps-fp16">--</td>
+                    </tr>
+                    <tr id="row-fp32">
+                        <td>🔵 <strong>FP32 (256)</strong></td>
+                        <td>12.36 MB</td>
+                        <td>32-bit Float</td>
+                        <td id="lat-fp32">Not tested</td>
+                        <td id="fps-fp32">--</td>
+                    </tr>
+                    <tr id="row-orig320">
+                        <td>🏛️ <strong>Original 320</strong></td>
+                        <td>12.39 MB</td>
+                        <td>32-bit Float (FP32)</td>
+                        <td id="lat-orig320">Not tested</td>
+                        <td id="fps-orig320">--</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div style="margin-top: 14px; font-size: 11px; color: #64748b; line-height: 1.5;">
+            <strong>💡 Performance Note:</strong> The camera display runs at full 60 FPS. Tapping a different precision button will switch the active model on your phone so you can directly compare their numbers.
+        </div>
+    </div>
+
+    <script src="../static/app.js?v=256_v7"></script>
+</body>
+</html>
