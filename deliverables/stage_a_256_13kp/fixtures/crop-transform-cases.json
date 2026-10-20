@@ -1,0 +1,106 @@
+[
+  {
+    "case_id": "case_01_carpet_frame0",
+    "orig_size": [
+      1440,
+      1440
+    ],
+    "target_size": 256,
+    "scale": 0.177778,
+    "pad": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "case_id": "case_02_carpet_frame150",
+    "orig_size": [
+      1440,
+      1440
+    ],
+    "target_size": 256,
+    "scale": 0.177778,
+    "pad": [
+      0.0,
+      0.0
+    ]
+  },
+  {
+    "case_id": "case_03_bench_child_hanging",
+    "orig_size": [
+      1920,
+      1080
+    ],
+    "target_size": 256,
+    "scale": 0.133333,
+    "pad": [
+      0.0,
+      56.0
+    ]
+  },
+  {
+    "case_id": "case_04_outdoor_sidewalk",
+    "orig_size": [
+      1080,
+      1920
+    ],
+    "target_size": 256,
+    "scale": 0.133333,
+    "pad": [
+      56.0,
+      0.0
+    ]
+  },
+  {
+    "case_id": "case_05_indoor_wood",
+    "orig_size": [
+      720,
+      1280
+    ],
+    "target_size": 256,
+    "scale": 0.2,
+    "pad": [
+      56.0,
+      0.0
+    ]
+  },
+  {
+    "case_id": "case_06_floor_walking",
+    "orig_size": [
+      1080,
+      1920
+    ],
+    "target_size": 256,
+    "scale": 0.133333,
+    "pad": [
+      56.0,
+      0.0
+    ]
+  },
+  {
+    "case_id": "case_07_side_reclined",
+    "orig_size": [
+      1024,
+      573
+    ],
+    "target_size": 256,
+    "scale": 0.25,
+    "pad": [
+      0.0,
+      56.5
+    ]
+  },
+  {
+    "case_id": "case_08_back_standing",
+    "orig_size": [
+      647,
+      1007
+    ],
+    "target_size": 256,
+    "scale": 0.25422,
+    "pad": [
+      46.0,
+      0.0
+    ]
+  }
+]

@@ -1,0 +1,94 @@
+{
+  "contract_version": "3.1.0-13kp",
+  "model_name": "stage-a-256-13kp-v7",
+  "pipeline_stage": "Stage A (Foot Detection, Chirality Classification & Keypoint Localization)",
+  "resolution": {
+    "width": 256,
+    "height": 256,
+    "channels": 3,
+    "color_space": "RGB",
+    "normalization": "[0.0, 1.0]",
+    "letterbox_fill_value": 114
+  },
+  "input_tensor": {
+    "name": "images",
+    "shape": [1, 3, 256, 256],
+    "dtype": "float32"
+  },
+  "output_tensor": {
+    "name": "output0",
+    "shape": [1, 45, 1344],
+    "dtype": "float32",
+    "channels_breakdown": {
+      "0..3": "Bounding box coordinates [cx, cy, w, h] in 256x256 letterbox space",
+      "4": "Class 0 confidence (left_foot, probability in [0.0, 1.0])",
+      "5": "Class 1 confidence (right_foot, probability in [0.0, 1.0])",
+      "6..44": "13 Keypoints [x_k, y_k, conf_k] (13 keypoints * 3 channels = 39 channels)"
+    },
+    "anchors_count": 1344,
+    "anchors_distribution": {
+      "stride_8": "32x32 = 1024 anchors",
+      "stride_16": "16x16 = 256 anchors",
+      "stride_32": "8x8 = 64 anchors",
+      "total": 1344
+    }
+  },
+  "model_variants": {
+    "stage-a-256-13kp-fp32.onnx": {
+      "execution_provider": "WASM / CPU / CUDA (Standard FP32 precision)",
+      "file_size_mb": 12.97,
+      "sha256": "46f491bbd6faa87f48855760951589ae409dc46ec77b33c6fed4a2b4ce210fc8"
+    },
+    "stage-a-256-13kp-fp16.onnx": {
+      "execution_provider": "WebGPU / DirectML (Half precision)",
+      "file_size_mb": 6.53,
+      "sha256": "498f754304114d10d2a55b89a4e70e52e53d6e0416314dde3cf14269d381d7c5"
+    },
+    "stage-a-256-13kp-int8.onnx": {
+      "execution_provider": "WASM / Mobile CPU (Dynamic Quantized INT8)",
+      "file_size_mb": 3.46,
+      "sha256": "940e4ab57968af97f04f3dbd71c006d2ca967c441dd01714c7c12128fb372979"
+    },
+    "stage-a-256-13kp-v7.pt": {
+      "framework": "PyTorch / Ultralytics YOLOv8n-pose",
+      "file_size_mb": 6.63,
+      "sha256": "7912eba977482d1fd8907468f9007520e23063d8e0b2ace174d02fce33167467"
+    }
+  },
+  "classes": {
+    "0": "left_foot",
+    "1": "right_foot"
+  },
+  "geometric_chirality_rule": {
+    "formula": "cross = (toe.x - rear.x) * (ball_lat.y - rear.y) - (toe.y - rear.y) * (ball_lat.x - rear.x)",
+    "rear_anchor": "heel_back (Index 1) if visibility >= 0.20, fallback to heel_ground (Index 2) or ankle_center (0.5 * (kp8 + kp9))",
+    "convention": "With image Y down: cross < 0 -> left_foot (Class 0); cross > 0 -> right_foot (Class 1)"
+  },
+  "frozen_keypoints_schema_13": [
+    {"index": 0,  "name": "toe_ground",        "region": "sole",     "description": "Ground contact directly under the big toe"},
+    {"index": 1,  "name": "heel_back",         "region": "sole",     "description": "Posterior calcaneus curvature apex"},
+    {"index": 2,  "name": "heel_ground",       "region": "sole",     "description": "Ground contact base of the calcaneus (plantar origin)"},
+    {"index": 3,  "name": "ball_medial",       "region": "ball",     "description": "Medial prominence of 1st metatarsal joint"},
+    {"index": 4,  "name": "ball_lateral",      "region": "ball",     "description": "Lateral prominence of 5th metatarsal joint"},
+    {"index": 5,  "name": "instep_top",        "region": "dorsum",   "description": "Apex of the dorsal cuneiform bridge"},
+    {"index": 6,  "name": "arch_medial",       "region": "arch",     "description": "Peak of medial longitudinal arch"},
+    {"index": 7,  "name": "midfoot_lateral",   "region": "lateral",  "description": "Tuberosity of 5th metatarsal / lateral margin"},
+    {"index": 8,  "name": "malleolus_medial",  "region": "ankle",    "description": "Medial ankle protrusion (distal tibia)"},
+    {"index": 9,  "name": "malleolus_lateral", "region": "ankle",    "description": "Lateral ankle protrusion (distal fibula)"},
+    {"index": 10, "name": "toe_tip",           "region": "sole",     "description": "Foremost tip of the toe box"},
+    {"index": 11, "name": "throat",            "region": "ankle",    "description": "Anterior crease where tibia stem meets dorsal foot"},
+    {"index": 12, "name": "achilles",          "region": "ankle",    "description": "Posterior insertion of Achilles tendon into calcaneus"}
+  ],
+  "derived_secondary_keypoints_15": [
+    {
+      "index": 5,
+      "name": "ball_top",
+      "derivation": "Midpoint of ball_medial & ball_lateral projected 0.28x along dorsal vector towards instep_top"
+    },
+    {
+      "index": 14,
+      "name": "shin_mid",
+      "derivation": "Viewpoint-invariant projection along lower leg axis (tibia centerline) 120mm proximal to ankle"
+    }
+  ]
+}
