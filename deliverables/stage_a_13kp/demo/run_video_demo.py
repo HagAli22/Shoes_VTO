@@ -28,6 +28,13 @@ from pathlib import Path
 import numpy as np
 import cv2
 
+# Ensure repository root is on sys.path
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.models.stage_a.postprocess import derive_secondary_keypoints_15kp, KEYPOINT_NAMES_15KP
+
 # ── 13-Keypoint Anatomical Mapping ─────────────────────────────────────────────
 KEYPOINT_NAMES = [
     "toe_ground",        # Index 0  (sole)
@@ -65,6 +72,32 @@ SKELETON_PAIRS = [
     (8, 12),  # malleolus_medial -> achilles
     (9, 12),  # malleolus_lateral -> achilles
     (1, 12),  # heel_back -> achilles
+]
+
+# Anatomical skeleton connections for 15-KP (Derived ball_top & shin_mid)
+SKELETON_PAIRS_15KP = [
+    # Sole / Foot contour
+    (2, 1),   # heel_ground -> heel_back
+    (2, 7),   # heel_ground -> arch_medial
+    (7, 3),   # arch_medial -> ball_medial
+    (3, 11),  # ball_medial -> toe_tip
+    (11, 0),  # toe_tip -> toe_ground
+    (0, 4),   # toe_ground -> ball_lateral
+    (4, 8),   # ball_lateral -> midfoot_lateral
+    (8, 2),   # midfoot_lateral -> heel_ground
+    # Dorsum / Instep arch with ball_top
+    (3, 5),   # ball_medial -> ball_top
+    (4, 5),   # ball_lateral -> ball_top
+    (11, 5),  # toe_tip -> ball_top
+    (5, 6),   # ball_top -> instep_top
+    (6, 12),  # instep_top -> throat
+    # Ankle, Achilles & Shin
+    (9, 12),  # malleolus_medial -> throat
+    (10, 12), # malleolus_lateral -> throat
+    (9, 13),  # malleolus_medial -> achilles
+    (10, 13), # malleolus_lateral -> achilles
+    (1, 13),  # heel_back -> achilles
+    (12, 14), # throat -> shin_mid
 ]
 
 COLOR_LEFT = {
@@ -366,7 +399,8 @@ def draw_visuals(frame, detections, show_indices=False, show_labels=False, kpt_v
             continue
 
         # Draw anatomical skeleton
-        for k1, k2 in SKELETON_PAIRS:
+        skeleton = SKELETON_PAIRS_15KP if len(kpts) == 15 else SKELETON_PAIRS
+        for k1, k2 in skeleton:
             kp1 = kpts[k1]
             kp2 = kpts[k2]
             if kp1["visibility"] >= kpt_occ_thresh and kp2["visibility"] >= kpt_occ_thresh:
@@ -400,14 +434,14 @@ def draw_visuals(frame, detections, show_indices=False, show_labels=False, kpt_v
     return overlay
 
 
-def draw_hud(frame, frame_idx, fps, lat_ms, feet_count):
+def draw_hud(frame, frame_idx, fps, lat_ms, feet_count, schema_name="13-KP"):
     h, w = frame.shape[:2]
     # HUD banner background
     hud_bg = frame.copy()
     cv2.rectangle(hud_bg, (0, 0), (w, 42), (20, 20, 20), -1)
     cv2.addWeighted(hud_bg, 0.85, frame, 0.15, 0, frame)
 
-    text = f"Shoes VTO (13-KP) | Frame: {frame_idx:04d} | Latency: {lat_ms:.1f}ms | FPS: {fps:.1f} | Active Feet: {feet_count}"
+    text = f"Shoes VTO ({schema_name}) | Frame: {frame_idx:04d} | Latency: {lat_ms:.1f}ms | FPS: {fps:.1f} | Active Feet: {feet_count}"
     cv2.putText(frame, text, (14, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (0, 255, 255), 1, cv2.LINE_AA)
 
 
@@ -420,13 +454,16 @@ def run_demo(
     max_frames: int = 0,
     show_indices: bool = False,
     show_labels: bool = False,
-    apply_smoothing: bool = True
+    apply_smoothing: bool = True,
+    expand_15kp: bool = False
 ):
+    schema_label = "15-KP (Derived)" if expand_15kp else "13-KP"
     print("=" * 75)
-    print("  STAGE A 13-KEYPOINT VIDEO INFERENCE & DEMO GENERATOR                     ")
+    print(f"  STAGE A {schema_label} VIDEO INFERENCE & DEMO GENERATOR                     ")
     print(f"  Model:       {weights_path}")
     print(f"  Input Video: {video_path}")
     print(f"  Output:      {output_path}")
+    print(f"  Expand 15KP: {expand_15kp}")
     print("=" * 75)
 
     cap = cv2.VideoCapture(video_path)
@@ -483,6 +520,10 @@ def run_demo(
                     smoothed_kpts = smoothers[geom_cls].smooth(kpts, now)
                     det["keypoints"] = smoothed_kpts
 
+                # Derive 15-KP if requested (ball_top, shin_mid)
+                if expand_15kp:
+                    det["keypoints"] = derive_secondary_keypoints_15kp(det["keypoints"], bbox=det.get("bbox"))
+
             processed_dets.append(det)
 
         # 3. Render visuals & HUD
@@ -495,7 +536,7 @@ def run_demo(
 
         instant_fps = 1000.0 / max(lat_ms, 1.0)
         rolling_fps = 0.9 * rolling_fps + 0.1 * instant_fps
-        draw_hud(annotated, frame_idx, rolling_fps, lat_ms, len(processed_dets))
+        draw_hud(annotated, frame_idx, rolling_fps, lat_ms, len(processed_dets), schema_name=schema_label)
 
         out.write(annotated)
 
@@ -522,17 +563,21 @@ def main():
     parser.add_argument("--conf", type=float, default=0.25, help="Foot confidence threshold")
     parser.add_argument("--nms", type=float, default=0.45, help="NMS IoU threshold")
     parser.add_argument("--max_frames", type=int, default=0, help="Max frames to process (0 = all)")
-    parser.add_argument("--show_indices", action="store_true", help="Display 0..12 keypoint index numbers")
+    parser.add_argument("--show_indices", action="store_true", help="Display 0..12/0..14 keypoint index numbers")
     parser.add_argument("--show_labels", action="store_true", help="Display keypoint names")
     parser.add_argument("--no_smooth", action="store_true", help="Disable One-Euro temporal smoothing")
+    parser.add_argument("--expand_15kp", action="store_true",
+                        help="Derive secondary keypoints (ball_top, shin_mid) via anatomical post-processing to yield 15-KP")
     args = parser.parse_args()
 
     # Smart default weights resolution
     weights_path = args.weights
     if not weights_path:
         for cand in [
+            "deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.pt",
             "deliverables/stage_a_13kp/models/stage-a-320-13kp.pt",
             "outputs/stage_a/run_v4_13kp/weights/best.pt",
+            "deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.onnx",
             "deliverables/stage_a_13kp/models/stage-a-320-13kp.onnx",
             "outputs/stage_a/run_v4_13kp/weights/best.onnx"
         ]:
@@ -540,7 +585,7 @@ def main():
                 weights_path = cand
                 break
         if not weights_path:
-            weights_path = "deliverables/stage_a_13kp/models/stage-a-320-13kp.pt"
+            weights_path = "deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.pt"
 
     run_demo(
         video_path=args.video,
@@ -551,7 +596,8 @@ def main():
         max_frames=args.max_frames,
         show_indices=args.show_indices,
         show_labels=args.show_labels,
-        apply_smoothing=not args.no_smooth
+        apply_smoothing=not args.no_smooth,
+        expand_15kp=args.expand_15kp
     )
 
 
