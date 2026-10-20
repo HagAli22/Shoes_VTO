@@ -1,10 +1,18 @@
 # Shoes VTO Stage A — 13-Keypoint Production Delivery Package
 
-**Version:** 3.0.0-13kp (v7 Production Champion)  
-**Output Tensor Shape:** `[1, 45, 2100]` (Batch, Channels, Anchors)  
-**Primary Deliverable:** [`deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.onnx`](models/stage-a-320-13kp-v7.onnx) (12.4 MB)  
-**PyTorch Checkpoint:** [`deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.pt`](models/stage-a-320-13kp-v7.pt) (6.6 MB)  
-**Demo Video:** [`deliverables/stage_a_13kp/demo/annotated_output_v7_unfreeze_noflip.mp4`](demo/annotated_output_v7_unfreeze_noflip.mp4) (41.8 MB)  
+**Version:** 3.1.0-13kp (v7 Production Suite: 320 Standard + 256 Mobile)  
+**Output Tensor Shapes:** 
+- **320 Model:** `[1, 45, 2100]` (Batch, Channels, Anchors)  
+- **256 Model:** `[1, 45, 1344]` (Batch, Channels, Anchors)  
+**Primary Deliverables:** 
+- **320 Desktop/Server ONNX:** [`deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.onnx`](models/stage-a-320-13kp-v7.onnx) (12.4 MB)  
+- **256 Mobile/WASM ONNX:** [`deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.onnx`](models/stage-a-256-13kp-v7.onnx) (12.4 MB)  
+**PyTorch Checkpoints:** 
+- [`deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.pt`](models/stage-a-320-13kp-v7.pt) (6.6 MB)  
+- [`deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.pt`](models/stage-a-256-13kp-v7.pt) (6.6 MB)  
+**Demo Videos:** 
+- [`deliverables/stage_a_13kp/demo/annotated_output_v7_unfreeze_noflip.mp4`](demo/annotated_output_v7_unfreeze_noflip.mp4) (41.8 MB)  
+- [`deliverables/stage_a_13kp/demo/annotated_output_v7_256.mp4`](demo/annotated_output_v7_256.mp4) (41.9 MB)  
 
 ---
 
@@ -121,26 +129,32 @@ The table and breakdown below illustrate the full chronological trajectory from 
 - **The Chirality Discovery:**
   Human feet are **chiral (asymmetric)**. When YOLO performs horizontal flipping (`fliplr: 0.5`), a left foot visually mirrors into a right foot, but YOLO **never swaps class IDs (0 $\leftrightarrow$ 1)**. Half of the augmented training samples trained the network that a left foot looks like a right foot, poisoning classifier certainty.
 
-#### Version 7 (Final Production): `run_v7_merged_full_unfreeze_noflip` 🏆
+#### Version 7 (Final Production Suite): 320 Standard + 256 Mobile 🏆
 - **The Three Critical Fixes:**
   1. **`--fliplr 0.0`:** Completely disabled horizontal flipping to preserve true anatomical foot chirality.
   2. **`--agnostic_nms`:** Enabled class-agnostic NMS to strictly discard dual overlapping candidate boxes on the same physical foot.
-  3. **`--freeze 0`:** Unfroze all 144 layers so low-level edge filters could fully adapt to the 5,161 diverse images.
-- **Dataset:** `merged_v4_1_v4_2_raw_13kp` (**5,161 unique images**; 4,128 train, 516 val, 517 test).
-- **Training Config:** 50 epochs, batch 32, imgsz 320, `lr0=0.0003`, `--freeze 0`, `--fliplr 0.0`, `--agnostic_nms`.
-  - Finished in **11.2 minutes** on Tesla T4.
-- **Deliverables:** [`stage-a-320-13kp-v7.pt`](models/stage-a-320-13kp-v7.pt), [`stage-a-320-13kp-v7.onnx`](models/stage-a-320-13kp-v7.onnx), [`annotated_output_v7_unfreeze_noflip.mp4`](demo/annotated_output_v7_unfreeze_noflip.mp4).
+  3. **`--freeze 0`:** Unfroze all 144 layers so low-level edge filters could fully adapt to the diverse imagery.
+- **320 Model Training (`run_v7_merged_full_unfreeze_noflip`):**
+  - Dataset: `merged_v4_1_v4_2_raw_13kp` (5,161 unique images).
+  - 50 epochs, batch 32, imgsz 320, `lr0=0.0003`, `--freeze 0`, `--fliplr 0.0`, `--agnostic_nms`.
+  - Deliverables: [`stage-a-320-13kp-v7.pt`](models/stage-a-320-13kp-v7.pt), [`stage-a-320-13kp-v7.onnx`](models/stage-a-320-13kp-v7.onnx).
+- **256 Mobile Model Fine-Tuning (`run_v7_256_13kp`):**
+  - Initialized from `stage-a-320-13kp-v7.pt`, fine-tuned at resolution $256\times256$ in **9.5 minutes**.
+  - Output shape: `[1, 45, 1344]`, FLOPs reduced from 2.2 GFLOPs to **1.4 GFLOPs (~40% lighter)**.
+  - Test metrics reached all-time high: **97.97% Box mAP@50**, **94.96% Pose mAP@50**, and **96.1% Pose Precision**!
+  - Deliverables: [`stage-a-256-13kp-v7.pt`](models/stage-a-256-13kp-v7.pt), [`stage-a-256-13kp-v7.onnx`](models/stage-a-256-13kp-v7.onnx), [`annotated_output_v7_256.mp4`](demo/annotated_output_v7_256.mp4).
 
 ---
 
 ## 4. Comprehensive Performance Comparison Matrix
 
-| Version | Dataset | Total Images | Key Strategy | Pose mAP@50 | Pose mAP@50-95 | Pose Precision | Box mAP@50 | Box mAP@50-95 | Primary Deliverable |
-| :--- | :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| **v4** | `shuffled_v3_13kp` | ~1,000 | 16 $\rightarrow$ 13 KP surgery | 93.26% | 51.81% | ~88% | 94.98% | 60.33% | [`stage-a-320-13kp.onnx`](models/stage-a-320-13kp.onnx) |
-| **v5** | `merged_v3_v4_13kp` | 2,021 | Deduplicated dataset merge | 85.63% | 49.49% | 90.3% | 92.69% | 59.38% | [`stage-a-320-13kp-v5-merged.onnx`](models/stage-a-320-13kp-v5-merged.onnx) |
-| **v6** | `shuffled_v4_1_13kp` | 1,608 | Frozen backbone (`freeze=10`) | 85.72% | 49.68% | 80.4% | 93.78% | 60.05% | [`stage-a-320-13kp-v6-freeze.onnx`](models/stage-a-320-13kp-v6-freeze.onnx) |
-| **v7** | `merged_v4_1_v4_2_13kp` | **5,161** | **No-Flip (`fliplr=0`), Agnostic NMS, Full Unfreeze** | **89.15%** | **52.13%** *(Best)* | **92.5%** *(Best)* | **93.43%** | **64.46%** *(Best)* | [`stage-a-320-13kp-v7.onnx`](models/stage-a-320-13kp-v7.onnx) |
+| Version | Resolution | Output Tensor | FLOPs | Pose mAP@50 | Pose mAP@50-95 | Pose Precision | Box mAP@50 | Box mAP@50-95 | Primary Deliverable |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **v4** | 320 | `[1, 45, 2100]` | 2.2 G | 93.26% | 51.81% | ~88% | 94.98% | 60.33% | [`stage-a-320-13kp.onnx`](models/stage-a-320-13kp.onnx) |
+| **v5** | 320 | `[1, 45, 2100]` | 2.2 G | 85.63% | 49.49% | 90.3% | 92.69% | 59.38% | [`stage-a-320-13kp-v5-merged.onnx`](models/stage-a-320-13kp-v5-merged.onnx) |
+| **v6** | 320 | `[1, 45, 2100]` | 2.2 G | 85.72% | 49.68% | 80.4% | 93.78% | 60.05% | [`stage-a-320-13kp-v6-freeze.onnx`](models/stage-a-320-13kp-v6-freeze.onnx) |
+| **v7 (320)** | **320** | `[1, 45, 2100]` | 2.2 G | **89.15%** | **52.13%** | **92.5%** | **93.43%** | **64.46%** | [`stage-a-320-13kp-v7.onnx`](models/stage-a-320-13kp-v7.onnx) |
+| **v7 (256)** | **256** | `[1, 45, 1344]` | **1.4 G** | **94.96%** | **57.92%** | **96.1%** | **97.97%** | **65.46%** | [`stage-a-256-13kp-v7.onnx`](models/stage-a-256-13kp-v7.onnx) |
 
 ---
 
@@ -150,8 +164,10 @@ The table and breakdown below illustrate the full chronological trajectory from 
 deliverables/stage_a_13kp/
 ├── README.md                                  # This document
 ├── models/
-│   ├── stage-a-320-13kp-v7.onnx               # PRODUCTION CHAMPION ONNX (12.4 MB)
-│   ├── stage-a-320-13kp-v7.pt                 # PRODUCTION CHAMPION PyTorch (6.6 MB)
+│   ├── stage-a-320-13kp-v7.onnx               # PRODUCTION CHAMPION ONNX - 320 Desktop/Server (12.4 MB)
+│   ├── stage-a-320-13kp-v7.pt                 # PRODUCTION CHAMPION PyTorch - 320 (6.6 MB)
+│   ├── stage-a-256-13kp-v7.onnx               # PRODUCTION CHAMPION ONNX - 256 Mobile/WASM (12.4 MB)
+│   ├── stage-a-256-13kp-v7.pt                 # PRODUCTION CHAMPION PyTorch - 256 (6.6 MB)
 │   ├── stage-a-320-13kp-v6-freeze.onnx        # Version 6 ONNX (12.4 MB)
 │   ├── stage-a-320-13kp-v6-freeze.pt          # Version 6 PyTorch (6.6 MB)
 │   ├── stage-a-320-13kp-v5-merged.onnx        # Version 5 ONNX (12.4 MB)
@@ -161,7 +177,8 @@ deliverables/stage_a_13kp/
 └── demo/
     ├── README.md                              # Standalone demo guide & CLI arguments
     ├── run_video_demo.py                      # Production inference & HUD visualization runner
-    ├── annotated_output_v7_unfreeze_noflip.mp4 # Production H.264 demo video (41.8 MB)
+    ├── annotated_output_v7_unfreeze_noflip.mp4 # 320 Production H.264 demo video (41.8 MB)
+    ├── annotated_output_v7_256.mp4            # 256 Mobile Production H.264 demo video (41.9 MB)
     ├── annotated_output_v6_freeze.mp4         # v6 comparison video
     ├── annotated_output_v5_merged.mp4         # v5 comparison video
     └── collection defferent videos/           # Unannotated test raw video benchmarks
