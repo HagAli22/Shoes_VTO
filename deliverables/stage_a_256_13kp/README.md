@@ -21,8 +21,8 @@ const session = await ort.InferenceSession.create('models/stage-a-256-13kp-int8.
 const inputTensor = new ort.Tensor('float32', preprocessedLetterboxFloat32, [1, 3, 256, 256]);
 const { output0 } = await session.run({ images: inputTensor });
 
-// 3. Decode Detections & Keypoints in Original Screen Coordinates (with 16-KP PnP Adapter)
-const detections = decodeStageA256(output0.data, videoWidth, videoHeight, { expand16kp: true });
+// 3. Decode Detections & Keypoints in Original Screen Coordinates (with 15-KP Schema)
+const detections = decodeStageA256(output0.data, videoWidth, videoHeight, { expand15kp: true });
 ```
 
 ---
@@ -72,10 +72,10 @@ The neural network predicts 13 physically grounded landmarks (excising the noisy
                [1] heel_back ── [2] heel_ground ── [0] toe_ground ── [10] toe_tip
 ```
 
-### 16-Keypoint Adapter for `FootPose.ts` (Zero Breaking Changes):
-To integrate seamlessly with the SDK's existing PnP 6-DoF solver (`FootPose.ts`) which expects 16 keypoints, pass `{ expand16kp: true }` to `decodeStageA256()` or call `deriveKeypoints16kp()`:
+### 15-Keypoint Production Schema for AR Team:
+The AR team consumes 15 keypoints by passing `{ expand15kp: true }` to `decodeStageA256()` or calling `deriveSecondaryKeypoints15kp()`. The 13 neural points are combined with the 2 deterministically derived landmarks (`ball_top` and `shin_mid`):
 
-| 16-KP Index | Name | Source | Description |
+| 15-KP Index | Name | Source | Description |
 | :---: | :--- | :---: | :--- |
 | **0** | `toe_ground` | Native (0) | Ground contact beneath hallux |
 | **1** | `heel_back` | Native (1) | Calcaneus posterior curve apex |
@@ -89,10 +89,9 @@ To integrate seamlessly with the SDK's existing PnP 6-DoF solver (`FootPose.ts`)
 | **9** | `malleolus_medial` | Native (8) | Distal tibia (inner ankle) |
 | **10** | `malleolus_lateral` | Native (9) | Distal fibula (outer ankle) |
 | **11** | `toe_tip` | Native (10) | Distal tip of hallux |
-| **12** | `ankle_center` | **Derived** | Midpoint: `0.5 * (kpt[8] + kpt[9])` |
-| **13** | `throat` | Native (11) | Anterior flex crease of ankle |
-| **14** | `achilles` | Native (12) | Calcaneus Achilles insertion |
-| **15** | `shin_mid` | **Derived** | Extrapolated 120 mm proximally along tibia axis |
+| **12** | `throat` | Native (11) | Anterior flex crease of ankle |
+| **13** | `achilles` | Native (12) | Calcaneus Achilles insertion |
+| **14** | `shin_mid` | **Derived** | Extrapolated proximally along tibia axis |
 
 ---
 

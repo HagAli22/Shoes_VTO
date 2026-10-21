@@ -18,11 +18,7 @@
         "computation_time_ms": "< 0.02 ms"
       }
     ],
-    "legacy_16kp_adapter": {
-      "name": "ankle_center",
-      "method": "Midpoint: 0.5 * (malleolus_medial + malleolus_lateral)",
-      "purpose": "100% backward compatibility with AR team FootPose.ts 16-KP PnP solver via { expand16kp: true }"
-    }
+    "production_schema": "15 Keypoints for AR Team (13 native + 2 derived in postprocessing)"
   },
   "opset": 12,
   "resolution": {
@@ -115,9 +111,8 @@
     {"index": 11, "name": "throat",            "region": "ankle",    "description": "Anterior crease where tibia stem meets dorsal foot"},
     {"index": 12, "name": "achilles",          "region": "ankle",    "description": "Posterior insertion of Achilles tendon into calcaneus"}
   ],
-  "derived_expansion_16kp": {
-    "ball_top": "Derived as midpoint(ball_medial, ball_lateral) projected 0.28x towards instep_top",
-    "ankle_center": "Derived as 0.5 * (malleolus_medial + malleolus_lateral)",
-    "shin_mid": "Projected along lower leg axis 120mm proximal to ankle"
+  "production_expansion_15kp": {
+    "ball_top": "Index 5 (Derived): Midpoint of ball_medial & ball_lateral projected 0.28x towards instep_top",
+    "shin_mid": "Index 14 (Derived): Extrapolated proximally along lower leg axis from throat, achilles and heel_ground"
   }
 }
