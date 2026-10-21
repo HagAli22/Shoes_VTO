@@ -1,7 +1,8 @@
 /**
  * crop-transforms.js
  * ──────────────────
- * Coordinate transformations between original image space and letterboxed tensor space.
+ * Coordinate transformations between original image space and letterboxed tensor space,
+ * plus Stage A -> Stage B foot crop transformation utilities.
  * Stage A Model Input: 256x256 RGB.
  */
 
@@ -21,6 +22,14 @@ function getLetterboxParams(origW, origH, targetSize = 256) {
   const padX = (targetSize - newW) / 2.0;
   const padY = (targetSize - newH) / 2.0;
   return { scale, padX, padY, newW, newH };
+}
+
+/**
+ * Alias for getLetterboxParams for backwards/SDK compatibility.
+ */
+function computeLetterboxTransform(origW, origH, targetW = 256, targetH = 256) {
+  const targetSize = Math.max(targetW, targetH);
+  return getLetterboxParams(origW, origH, targetSize);
 }
 
 /**
@@ -48,8 +57,78 @@ function unletterboxBBox(bbox, params) {
   return [x1, y1, x2, y2];
 }
 
+/**
+ * Transforms detections with letterbox-space boxes/keypoints to original image space.
+ * (Note: decodeStageA256 already does this automatically when origW and origH are provided).
+ * @param {Array<object>} detections - Detections array.
+ * @param {{ scale: number, padX: number, padY: number }} params - Letterbox parameters.
+ * @returns {Array<object>} - Transformed detections.
+ */
+function transformDetectionsToOriginal(detections, params) {
+  return detections.map(det => {
+    const unbox = unletterboxBBox(det.bbox, params);
+    const unkpts = (det.keypoints || []).map(kp => {
+      const [ux, uy] = unletterboxPoint(kp.x, kp.y, params);
+      return { ...kp, x: ux, y: uy };
+    });
+    return {
+      ...det,
+      bbox: unbox,
+      keypoints: unkpts
+    };
+  });
+}
+
+/**
+ * Extracts a square foot crop from a canvas/image for Stage B alignment.
+ * @param {HTMLCanvasElement|HTMLImageElement} imageSource - Video frame or canvas.
+ * @param {{ x1: number, y1: number, x2: number, y2: number, width: number, height: number }} bbox - Foot bounding box.
+ * @param {number} targetSize - Output crop resolution (e.g. 224 or 256).
+ * @param {number} marginFactor - Padding multiplier (default: 1.25).
+ */
+function extractFootCrop(imageSource, bbox, targetSize = 224, marginFactor = 1.25) {
+  const bx1 = bbox.x1 !== undefined ? bbox.x1 : bbox[0];
+  const by1 = bbox.y1 !== undefined ? bbox.y1 : bbox[1];
+  const bx2 = bbox.x2 !== undefined ? bbox.x2 : bbox[2];
+  const by2 = bbox.y2 !== undefined ? bbox.y2 : bbox[3];
+  const bw = bx2 - bx1;
+  const bh = by2 - by1;
+
+  const cx = (bx1 + bx2) / 2.0;
+  const cy = (by1 + by2) / 2.0;
+  const maxDim = Math.max(bw, bh) * marginFactor;
+
+  const cropX1 = cx - maxDim / 2.0;
+  const cropY1 = cy - maxDim / 2.0;
+
+  return {
+    cropX1,
+    cropY1,
+    cropSize: maxDim,
+    targetSize,
+    scale: maxDim / targetSize
+  };
+}
+
+/**
+ * Projects a point from Stage B crop space back to the original full video frame.
+ * @param {{ x: number, y: number, confidence?: number, visibility?: number }} cropKpt
+ * @param {{ cropX1: number, cropY1: number, scale: number }} transform
+ */
+function projectCropToFrame(cropKpt, transform) {
+  return {
+    ...cropKpt,
+    x: transform.cropX1 + cropKpt.x * transform.scale,
+    y: transform.cropY1 + cropKpt.y * transform.scale
+  };
+}
+
 module.exports = {
   getLetterboxParams,
+  computeLetterboxTransform,
   unletterboxPoint,
-  unletterboxBBox
+  unletterboxBBox,
+  transformDetectionsToOriginal,
+  extractFootCrop,
+  projectCropToFrame
 };
