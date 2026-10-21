@@ -1,5 +1,18 @@
 [
   {
+    "case_id": "case_01",
+    "orig_size": [
+      736,
+      552
+    ],
+    "target_size": 256,
+    "scale": 0.347826,
+    "pad": [
+      0.0,
+      32.0
+    ]
+  },
+  {
     "case_id": "case_01_carpet_frame0",
     "orig_size": [
       1440,
@@ -13,15 +26,28 @@
     ]
   },
   {
-    "case_id": "case_02_carpet_frame150",
+    "case_id": "case_02",
     "orig_size": [
-      1440,
-      1440
+      683,
+      1023
     ],
     "target_size": 256,
-    "scale": 0.177778,
+    "scale": 0.250244,
     "pad": [
-      0.0,
+      42.5,
+      0.0
+    ]
+  },
+  {
+    "case_id": "case_03",
+    "orig_size": [
+      736,
+      985
+    ],
+    "target_size": 256,
+    "scale": 0.259898,
+    "pad": [
+      32.5,
       0.0
     ]
   },
@@ -39,15 +65,28 @@
     ]
   },
   {
-    "case_id": "case_04_outdoor_sidewalk",
+    "case_id": "case_04",
     "orig_size": [
-      1080,
-      1920
+      736,
+      1155
     ],
     "target_size": 256,
-    "scale": 0.133333,
+    "scale": 0.221645,
     "pad": [
-      56.0,
+      46.5,
+      0.0
+    ]
+  },
+  {
+    "case_id": "case_05",
+    "orig_size": [
+      631,
+      640
+    ],
+    "target_size": 256,
+    "scale": 0.4,
+    "pad": [
+      2.0,
       0.0
     ]
   },
@@ -65,6 +104,19 @@
     ]
   },
   {
+    "case_id": "case_06",
+    "orig_size": [
+      344,
+      535
+    ],
+    "target_size": 256,
+    "scale": 0.478505,
+    "pad": [
+      45.5,
+      0.0
+    ]
+  },
+  {
     "case_id": "case_06_floor_walking",
     "orig_size": [
       1080,
@@ -78,16 +130,16 @@
     ]
   },
   {
-    "case_id": "case_07_side_reclined",
+    "case_id": "case_07",
     "orig_size": [
-      1024,
-      573
+      540,
+      535
     ],
     "target_size": 256,
-    "scale": 0.25,
+    "scale": 0.474074,
     "pad": [
       0.0,
-      56.5
+      1.0
     ]
   },
   {

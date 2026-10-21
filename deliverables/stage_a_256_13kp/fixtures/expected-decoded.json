@@ -1,4 +1,435 @@
 {
+  "case_01": {
+    "image_width": 736,
+    "image_height": 552,
+    "letterbox_scale": 0.347826,
+    "pad_x": 0.0,
+    "pad_y": 32.0,
+    "detections": [
+      {
+        "class_id": 0,
+        "class_name": "left_foot",
+        "confidence": 0.8222,
+        "bbox": [
+          332.8500061035156,
+          146.24000549316406,
+          652.1900024414062,
+          411.6600036621094
+        ],
+        "keypoints_13": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 614.3499755859375,
+            "y": 376.20001220703125,
+            "visibility": 0.6496
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 366.7300109863281,
+            "y": 286.6000061035156,
+            "visibility": 0.2198
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 350.8999938964844,
+            "y": 280.4800109863281,
+            "visibility": 0.8474
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 528.3200073242188,
+            "y": 345.05999755859375,
+            "visibility": 0.945
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 567.6699829101562,
+            "y": 300.7799987792969,
+            "visibility": 0.7936
+          },
+          {
+            "index": 5,
+            "name": "instep_top",
+            "x": 485.3599853515625,
+            "y": 226.36000061035156,
+            "visibility": 0.9508
+          },
+          {
+            "index": 6,
+            "name": "arch_medial",
+            "x": 445.70001220703125,
+            "y": 284.8500061035156,
+            "visibility": 0.8214
+          },
+          {
+            "index": 7,
+            "name": "midfoot_lateral",
+            "x": 480.4700012207031,
+            "y": 238.25,
+            "visibility": 0.5723
+          },
+          {
+            "index": 8,
+            "name": "malleolus_medial",
+            "x": 420.4800109863281,
+            "y": 212.0,
+            "visibility": 0.8752
+          },
+          {
+            "index": 9,
+            "name": "malleolus_lateral",
+            "x": 449.489990234375,
+            "y": 173.77000427246094,
+            "visibility": 0.705
+          },
+          {
+            "index": 10,
+            "name": "toe_tip",
+            "x": 614.010009765625,
+            "y": 358.8299865722656,
+            "visibility": 0.8615
+          },
+          {
+            "index": 11,
+            "name": "throat",
+            "x": 467.0799865722656,
+            "y": 172.22999572753906,
+            "visibility": 0.961
+          },
+          {
+            "index": 12,
+            "name": "achilles",
+            "x": 388.5799865722656,
+            "y": 204.0399932861328,
+            "visibility": 0.9881
+          }
+        ],
+        "keypoints_15_derived": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 614.35,
+            "y": 376.2,
+            "visibility": 0.6496
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 366.73,
+            "y": 286.6,
+            "visibility": 0.2198
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 350.9,
+            "y": 280.48,
+            "visibility": 0.8474
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 528.32,
+            "y": 345.06,
+            "visibility": 0.945
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 567.67,
+            "y": 300.78,
+            "visibility": 0.7936
+          },
+          {
+            "index": 5,
+            "name": "ball_top",
+            "x": 530.46,
+            "y": 295.88,
+            "visibility": 0.7936
+          },
+          {
+            "index": 6,
+            "name": "instep_top",
+            "x": 485.36,
+            "y": 226.36,
+            "visibility": 0.9508
+          },
+          {
+            "index": 7,
+            "name": "arch_medial",
+            "x": 445.7,
+            "y": 284.85,
+            "visibility": 0.8214
+          },
+          {
+            "index": 8,
+            "name": "midfoot_lateral",
+            "x": 480.47,
+            "y": 238.25,
+            "visibility": 0.5723
+          },
+          {
+            "index": 9,
+            "name": "malleolus_medial",
+            "x": 420.48,
+            "y": 212.0,
+            "visibility": 0.8752
+          },
+          {
+            "index": 10,
+            "name": "malleolus_lateral",
+            "x": 449.49,
+            "y": 173.77,
+            "visibility": 0.705
+          },
+          {
+            "index": 11,
+            "name": "toe_tip",
+            "x": 614.01,
+            "y": 358.83,
+            "visibility": 0.8615
+          },
+          {
+            "index": 12,
+            "name": "throat",
+            "x": 467.08,
+            "y": 172.23,
+            "visibility": 0.961
+          },
+          {
+            "index": 13,
+            "name": "achilles",
+            "x": 388.58,
+            "y": 204.04,
+            "visibility": 0.9881
+          },
+          {
+            "index": 14,
+            "name": "shin_mid",
+            "x": 341.75,
+            "y": 39.29,
+            "visibility": 0.7926
+          }
+        ]
+      },
+      {
+        "class_id": 1,
+        "class_name": "right_foot",
+        "confidence": 0.7989,
+        "bbox": [
+          73.16000366210938,
+          171.25,
+          290.1000061035156,
+          459.30999755859375
+        ],
+        "keypoints_13": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 232.75,
+            "y": 444.2099914550781,
+            "visibility": 0.497
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 178.1199951171875,
+            "y": 261.9100036621094,
+            "visibility": 0.0434
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 190.69000244140625,
+            "y": 249.36000061035156,
+            "visibility": 0.3675
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 230.6999969482422,
+            "y": 360.739990234375,
+            "visibility": 0.971
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 112.06999969482422,
+            "y": 367.3399963378906,
+            "visibility": 0.949
+          },
+          {
+            "index": 5,
+            "name": "instep_top",
+            "x": 162.5800018310547,
+            "y": 274.0199890136719,
+            "visibility": 0.9762
+          },
+          {
+            "index": 6,
+            "name": "arch_medial",
+            "x": 219.89999389648438,
+            "y": 286.4599914550781,
+            "visibility": 0.8613
+          },
+          {
+            "index": 7,
+            "name": "midfoot_lateral",
+            "x": 115.27999877929688,
+            "y": 297.1099853515625,
+            "visibility": 0.7881
+          },
+          {
+            "index": 8,
+            "name": "malleolus_medial",
+            "x": 212.8300018310547,
+            "y": 215.1699981689453,
+            "visibility": 0.7549
+          },
+          {
+            "index": 9,
+            "name": "malleolus_lateral",
+            "x": 118.80999755859375,
+            "y": 233.50999450683594,
+            "visibility": 0.6617
+          },
+          {
+            "index": 10,
+            "name": "toe_tip",
+            "x": 224.1300048828125,
+            "y": 426.54998779296875,
+            "visibility": 0.9354
+          },
+          {
+            "index": 11,
+            "name": "throat",
+            "x": 161.64999389648438,
+            "y": 197.5399932861328,
+            "visibility": 0.929
+          },
+          {
+            "index": 12,
+            "name": "achilles",
+            "x": 163.33999633789062,
+            "y": 220.77000427246094,
+            "visibility": 0.9416
+          }
+        ],
+        "keypoints_15_derived": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 232.75,
+            "y": 444.21,
+            "visibility": 0.497
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 178.12,
+            "y": 261.91,
+            "visibility": 0.0434
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 190.69,
+            "y": 249.36,
+            "visibility": 0.3675
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 230.7,
+            "y": 360.74,
+            "visibility": 0.971
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 112.07,
+            "y": 367.34,
+            "visibility": 0.949
+          },
+          {
+            "index": 5,
+            "name": "ball_top",
+            "x": 168.92,
+            "y": 338.83,
+            "visibility": 0.949
+          },
+          {
+            "index": 6,
+            "name": "instep_top",
+            "x": 162.58,
+            "y": 274.02,
+            "visibility": 0.9762
+          },
+          {
+            "index": 7,
+            "name": "arch_medial",
+            "x": 219.9,
+            "y": 286.46,
+            "visibility": 0.8613
+          },
+          {
+            "index": 8,
+            "name": "midfoot_lateral",
+            "x": 115.28,
+            "y": 297.11,
+            "visibility": 0.7881
+          },
+          {
+            "index": 9,
+            "name": "malleolus_medial",
+            "x": 212.83,
+            "y": 215.17,
+            "visibility": 0.7549
+          },
+          {
+            "index": 10,
+            "name": "malleolus_lateral",
+            "x": 118.81,
+            "y": 233.51,
+            "visibility": 0.6617
+          },
+          {
+            "index": 11,
+            "name": "toe_tip",
+            "x": 224.13,
+            "y": 426.55,
+            "visibility": 0.9354
+          },
+          {
+            "index": 12,
+            "name": "throat",
+            "x": 161.65,
+            "y": 197.54,
+            "visibility": 0.929
+          },
+          {
+            "index": 13,
+            "name": "achilles",
+            "x": 163.34,
+            "y": 220.77,
+            "visibility": 0.9416
+          },
+          {
+            "index": 14,
+            "name": "shin_mid",
+            "x": 123.85,
+            "y": 43.44,
+            "visibility": 0.8547
+          }
+        ]
+      }
+    ]
+  },
   "case_01_carpet_frame0": {
     "image_width": 1440,
     "image_height": 1440,
@@ -430,432 +861,863 @@
       }
     ]
   },
-  "case_02_carpet_frame150": {
-    "image_width": 1440,
-    "image_height": 1440,
-    "letterbox_scale": 0.177778,
-    "pad_x": 0.0,
+  "case_02": {
+    "image_width": 683,
+    "image_height": 1023,
+    "letterbox_scale": 0.250244,
+    "pad_x": 42.5,
     "pad_y": 0.0,
     "detections": [
       {
-        "class_id": 0,
-        "class_name": "left_foot",
-        "confidence": 0.7086,
+        "class_id": 1,
+        "class_name": "right_foot",
+        "confidence": 0.8382,
         "bbox": [
-          524.1799926757812,
-          935.0,
-          778.7100219726562,
-          1282.0799560546875
+          79.20999908447266,
+          155.6999969482422,
+          415.29998779296875,
+          741.280029296875
         ],
         "keypoints_13": [
           {
             "index": 0,
             "name": "toe_ground",
-            "x": 633.8099975585938,
-            "y": 959.5599975585938,
-            "visibility": 0.0982
+            "x": 375.0,
+            "y": 703.77001953125,
+            "visibility": 0.5205
           },
           {
             "index": 1,
             "name": "heel_back",
-            "x": 702.0700073242188,
-            "y": 1217.8399658203125,
-            "visibility": 0.0424
+            "x": 212.47000122070312,
+            "y": 321.6099853515625,
+            "visibility": 0.0532
           },
           {
             "index": 2,
             "name": "heel_ground",
-            "x": 737.239990234375,
-            "y": 1254.4599609375,
-            "visibility": 0.1431
+            "x": 199.19000244140625,
+            "y": 295.510009765625,
+            "visibility": 0.5963
           },
           {
             "index": 3,
             "name": "ball_medial",
-            "x": 696.219970703125,
-            "y": 1032.02001953125,
-            "visibility": 0.975
+            "x": 358.3800048828125,
+            "y": 543.3699951171875,
+            "visibility": 0.9886
           },
           {
             "index": 4,
             "name": "ball_lateral",
-            "x": 590.969970703125,
-            "y": 1108.280029296875,
-            "visibility": 0.9367
+            "x": 194.25,
+            "y": 562.9400024414062,
+            "visibility": 0.9796
           },
           {
             "index": 5,
             "name": "instep_top",
-            "x": 663.260009765625,
-            "y": 1162.989990234375,
-            "visibility": 0.9455
+            "x": 224.3699951171875,
+            "y": 362.8500061035156,
+            "visibility": 0.9888
           },
           {
             "index": 6,
             "name": "arch_medial",
-            "x": 722.4199829101562,
-            "y": 1139.780029296875,
-            "visibility": 0.9406
+            "x": 296.6199951171875,
+            "y": 374.4200134277344,
+            "visibility": 0.9046
           },
           {
             "index": 7,
             "name": "midfoot_lateral",
-            "x": 627.77001953125,
-            "y": 1187.7099609375,
-            "visibility": 0.77
+            "x": 159.25999450683594,
+            "y": 414.45001220703125,
+            "visibility": 0.9034
           },
           {
             "index": 8,
             "name": "malleolus_medial",
-            "x": 728.27001953125,
-            "y": 1201.1099853515625,
-            "visibility": 0.7893
+            "x": 253.85000610351562,
+            "y": 246.2100067138672,
+            "visibility": 0.8053
           },
           {
             "index": 9,
             "name": "malleolus_lateral",
-            "x": 646.4099731445312,
-            "y": 1241.3199462890625,
-            "visibility": 0.3542
+            "x": 129.47999572753906,
+            "y": 280.5400085449219,
+            "visibility": 0.8412
           },
           {
             "index": 10,
             "name": "toe_tip",
-            "x": 633.2100219726562,
-            "y": 961.7000122070312,
-            "visibility": 0.933
+            "x": 362.0899963378906,
+            "y": 670.5,
+            "visibility": 0.9577
           },
           {
             "index": 11,
             "name": "throat",
-            "x": 667.2000122070312,
-            "y": 1221.5,
-            "visibility": 0.8317
+            "x": 184.75,
+            "y": 216.47999572753906,
+            "visibility": 0.9641
           },
           {
             "index": 12,
             "name": "achilles",
-            "x": 671.2000122070312,
-            "y": 1217.949951171875,
-            "visibility": 0.7485
+            "x": 189.85000610351562,
+            "y": 260.1600036621094,
+            "visibility": 0.9833
           }
         ],
         "keypoints_15_derived": [
           {
             "index": 0,
             "name": "toe_ground",
-            "x": 633.81,
-            "y": 959.56,
-            "visibility": 0.0982
+            "x": 375.0,
+            "y": 703.77,
+            "visibility": 0.5205
           },
           {
             "index": 1,
             "name": "heel_back",
-            "x": 702.07,
-            "y": 1217.84,
-            "visibility": 0.0424
+            "x": 212.47,
+            "y": 321.61,
+            "visibility": 0.0532
           },
           {
             "index": 2,
             "name": "heel_ground",
-            "x": 737.24,
-            "y": 1254.46,
-            "visibility": 0.1431
+            "x": 199.19,
+            "y": 295.51,
+            "visibility": 0.5963
           },
           {
             "index": 3,
             "name": "ball_medial",
-            "x": 696.22,
-            "y": 1032.02,
-            "visibility": 0.975
+            "x": 358.38,
+            "y": 543.37,
+            "visibility": 0.9886
           },
           {
             "index": 4,
             "name": "ball_lateral",
-            "x": 590.97,
-            "y": 1108.28,
-            "visibility": 0.9367
+            "x": 194.25,
+            "y": 562.94,
+            "visibility": 0.9796
           },
           {
             "index": 5,
             "name": "ball_top",
-            "x": 649.1,
-            "y": 1096.15,
-            "visibility": 0.9367
+            "x": 261.77,
+            "y": 499.87,
+            "visibility": 0.9796
           },
           {
             "index": 6,
             "name": "instep_top",
-            "x": 663.26,
-            "y": 1162.99,
-            "visibility": 0.9455
+            "x": 224.37,
+            "y": 362.85,
+            "visibility": 0.9888
           },
           {
             "index": 7,
             "name": "arch_medial",
-            "x": 722.42,
-            "y": 1139.78,
-            "visibility": 0.9406
+            "x": 296.62,
+            "y": 374.42,
+            "visibility": 0.9046
           },
           {
             "index": 8,
             "name": "midfoot_lateral",
-            "x": 627.77,
-            "y": 1187.71,
-            "visibility": 0.77
+            "x": 159.26,
+            "y": 414.45,
+            "visibility": 0.9034
           },
           {
             "index": 9,
             "name": "malleolus_medial",
-            "x": 728.27,
-            "y": 1201.11,
-            "visibility": 0.7893
+            "x": 253.85,
+            "y": 246.21,
+            "visibility": 0.8053
           },
           {
             "index": 10,
             "name": "malleolus_lateral",
-            "x": 646.41,
-            "y": 1241.32,
-            "visibility": 0.3542
+            "x": 129.48,
+            "y": 280.54,
+            "visibility": 0.8412
           },
           {
             "index": 11,
             "name": "toe_tip",
-            "x": 633.21,
-            "y": 961.7,
-            "visibility": 0.933
+            "x": 362.09,
+            "y": 670.5,
+            "visibility": 0.9577
           },
           {
             "index": 12,
             "name": "throat",
-            "x": 667.2,
-            "y": 1221.5,
-            "visibility": 0.8317
+            "x": 184.75,
+            "y": 216.48,
+            "visibility": 0.9641
           },
           {
             "index": 13,
             "name": "achilles",
-            "x": 671.2,
-            "y": 1217.95,
-            "visibility": 0.7485
+            "x": 189.85,
+            "y": 260.16,
+            "visibility": 0.9833
           },
           {
             "index": 14,
             "name": "shin_mid",
-            "x": 712.95,
-            "y": 1405.27,
-            "visibility": 0.7652
+            "x": 86.71,
+            "y": -63.95,
+            "visibility": 0.8811
           }
         ]
       },
       {
-        "class_id": 1,
-        "class_name": "right_foot",
-        "confidence": 0.3312,
+        "class_id": 0,
+        "class_name": "left_foot",
+        "confidence": 0.8253,
         "bbox": [
-          773.4299926757812,
-          653.8599853515625,
-          1006.8900146484375,
-          971.030029296875
+          320.760009765625,
+          238.35000610351562,
+          608.9400024414062,
+          874.0399780273438
         ],
         "keypoints_13": [
           {
             "index": 0,
             "name": "toe_ground",
-            "x": 869.6900024414062,
-            "y": 676.989990234375,
-            "visibility": 0.2357
+            "x": 394.29998779296875,
+            "y": 861.1099853515625,
+            "visibility": 0.6675
           },
           {
             "index": 1,
             "name": "heel_back",
-            "x": 870.22998046875,
-            "y": 915.8800048828125,
-            "visibility": 0.0391
+            "x": 386.8699951171875,
+            "y": 406.1700134277344,
+            "visibility": 0.024
           },
           {
             "index": 2,
             "name": "heel_ground",
-            "x": 853.6400146484375,
-            "y": 944.219970703125,
-            "visibility": 0.4068
+            "x": 371.4599914550781,
+            "y": 363.6700134277344,
+            "visibility": 0.6372
           },
           {
             "index": 3,
             "name": "ball_medial",
-            "x": 849.9199829101562,
-            "y": 753.2899780273438,
-            "visibility": 0.978
+            "x": 375.9599914550781,
+            "y": 680.6300048828125,
+            "visibility": 0.9986
           },
           {
             "index": 4,
             "name": "ball_lateral",
-            "x": 947.489990234375,
-            "y": 778.7000122070312,
-            "visibility": 0.9607
+            "x": 539.9099731445312,
+            "y": 656.469970703125,
+            "visibility": 0.9926
           },
           {
             "index": 5,
             "name": "instep_top",
-            "x": 911.1500244140625,
-            "y": 852.52001953125,
-            "visibility": 0.9801
+            "x": 478.94000244140625,
+            "y": 455.5199890136719,
+            "visibility": 0.9977
           },
           {
             "index": 6,
             "name": "arch_medial",
-            "x": 850.7899780273438,
-            "y": 852.5700073242188,
-            "visibility": 0.9078
+            "x": 379.1300048828125,
+            "y": 475.7300109863281,
+            "visibility": 0.9768
           },
           {
             "index": 7,
             "name": "midfoot_lateral",
-            "x": 941.8099975585938,
-            "y": 864.489990234375,
-            "visibility": 0.801
+            "x": 521.1099853515625,
+            "y": 488.7699890136719,
+            "visibility": 0.875
           },
           {
             "index": 8,
             "name": "malleolus_medial",
-            "x": 856.7999877929688,
-            "y": 900.3499755859375,
-            "visibility": 0.7881
+            "x": 395.82000732421875,
+            "y": 330.55999755859375,
+            "visibility": 0.8872
           },
           {
             "index": 9,
             "name": "malleolus_lateral",
-            "x": 947.27001953125,
-            "y": 899.739990234375,
-            "visibility": 0.5369
+            "x": 530.3099975585938,
+            "y": 342.7200012207031,
+            "visibility": 0.6686
           },
           {
             "index": 10,
             "name": "toe_tip",
-            "x": 872.4000244140625,
-            "y": 679.1300048828125,
-            "visibility": 0.9452
+            "x": 403.510009765625,
+            "y": 833.3499755859375,
+            "visibility": 0.9932
           },
           {
             "index": 11,
             "name": "throat",
-            "x": 924.6900024414062,
-            "y": 908.6799926757812,
-            "visibility": 0.9295
+            "x": 492.95001220703125,
+            "y": 294.8999938964844,
+            "visibility": 0.9821
           },
           {
             "index": 12,
             "name": "achilles",
-            "x": 897.7000122070312,
-            "y": 895.3300170898438,
-            "visibility": 0.9109
+            "x": 455.1400146484375,
+            "y": 330.17999267578125,
+            "visibility": 0.9847
           }
         ],
         "keypoints_15_derived": [
           {
             "index": 0,
             "name": "toe_ground",
-            "x": 869.69,
-            "y": 676.99,
-            "visibility": 0.2357
+            "x": 394.3,
+            "y": 861.11,
+            "visibility": 0.6675
           },
           {
             "index": 1,
             "name": "heel_back",
-            "x": 870.23,
-            "y": 915.88,
-            "visibility": 0.0391
+            "x": 386.87,
+            "y": 406.17,
+            "visibility": 0.024
           },
           {
             "index": 2,
             "name": "heel_ground",
-            "x": 853.64,
-            "y": 944.22,
-            "visibility": 0.4068
+            "x": 371.46,
+            "y": 363.67,
+            "visibility": 0.6372
           },
           {
             "index": 3,
             "name": "ball_medial",
-            "x": 849.92,
-            "y": 753.29,
-            "visibility": 0.978
+            "x": 375.96,
+            "y": 680.63,
+            "visibility": 0.9986
           },
           {
             "index": 4,
             "name": "ball_lateral",
-            "x": 947.49,
-            "y": 778.7,
-            "visibility": 0.9607
+            "x": 539.91,
+            "y": 656.47,
+            "visibility": 0.9926
           },
           {
             "index": 5,
             "name": "ball_top",
-            "x": 902.19,
-            "y": 790.22,
-            "visibility": 0.9607
+            "x": 463.82,
+            "y": 608.9,
+            "visibility": 0.9926
           },
           {
             "index": 6,
             "name": "instep_top",
-            "x": 911.15,
-            "y": 852.52,
-            "visibility": 0.9801
+            "x": 478.94,
+            "y": 455.52,
+            "visibility": 0.9977
           },
           {
             "index": 7,
             "name": "arch_medial",
-            "x": 850.79,
-            "y": 852.57,
-            "visibility": 0.9078
+            "x": 379.13,
+            "y": 475.73,
+            "visibility": 0.9768
           },
           {
             "index": 8,
             "name": "midfoot_lateral",
-            "x": 941.81,
-            "y": 864.49,
-            "visibility": 0.801
+            "x": 521.11,
+            "y": 488.77,
+            "visibility": 0.875
           },
           {
             "index": 9,
             "name": "malleolus_medial",
-            "x": 856.8,
-            "y": 900.35,
-            "visibility": 0.7881
+            "x": 395.82,
+            "y": 330.56,
+            "visibility": 0.8872
           },
           {
             "index": 10,
             "name": "malleolus_lateral",
-            "x": 947.27,
-            "y": 899.74,
-            "visibility": 0.5369
+            "x": 530.31,
+            "y": 342.72,
+            "visibility": 0.6686
           },
           {
             "index": 11,
             "name": "toe_tip",
-            "x": 872.4,
-            "y": 679.13,
-            "visibility": 0.9452
+            "x": 403.51,
+            "y": 833.35,
+            "visibility": 0.9932
           },
           {
             "index": 12,
             "name": "throat",
-            "x": 924.69,
-            "y": 908.68,
-            "visibility": 0.9295
+            "x": 492.95,
+            "y": 294.9,
+            "visibility": 0.9821
           },
           {
             "index": 13,
             "name": "achilles",
-            "x": 897.7,
-            "y": 895.33,
-            "visibility": 0.9109
+            "x": 455.14,
+            "y": 330.18,
+            "visibility": 0.9847
           },
           {
             "index": 14,
             "name": "shin_mid",
-            "x": 950.25,
-            "y": 1080.07,
-            "visibility": 0.8551
+            "x": 535.37,
+            "y": -9.26,
+            "visibility": 0.9035
+          }
+        ]
+      }
+    ]
+  },
+  "case_03": {
+    "image_width": 736,
+    "image_height": 985,
+    "letterbox_scale": 0.259898,
+    "pad_x": 32.5,
+    "pad_y": 0.0,
+    "detections": [
+      {
+        "class_id": 1,
+        "class_name": "right_foot",
+        "confidence": 0.8618,
+        "bbox": [
+          37.20000076293945,
+          283.6199951171875,
+          392.6600036621094,
+          870.2899780273438
+        ],
+        "keypoints_13": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 233.99000549316406,
+            "y": 850.3900146484375,
+            "visibility": 0.4708
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 348.3699951171875,
+            "y": 458.57000732421875,
+            "visibility": 0.0489
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 362.4800109863281,
+            "y": 444.42999267578125,
+            "visibility": 0.3266
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 339.04998779296875,
+            "y": 687.1599731445312,
+            "visibility": 0.9054
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 103.95999908447266,
+            "y": 645.4199829101562,
+            "visibility": 0.8678
+          },
+          {
+            "index": 5,
+            "name": "instep_top",
+            "x": 253.72999572753906,
+            "y": 446.94000244140625,
+            "visibility": 0.8466
+          },
+          {
+            "index": 6,
+            "name": "arch_medial",
+            "x": 379.0400085449219,
+            "y": 501.2799987792969,
+            "visibility": 0.789
+          },
+          {
+            "index": 7,
+            "name": "midfoot_lateral",
+            "x": 176.5800018310547,
+            "y": 495.19000244140625,
+            "visibility": 0.6429
+          },
+          {
+            "index": 8,
+            "name": "malleolus_medial",
+            "x": 379.739990234375,
+            "y": 369.010009765625,
+            "visibility": 0.5688
+          },
+          {
+            "index": 9,
+            "name": "malleolus_lateral",
+            "x": 200.97000122070312,
+            "y": 382.760009765625,
+            "visibility": 0.4637
+          },
+          {
+            "index": 10,
+            "name": "toe_tip",
+            "x": 243.38999938964844,
+            "y": 817.739990234375,
+            "visibility": 0.8475
+          },
+          {
+            "index": 11,
+            "name": "throat",
+            "x": 272.3699951171875,
+            "y": 307.5799865722656,
+            "visibility": 0.6842
+          },
+          {
+            "index": 12,
+            "name": "achilles",
+            "x": 288.0199890136719,
+            "y": 371.2200012207031,
+            "visibility": 0.7477
+          }
+        ],
+        "keypoints_15_derived": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 233.99,
+            "y": 850.39,
+            "visibility": 0.4708
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 348.37,
+            "y": 458.57,
+            "visibility": 0.0489
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 362.48,
+            "y": 444.43,
+            "visibility": 0.3266
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 339.05,
+            "y": 687.16,
+            "visibility": 0.9054
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 103.96,
+            "y": 645.42,
+            "visibility": 0.8678
+          },
+          {
+            "index": 5,
+            "name": "ball_top",
+            "x": 230.53,
+            "y": 604.87,
+            "visibility": 0.8466
+          },
+          {
+            "index": 6,
+            "name": "instep_top",
+            "x": 253.73,
+            "y": 446.94,
+            "visibility": 0.8466
+          },
+          {
+            "index": 7,
+            "name": "arch_medial",
+            "x": 379.04,
+            "y": 501.28,
+            "visibility": 0.789
+          },
+          {
+            "index": 8,
+            "name": "midfoot_lateral",
+            "x": 176.58,
+            "y": 495.19,
+            "visibility": 0.6429
+          },
+          {
+            "index": 9,
+            "name": "malleolus_medial",
+            "x": 379.74,
+            "y": 369.01,
+            "visibility": 0.5688
+          },
+          {
+            "index": 10,
+            "name": "malleolus_lateral",
+            "x": 200.97,
+            "y": 382.76,
+            "visibility": 0.4637
+          },
+          {
+            "index": 11,
+            "name": "toe_tip",
+            "x": 243.39,
+            "y": 817.74,
+            "visibility": 0.8475
+          },
+          {
+            "index": 12,
+            "name": "throat",
+            "x": 272.37,
+            "y": 307.58,
+            "visibility": 0.6842
+          },
+          {
+            "index": 13,
+            "name": "achilles",
+            "x": 288.02,
+            "y": 371.22,
+            "visibility": 0.7477
+          },
+          {
+            "index": 14,
+            "name": "shin_mid",
+            "x": 275.4,
+            "y": 5.78,
+            "visibility": 0.6295
+          }
+        ]
+      },
+      {
+        "class_id": 0,
+        "class_name": "left_foot",
+        "confidence": 0.827,
+        "bbox": [
+          333.44000244140625,
+          186.9499969482422,
+          717.72998046875,
+          876.1599731445312
+        ],
+        "keypoints_13": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 441.2699890136719,
+            "y": 837.280029296875,
+            "visibility": 0.7394
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 419.25,
+            "y": 391.2799987792969,
+            "visibility": 0.0458
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 405.94000244140625,
+            "y": 345.2799987792969,
+            "visibility": 0.7901
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 398.8299865722656,
+            "y": 662.5399780273438,
+            "visibility": 0.9963
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 622.5,
+            "y": 654.1599731445312,
+            "visibility": 0.9823
+          },
+          {
+            "index": 5,
+            "name": "instep_top",
+            "x": 534.3200073242188,
+            "y": 425.3900146484375,
+            "visibility": 0.9955
+          },
+          {
+            "index": 6,
+            "name": "arch_medial",
+            "x": 400.29998779296875,
+            "y": 451.3500061035156,
+            "visibility": 0.9561
+          },
+          {
+            "index": 7,
+            "name": "midfoot_lateral",
+            "x": 597.9099731445312,
+            "y": 478.5899963378906,
+            "visibility": 0.7901
+          },
+          {
+            "index": 8,
+            "name": "malleolus_medial",
+            "x": 428.2200012207031,
+            "y": 273.6400146484375,
+            "visibility": 0.8881
+          },
+          {
+            "index": 9,
+            "name": "malleolus_lateral",
+            "x": 608.5499877929688,
+            "y": 299.3999938964844,
+            "visibility": 0.6907
+          },
+          {
+            "index": 10,
+            "name": "toe_tip",
+            "x": 448.239990234375,
+            "y": 805.25,
+            "visibility": 0.9825
+          },
+          {
+            "index": 11,
+            "name": "throat",
+            "x": 561.8499755859375,
+            "y": 238.72000122070312,
+            "visibility": 0.9813
+          },
+          {
+            "index": 12,
+            "name": "achilles",
+            "x": 503.5,
+            "y": 280.2699890136719,
+            "visibility": 0.9895
+          }
+        ],
+        "keypoints_15_derived": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 441.27,
+            "y": 837.28,
+            "visibility": 0.7394
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 419.25,
+            "y": 391.28,
+            "visibility": 0.0458
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 405.94,
+            "y": 345.28,
+            "visibility": 0.7901
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 398.83,
+            "y": 662.54,
+            "visibility": 0.9963
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 622.5,
+            "y": 654.16,
+            "visibility": 0.9823
+          },
+          {
+            "index": 5,
+            "name": "ball_top",
+            "x": 517.29,
+            "y": 593.12,
+            "visibility": 0.9823
+          },
+          {
+            "index": 6,
+            "name": "instep_top",
+            "x": 534.32,
+            "y": 425.39,
+            "visibility": 0.9955
+          },
+          {
+            "index": 7,
+            "name": "arch_medial",
+            "x": 400.3,
+            "y": 451.35,
+            "visibility": 0.9561
+          },
+          {
+            "index": 8,
+            "name": "midfoot_lateral",
+            "x": 597.91,
+            "y": 478.59,
+            "visibility": 0.7901
+          },
+          {
+            "index": 9,
+            "name": "malleolus_medial",
+            "x": 428.22,
+            "y": 273.64,
+            "visibility": 0.8881
+          },
+          {
+            "index": 10,
+            "name": "malleolus_lateral",
+            "x": 608.55,
+            "y": 299.4,
+            "visibility": 0.6907
+          },
+          {
+            "index": 11,
+            "name": "toe_tip",
+            "x": 448.24,
+            "y": 805.25,
+            "visibility": 0.9825
+          },
+          {
+            "index": 12,
+            "name": "throat",
+            "x": 561.85,
+            "y": 238.72,
+            "visibility": 0.9813
+          },
+          {
+            "index": 13,
+            "name": "achilles",
+            "x": 503.5,
+            "y": 280.27,
+            "visibility": 0.9895
+          },
+          {
+            "index": 14,
+            "name": "shin_mid",
+            "x": 623.43,
+            "y": -102.98,
+            "visibility": 0.9028
           }
         ]
       }
@@ -1292,221 +2154,441 @@
       }
     ]
   },
-  "case_04_outdoor_sidewalk": {
-    "image_width": 1080,
-    "image_height": 1920,
-    "letterbox_scale": 0.133333,
-    "pad_x": 56.0,
+  "case_04": {
+    "image_width": 736,
+    "image_height": 1155,
+    "letterbox_scale": 0.221645,
+    "pad_x": 46.5,
     "pad_y": 0.0,
     "detections": [
       {
         "class_id": 1,
         "class_name": "right_foot",
-        "confidence": 0.3854,
+        "confidence": 0.8468,
         "bbox": [
-          464.3900146484375,
-          1044.6300048828125,
-          573.8800048828125,
-          1264.719970703125
+          103.23999786376953,
+          88.3499984741211,
+          645.5900268554688,
+          1150.5799560546875
         ],
         "keypoints_13": [
           {
             "index": 0,
             "name": "toe_ground",
-            "x": 508.9200134277344,
-            "y": 1059.8499755859375,
-            "visibility": 0.2057
+            "x": 265.010009765625,
+            "y": 134.00999450683594,
+            "visibility": 0.2037
           },
           {
             "index": 1,
             "name": "heel_back",
-            "x": 510.32000732421875,
-            "y": 1223.5400390625,
-            "visibility": 0.1196
+            "x": 264.3599853515625,
+            "y": 1020.0,
+            "visibility": 0.0617
           },
           {
             "index": 2,
             "name": "heel_ground",
-            "x": 519.3300170898438,
-            "y": 1245.81005859375,
-            "visibility": 0.3504
+            "x": 248.57000732421875,
+            "y": 1093.1199951171875,
+            "visibility": 0.2754
           },
           {
             "index": 3,
             "name": "ball_medial",
-            "x": 500.8699951171875,
-            "y": 1111.43994140625,
-            "visibility": 0.9544
+            "x": 168.47999572753906,
+            "y": 395.989990234375,
+            "visibility": 0.96
           },
           {
             "index": 4,
             "name": "ball_lateral",
-            "x": 544.0999755859375,
-            "y": 1119.739990234375,
-            "visibility": 0.9029
+            "x": 555.8400268554688,
+            "y": 488.8800048828125,
+            "visibility": 0.891
           },
           {
             "index": 5,
             "name": "instep_top",
-            "x": 524.3499755859375,
-            "y": 1178.300048828125,
-            "visibility": 0.9276
+            "x": 383.239990234375,
+            "y": 819.1799926757812,
+            "visibility": 0.9221
           },
           {
             "index": 6,
             "name": "arch_medial",
-            "x": 501.7200012207031,
-            "y": 1179.5699462890625,
-            "visibility": 0.8916
+            "x": 172.1300048828125,
+            "y": 815.8599853515625,
+            "visibility": 0.8931
           },
           {
             "index": 7,
             "name": "midfoot_lateral",
-            "x": 534.739990234375,
-            "y": 1180.8299560546875,
-            "visibility": 0.6789
+            "x": 511.1400146484375,
+            "y": 835.77001953125,
+            "visibility": 0.6693
           },
           {
             "index": 8,
             "name": "malleolus_medial",
-            "x": 508.79998779296875,
-            "y": 1220.6099853515625,
-            "visibility": 0.779
+            "x": 187.2100067138672,
+            "y": 1000.27001953125,
+            "visibility": 0.6748
           },
           {
             "index": 9,
             "name": "malleolus_lateral",
-            "x": 539.8599853515625,
-            "y": 1218.1099853515625,
-            "visibility": 0.4382
+            "x": 535.6599731445312,
+            "y": 1006.97998046875,
+            "visibility": 0.3492
           },
           {
             "index": 10,
             "name": "toe_tip",
-            "x": 510.1700134277344,
-            "y": 1062.52001953125,
-            "visibility": 0.9045
+            "x": 270.5299987792969,
+            "y": 144.3699951171875,
+            "visibility": 0.8177
           },
           {
             "index": 11,
             "name": "throat",
-            "x": 526.0700073242188,
-            "y": 1216.010009765625,
-            "visibility": 0.811
+            "x": 419.07000732421875,
+            "y": 1015.469970703125,
+            "visibility": 0.7067
           },
           {
             "index": 12,
             "name": "achilles",
-            "x": 525.8499755859375,
-            "y": 1220.1300048828125,
-            "visibility": 0.8513
+            "x": 349.04998779296875,
+            "y": 988.8599853515625,
+            "visibility": 0.7146
           }
         ],
         "keypoints_15_derived": [
           {
             "index": 0,
             "name": "toe_ground",
-            "x": 508.92,
-            "y": 1059.85,
-            "visibility": 0.2057
+            "x": 265.01,
+            "y": 134.01,
+            "visibility": 0.2037
           },
           {
             "index": 1,
             "name": "heel_back",
-            "x": 510.32,
-            "y": 1223.54,
-            "visibility": 0.1196
+            "x": 264.36,
+            "y": 1020.0,
+            "visibility": 0.0617
           },
           {
             "index": 2,
             "name": "heel_ground",
-            "x": 519.33,
-            "y": 1245.81,
-            "visibility": 0.3504
+            "x": 248.57,
+            "y": 1093.12,
+            "visibility": 0.2754
           },
           {
             "index": 3,
             "name": "ball_medial",
-            "x": 500.87,
-            "y": 1111.44,
-            "visibility": 0.9544
+            "x": 168.48,
+            "y": 395.99,
+            "visibility": 0.96
           },
           {
             "index": 4,
             "name": "ball_lateral",
-            "x": 544.1,
-            "y": 1119.74,
-            "visibility": 0.9029
+            "x": 555.84,
+            "y": 488.88,
+            "visibility": 0.891
           },
           {
             "index": 5,
             "name": "ball_top",
-            "x": 523.01,
-            "y": 1133.15,
-            "visibility": 0.9029
+            "x": 368.06,
+            "y": 547.92,
+            "visibility": 0.891
           },
           {
             "index": 6,
             "name": "instep_top",
-            "x": 524.35,
-            "y": 1178.3,
-            "visibility": 0.9276
+            "x": 383.24,
+            "y": 819.18,
+            "visibility": 0.9221
           },
           {
             "index": 7,
             "name": "arch_medial",
-            "x": 501.72,
-            "y": 1179.57,
-            "visibility": 0.8916
+            "x": 172.13,
+            "y": 815.86,
+            "visibility": 0.8931
           },
           {
             "index": 8,
             "name": "midfoot_lateral",
-            "x": 534.74,
-            "y": 1180.83,
-            "visibility": 0.6789
+            "x": 511.14,
+            "y": 835.77,
+            "visibility": 0.6693
           },
           {
             "index": 9,
             "name": "malleolus_medial",
-            "x": 508.8,
-            "y": 1220.61,
-            "visibility": 0.779
+            "x": 187.21,
+            "y": 1000.27,
+            "visibility": 0.6748
           },
           {
             "index": 10,
             "name": "malleolus_lateral",
-            "x": 539.86,
-            "y": 1218.11,
-            "visibility": 0.4382
+            "x": 535.66,
+            "y": 1006.98,
+            "visibility": 0.3492
           },
           {
             "index": 11,
             "name": "toe_tip",
-            "x": 510.17,
-            "y": 1062.52,
-            "visibility": 0.9045
+            "x": 270.53,
+            "y": 144.37,
+            "visibility": 0.8177
           },
           {
             "index": 12,
             "name": "throat",
-            "x": 526.07,
-            "y": 1216.01,
-            "visibility": 0.811
+            "x": 419.07,
+            "y": 1015.47,
+            "visibility": 0.7067
           },
           {
             "index": 13,
             "name": "achilles",
-            "x": 525.85,
-            "y": 1220.13,
-            "visibility": 0.8513
+            "x": 349.05,
+            "y": 988.86,
+            "visibility": 0.7146
           },
           {
             "index": 14,
             "name": "shin_mid",
-            "x": 536.35,
-            "y": 1323.68,
-            "visibility": 0.7461
+            "x": 473.09,
+            "y": 1537.46,
+            "visibility": 0.6502
+          }
+        ]
+      }
+    ]
+  },
+  "case_05": {
+    "image_width": 631,
+    "image_height": 640,
+    "letterbox_scale": 0.4,
+    "pad_x": 2.0,
+    "pad_y": 0.0,
+    "detections": [
+      {
+        "class_id": 0,
+        "class_name": "left_foot",
+        "confidence": 0.8594,
+        "bbox": [
+          132.97000122070312,
+          44.66999816894531,
+          466.7799987792969,
+          583.3800048828125
+        ],
+        "keypoints_13": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 248.1699981689453,
+            "y": 86.37000274658203,
+            "visibility": 0.2954
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 410.239990234375,
+            "y": 488.3800048828125,
+            "visibility": 0.1322
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 430.9800109863281,
+            "y": 511.29998779296875,
+            "visibility": 0.4632
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 347.8299865722656,
+            "y": 177.91000366210938,
+            "visibility": 0.9569
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 195.11000061035156,
+            "y": 274.0299987792969,
+            "visibility": 0.857
+          },
+          {
+            "index": 5,
+            "name": "instep_top",
+            "x": 294.7699890136719,
+            "y": 368.6000061035156,
+            "visibility": 0.9386
+          },
+          {
+            "index": 6,
+            "name": "arch_medial",
+            "x": 401.2200012207031,
+            "y": 346.5199890136719,
+            "visibility": 0.923
+          },
+          {
+            "index": 7,
+            "name": "midfoot_lateral",
+            "x": 246.92999267578125,
+            "y": 414.8900146484375,
+            "visibility": 0.6312
+          },
+          {
+            "index": 8,
+            "name": "malleolus_medial",
+            "x": 424.92999267578125,
+            "y": 452.760009765625,
+            "visibility": 0.7792
+          },
+          {
+            "index": 9,
+            "name": "malleolus_lateral",
+            "x": 273.6099853515625,
+            "y": 506.9700012207031,
+            "visibility": 0.3179
+          },
+          {
+            "index": 10,
+            "name": "toe_tip",
+            "x": 249.52000427246094,
+            "y": 88.29000091552734,
+            "visibility": 0.795
+          },
+          {
+            "index": 11,
+            "name": "throat",
+            "x": 313.3999938964844,
+            "y": 475.2200012207031,
+            "visibility": 0.8371
+          },
+          {
+            "index": 12,
+            "name": "achilles",
+            "x": 357.3500061035156,
+            "y": 484.2300109863281,
+            "visibility": 0.8227
+          }
+        ],
+        "keypoints_15_derived": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 248.17,
+            "y": 86.37,
+            "visibility": 0.2954
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 410.24,
+            "y": 488.38,
+            "visibility": 0.1322
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 430.98,
+            "y": 511.3,
+            "visibility": 0.4632
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 347.83,
+            "y": 177.91,
+            "visibility": 0.9569
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 195.11,
+            "y": 274.03,
+            "visibility": 0.857
+          },
+          {
+            "index": 5,
+            "name": "ball_top",
+            "x": 277.99,
+            "y": 265.91,
+            "visibility": 0.857
+          },
+          {
+            "index": 6,
+            "name": "instep_top",
+            "x": 294.77,
+            "y": 368.6,
+            "visibility": 0.9386
+          },
+          {
+            "index": 7,
+            "name": "arch_medial",
+            "x": 401.22,
+            "y": 346.52,
+            "visibility": 0.923
+          },
+          {
+            "index": 8,
+            "name": "midfoot_lateral",
+            "x": 246.93,
+            "y": 414.89,
+            "visibility": 0.6312
+          },
+          {
+            "index": 9,
+            "name": "malleolus_medial",
+            "x": 424.93,
+            "y": 452.76,
+            "visibility": 0.7792
+          },
+          {
+            "index": 10,
+            "name": "malleolus_lateral",
+            "x": 273.61,
+            "y": 506.97,
+            "visibility": 0.3179
+          },
+          {
+            "index": 11,
+            "name": "toe_tip",
+            "x": 249.52,
+            "y": 88.29,
+            "visibility": 0.795
+          },
+          {
+            "index": 12,
+            "name": "throat",
+            "x": 313.4,
+            "y": 475.22,
+            "visibility": 0.8371
+          },
+          {
+            "index": 13,
+            "name": "achilles",
+            "x": 357.35,
+            "y": 484.23,
+            "visibility": 0.8227
+          },
+          {
+            "index": 14,
+            "name": "shin_mid",
+            "x": 376.07,
+            "y": 746.94,
+            "visibility": 0.7314
           }
         ]
       }
@@ -1732,6 +2814,226 @@
       }
     ]
   },
+  "case_06": {
+    "image_width": 344,
+    "image_height": 535,
+    "letterbox_scale": 0.478505,
+    "pad_x": 45.5,
+    "pad_y": 0.0,
+    "detections": [
+      {
+        "class_id": 0,
+        "class_name": "left_foot",
+        "confidence": 0.7223,
+        "bbox": [
+          87.27999877929688,
+          188.97000122070312,
+          310.32000732421875,
+          494.010009765625
+        ],
+        "keypoints_13": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 133.4499969482422,
+            "y": 472.2799987792969,
+            "visibility": 0.5039
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 200.85000610351562,
+            "y": 320.5199890136719,
+            "visibility": 0.0394
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 195.2899932861328,
+            "y": 310.05999755859375,
+            "visibility": 0.3552
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 131.64999389648438,
+            "y": 407.92999267578125,
+            "visibility": 0.9517
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 271.30999755859375,
+            "y": 410.3299865722656,
+            "visibility": 0.9335
+          },
+          {
+            "index": 5,
+            "name": "instep_top",
+            "x": 195.49000549316406,
+            "y": 308.3699951171875,
+            "visibility": 0.943
+          },
+          {
+            "index": 6,
+            "name": "arch_medial",
+            "x": 152.86000061035156,
+            "y": 334.29998779296875,
+            "visibility": 0.8466
+          },
+          {
+            "index": 7,
+            "name": "midfoot_lateral",
+            "x": 265.3500061035156,
+            "y": 341.3599853515625,
+            "visibility": 0.8063
+          },
+          {
+            "index": 8,
+            "name": "malleolus_medial",
+            "x": 149.58999633789062,
+            "y": 256.8999938964844,
+            "visibility": 0.6376
+          },
+          {
+            "index": 9,
+            "name": "malleolus_lateral",
+            "x": 264.510009765625,
+            "y": 264.4100036621094,
+            "visibility": 0.6768
+          },
+          {
+            "index": 10,
+            "name": "toe_tip",
+            "x": 132.8000030517578,
+            "y": 450.8399963378906,
+            "visibility": 0.9061
+          },
+          {
+            "index": 11,
+            "name": "throat",
+            "x": 191.89999389648438,
+            "y": 217.8300018310547,
+            "visibility": 0.8444
+          },
+          {
+            "index": 12,
+            "name": "achilles",
+            "x": 206.22000122070312,
+            "y": 244.82000732421875,
+            "visibility": 0.8555
+          }
+        ],
+        "keypoints_15_derived": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 133.45,
+            "y": 472.28,
+            "visibility": 0.5039
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 200.85,
+            "y": 320.52,
+            "visibility": 0.0394
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 195.29,
+            "y": 310.06,
+            "visibility": 0.3552
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 131.65,
+            "y": 407.93,
+            "visibility": 0.9517
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 271.31,
+            "y": 410.33,
+            "visibility": 0.9335
+          },
+          {
+            "index": 5,
+            "name": "ball_top",
+            "x": 199.8,
+            "y": 380.92,
+            "visibility": 0.9335
+          },
+          {
+            "index": 6,
+            "name": "instep_top",
+            "x": 195.49,
+            "y": 308.37,
+            "visibility": 0.943
+          },
+          {
+            "index": 7,
+            "name": "arch_medial",
+            "x": 152.86,
+            "y": 334.3,
+            "visibility": 0.8466
+          },
+          {
+            "index": 8,
+            "name": "midfoot_lateral",
+            "x": 265.35,
+            "y": 341.36,
+            "visibility": 0.8063
+          },
+          {
+            "index": 9,
+            "name": "malleolus_medial",
+            "x": 149.59,
+            "y": 256.9,
+            "visibility": 0.6376
+          },
+          {
+            "index": 10,
+            "name": "malleolus_lateral",
+            "x": 264.51,
+            "y": 264.41,
+            "visibility": 0.6768
+          },
+          {
+            "index": 11,
+            "name": "toe_tip",
+            "x": 132.8,
+            "y": 450.84,
+            "visibility": 0.9061
+          },
+          {
+            "index": 12,
+            "name": "throat",
+            "x": 191.9,
+            "y": 217.83,
+            "visibility": 0.8444
+          },
+          {
+            "index": 13,
+            "name": "achilles",
+            "x": 206.22,
+            "y": 244.82,
+            "visibility": 0.8555
+          },
+          {
+            "index": 14,
+            "name": "shin_mid",
+            "x": 222.38,
+            "y": 54.38,
+            "visibility": 0.7768
+          }
+        ]
+      }
+    ]
+  },
   "case_06_floor_walking": {
     "image_width": 1080,
     "image_height": 1920,
@@ -1952,221 +3254,432 @@
       }
     ]
   },
-  "case_07_side_reclined": {
-    "image_width": 1024,
-    "image_height": 573,
-    "letterbox_scale": 0.25,
+  "case_07": {
+    "image_width": 540,
+    "image_height": 535,
+    "letterbox_scale": 0.474074,
     "pad_x": 0.0,
-    "pad_y": 56.5,
+    "pad_y": 1.0,
     "detections": [
       {
         "class_id": 1,
         "class_name": "right_foot",
-        "confidence": 0.733,
+        "confidence": 0.8556,
         "bbox": [
-          0.800000011920929,
-          228.27999877929688,
-          284.1099853515625,
-          540.27001953125
+          235.36000061035156,
+          131.25999450683594,
+          468.7300109863281,
+          521.510009765625
         ],
         "keypoints_13": [
           {
             "index": 0,
             "name": "toe_ground",
-            "x": 48.09000015258789,
-            "y": 497.1300048828125,
-            "visibility": 0.5367
+            "x": 320.54998779296875,
+            "y": 163.8000030517578,
+            "visibility": 0.2638
           },
           {
             "index": 1,
             "name": "heel_back",
-            "x": 215.8000030517578,
-            "y": 334.3599853515625,
-            "visibility": 0.0296
+            "x": 299.7200012207031,
+            "y": 464.1499938964844,
+            "visibility": 0.0875
           },
           {
             "index": 2,
             "name": "heel_ground",
-            "x": 240.7899932861328,
-            "y": 313.55999755859375,
-            "visibility": 0.3906
+            "x": 298.1300048828125,
+            "y": 481.0,
+            "visibility": 0.3577
           },
           {
             "index": 3,
             "name": "ball_medial",
-            "x": 136.4600067138672,
-            "y": 434.9700012207031,
-            "visibility": 0.9806
+            "x": 289.94000244140625,
+            "y": 249.77999877929688,
+            "visibility": 0.9207
           },
           {
             "index": 4,
             "name": "ball_lateral",
-            "x": 46.470001220703125,
-            "y": 357.7699890136719,
-            "visibility": 0.9371
+            "x": 409.2200012207031,
+            "y": 292.5,
+            "visibility": 0.834
           },
           {
             "index": 5,
             "name": "instep_top",
-            "x": 169.8800048828125,
-            "y": 309.04998779296875,
-            "visibility": 0.9651
+            "x": 346.29998779296875,
+            "y": 387.6199951171875,
+            "visibility": 0.8906
           },
           {
             "index": 6,
             "name": "arch_medial",
-            "x": 209.8000030517578,
-            "y": 363.6499938964844,
-            "visibility": 0.9061
+            "x": 283.3699951171875,
+            "y": 384.8800048828125,
+            "visibility": 0.8495
           },
           {
             "index": 7,
             "name": "midfoot_lateral",
-            "x": 119.5999984741211,
-            "y": 294.7099914550781,
-            "visibility": 0.6871
+            "x": 384.1300048828125,
+            "y": 399.57000732421875,
+            "visibility": 0.634
           },
           {
             "index": 8,
             "name": "malleolus_medial",
-            "x": 261.7099914550781,
-            "y": 297.9599914550781,
-            "visibility": 0.7157
+            "x": 287.489990234375,
+            "y": 443.6499938964844,
+            "visibility": 0.6592
           },
           {
             "index": 9,
             "name": "malleolus_lateral",
-            "x": 183.80999755859375,
-            "y": 244.02999877929688,
-            "visibility": 0.4422
+            "x": 390.0400085449219,
+            "y": 454.3599853515625,
+            "visibility": 0.3819
           },
           {
             "index": 10,
             "name": "toe_tip",
-            "x": 57.56999969482422,
-            "y": 478.6000061035156,
-            "visibility": 0.9546
+            "x": 329.0299987792969,
+            "y": 167.4600067138672,
+            "visibility": 0.7877
           },
           {
             "index": 11,
             "name": "throat",
-            "x": 227.00999450683594,
-            "y": 259.7300109863281,
-            "visibility": 0.8853
+            "x": 359.82000732421875,
+            "y": 448.2699890136719,
+            "visibility": 0.7674
           },
           {
             "index": 12,
             "name": "achilles",
-            "x": 224.30999755859375,
-            "y": 266.760009765625,
-            "visibility": 0.8586
+            "x": 336.8999938964844,
+            "y": 439.6499938964844,
+            "visibility": 0.7672
           }
         ],
         "keypoints_15_derived": [
           {
             "index": 0,
             "name": "toe_ground",
-            "x": 48.09,
-            "y": 497.13,
-            "visibility": 0.5367
+            "x": 320.55,
+            "y": 163.8,
+            "visibility": 0.2638
           },
           {
             "index": 1,
             "name": "heel_back",
-            "x": 215.8,
-            "y": 334.36,
-            "visibility": 0.0296
+            "x": 299.72,
+            "y": 464.15,
+            "visibility": 0.0875
           },
           {
             "index": 2,
             "name": "heel_ground",
-            "x": 240.79,
-            "y": 313.56,
-            "visibility": 0.3906
+            "x": 298.13,
+            "y": 481.0,
+            "visibility": 0.3577
           },
           {
             "index": 3,
             "name": "ball_medial",
-            "x": 136.46,
-            "y": 434.97,
-            "visibility": 0.9806
+            "x": 289.94,
+            "y": 249.78,
+            "visibility": 0.9207
           },
           {
             "index": 4,
             "name": "ball_lateral",
-            "x": 46.47,
-            "y": 357.77,
-            "visibility": 0.9371
+            "x": 409.22,
+            "y": 292.5,
+            "visibility": 0.834
           },
           {
             "index": 5,
             "name": "ball_top",
-            "x": 113.42,
-            "y": 371.92,
-            "visibility": 0.9371
+            "x": 348.66,
+            "y": 303.75,
+            "visibility": 0.834
           },
           {
             "index": 6,
             "name": "instep_top",
-            "x": 169.88,
-            "y": 309.05,
-            "visibility": 0.9651
+            "x": 346.3,
+            "y": 387.62,
+            "visibility": 0.8906
           },
           {
             "index": 7,
             "name": "arch_medial",
-            "x": 209.8,
-            "y": 363.65,
-            "visibility": 0.9061
+            "x": 283.37,
+            "y": 384.88,
+            "visibility": 0.8495
           },
           {
             "index": 8,
             "name": "midfoot_lateral",
-            "x": 119.6,
-            "y": 294.71,
-            "visibility": 0.6871
+            "x": 384.13,
+            "y": 399.57,
+            "visibility": 0.634
           },
           {
             "index": 9,
             "name": "malleolus_medial",
-            "x": 261.71,
-            "y": 297.96,
-            "visibility": 0.7157
+            "x": 287.49,
+            "y": 443.65,
+            "visibility": 0.6592
           },
           {
             "index": 10,
             "name": "malleolus_lateral",
-            "x": 183.81,
-            "y": 244.03,
-            "visibility": 0.4422
+            "x": 390.04,
+            "y": 454.36,
+            "visibility": 0.3819
           },
           {
             "index": 11,
             "name": "toe_tip",
-            "x": 57.57,
-            "y": 478.6,
-            "visibility": 0.9546
+            "x": 329.03,
+            "y": 167.46,
+            "visibility": 0.7877
           },
           {
             "index": 12,
             "name": "throat",
-            "x": 227.01,
-            "y": 259.73,
-            "visibility": 0.8853
+            "x": 359.82,
+            "y": 448.27,
+            "visibility": 0.7674
           },
           {
             "index": 13,
             "name": "achilles",
-            "x": 224.31,
-            "y": 266.76,
-            "visibility": 0.8586
+            "x": 336.9,
+            "y": 439.65,
+            "visibility": 0.7672
           },
           {
             "index": 14,
             "name": "shin_mid",
-            "x": 337.77,
-            "y": 111.01,
-            "visibility": 0.8145
+            "x": 366.76,
+            "y": 648.22,
+            "visibility": 0.706
+          }
+        ]
+      },
+      {
+        "class_id": 0,
+        "class_name": "left_foot",
+        "confidence": 0.8209,
+        "bbox": [
+          22.889999389648438,
+          114.30000305175781,
+          249.14999389648438,
+          512.8300170898438
+        ],
+        "keypoints_13": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 186.35000610351562,
+            "y": 139.8699951171875,
+            "visibility": 0.247
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 164.11000061035156,
+            "y": 454.5199890136719,
+            "visibility": 0.1112
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 176.0800018310547,
+            "y": 473.54998779296875,
+            "visibility": 0.3538
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 210.1199951171875,
+            "y": 238.0500030517578,
+            "visibility": 0.9112
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 81.69999694824219,
+            "y": 269.4599914550781,
+            "visibility": 0.767
+          },
+          {
+            "index": 5,
+            "name": "instep_top",
+            "x": 134.69000244140625,
+            "y": 376.989990234375,
+            "visibility": 0.8679
+          },
+          {
+            "index": 6,
+            "name": "arch_medial",
+            "x": 200.67999267578125,
+            "y": 380.4800109863281,
+            "visibility": 0.856
+          },
+          {
+            "index": 7,
+            "name": "midfoot_lateral",
+            "x": 81.45999908447266,
+            "y": 390.69000244140625,
+            "visibility": 0.5258
+          },
+          {
+            "index": 8,
+            "name": "malleolus_medial",
+            "x": 196.41000366210938,
+            "y": 449.2699890136719,
+            "visibility": 0.6773
+          },
+          {
+            "index": 9,
+            "name": "malleolus_lateral",
+            "x": 78.11000061035156,
+            "y": 451.7699890136719,
+            "visibility": 0.2951
+          },
+          {
+            "index": 10,
+            "name": "toe_tip",
+            "x": 183.7899932861328,
+            "y": 144.16000366210938,
+            "visibility": 0.7283
+          },
+          {
+            "index": 11,
+            "name": "throat",
+            "x": 129.69000244140625,
+            "y": 447.0400085449219,
+            "visibility": 0.7423
+          },
+          {
+            "index": 12,
+            "name": "achilles",
+            "x": 139.77000427246094,
+            "y": 443.67999267578125,
+            "visibility": 0.7186
+          }
+        ],
+        "keypoints_15_derived": [
+          {
+            "index": 0,
+            "name": "toe_ground",
+            "x": 186.35,
+            "y": 139.87,
+            "visibility": 0.247
+          },
+          {
+            "index": 1,
+            "name": "heel_back",
+            "x": 164.11,
+            "y": 454.52,
+            "visibility": 0.1112
+          },
+          {
+            "index": 2,
+            "name": "heel_ground",
+            "x": 176.08,
+            "y": 473.55,
+            "visibility": 0.3538
+          },
+          {
+            "index": 3,
+            "name": "ball_medial",
+            "x": 210.12,
+            "y": 238.05,
+            "visibility": 0.9112
+          },
+          {
+            "index": 4,
+            "name": "ball_lateral",
+            "x": 81.7,
+            "y": 269.46,
+            "visibility": 0.767
+          },
+          {
+            "index": 5,
+            "name": "ball_top",
+            "x": 142.77,
+            "y": 288.26,
+            "visibility": 0.767
+          },
+          {
+            "index": 6,
+            "name": "instep_top",
+            "x": 134.69,
+            "y": 376.99,
+            "visibility": 0.8679
+          },
+          {
+            "index": 7,
+            "name": "arch_medial",
+            "x": 200.68,
+            "y": 380.48,
+            "visibility": 0.856
+          },
+          {
+            "index": 8,
+            "name": "midfoot_lateral",
+            "x": 81.46,
+            "y": 390.69,
+            "visibility": 0.5258
+          },
+          {
+            "index": 9,
+            "name": "malleolus_medial",
+            "x": 196.41,
+            "y": 449.27,
+            "visibility": 0.6773
+          },
+          {
+            "index": 10,
+            "name": "malleolus_lateral",
+            "x": 78.11,
+            "y": 451.77,
+            "visibility": 0.2951
+          },
+          {
+            "index": 11,
+            "name": "toe_tip",
+            "x": 183.79,
+            "y": 144.16,
+            "visibility": 0.7283
+          },
+          {
+            "index": 12,
+            "name": "throat",
+            "x": 129.69,
+            "y": 447.04,
+            "visibility": 0.7423
+          },
+          {
+            "index": 13,
+            "name": "achilles",
+            "x": 139.77,
+            "y": 443.68,
+            "visibility": 0.7186
+          },
+          {
+            "index": 14,
+            "name": "shin_mid",
+            "x": 108.04,
+            "y": 647.52,
+            "visibility": 0.67
           }
         ]
       }

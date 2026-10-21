@@ -140,7 +140,7 @@ Executed the reference decoder directly against golden test fixtures:
 ```bash
 node deliverables/stage_a_256_13kp/reference-decoder.js
 ```
-**Outcome:** **Passed 8/8 test cases (12 feet detected)** with exact coordinate and chirality matching against the golden JSON.
+**Outcome:** **Passed 12/12 test cases (19 feet detected)** with exact coordinate and chirality matching against the golden JSON.
 
 ---
 

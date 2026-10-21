@@ -58,12 +58,24 @@ def test_file_inventory():
         assert fp.exists(), f"Missing required file: {rel}"
         assert fp.stat().st_size > 0, f"File is empty: {rel}"
 
-    # Verify 8 fixtures
-    for i in range(1, 9):
-        assert len(list((PACKAGE_DIR / "fixtures" / "source-frames").glob(f"case_{i:02d}_*.png"))) == 1, f"Missing source frame for case {i}"
-        assert len(list((PACKAGE_DIR / "fixtures" / "raw-output-tensors").glob(f"case_{i:02d}_*.npy"))) == 1, f"Missing raw tensor for case {i}"
+    # Verify fixtures (12 cases: source frame, raw tensor, and annotated output)
+    src_frames_dir = PACKAGE_DIR / "fixtures" / "source-frames"
+    raw_tensors_dir = PACKAGE_DIR / "fixtures" / "raw-output-tensors"
+    annotated_dir = PACKAGE_DIR / "fixtures" / "source-frames-output"
 
-    print(f"  [OK] All {len(required_files) + 16} deliverable files present and non-empty.")
+    src_files = [f for f in src_frames_dir.iterdir() if f.suffix.lower() in {".png", ".jpg", ".jpeg"}]
+    assert len(src_files) == 12, f"Expected 12 source frames, found {len(src_files)}"
+
+    for sf in src_files:
+        stem = sf.stem
+        raw_npy = raw_tensors_dir / f"{stem}.npy"
+        ann_img = annotated_dir / f"{stem}_annotated.png"
+        assert raw_npy.exists(), f"Missing raw tensor for {sf.name}"
+        assert raw_npy.stat().st_size > 0, f"Raw tensor empty: {raw_npy}"
+        assert ann_img.exists(), f"Missing annotated output image for {sf.name}"
+        assert ann_img.stat().st_size > 0, f"Annotated image empty: {ann_img}"
+
+    print(f"  [OK] All {len(required_files) + 36} deliverable files (including 12 source frames, 12 tensors, 12 annotated images) present and non-empty.")
 
 def test_contract_and_checksums():
     print("[2/6] Verifying model-contract.json and SHA-256 checksums...")
@@ -131,8 +143,8 @@ def test_node_reference_decoder():
         print("STDOUT:", res.stdout)
         print("STDERR:", res.stderr)
         raise RuntimeError(f"reference-decoder.js failed with code {res.returncode}")
-    assert "All 8 test cases" in res.stdout, f"Unexpected stdout:\n{res.stdout}"
-    print("  [OK] Node.js decoder regression passed 8/8 cases.")
+    assert "All 12 test cases" in res.stdout, f"Unexpected stdout:\n{res.stdout}"
+    print("  [OK] Node.js decoder regression passed 12/12 cases.")
 
 def test_onnx_runtime_inference():
     print("[5/6] Testing ONNX Runtime inference on FP32 and FP16 models...")
