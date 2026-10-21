@@ -29,12 +29,78 @@ from pathlib import Path
 import numpy as np
 import cv2
 
-# Ensure repository root is on sys.path
-REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
-from src.models.stage_a.postprocess import derive_secondary_keypoints_15kp, KEYPOINT_NAMES_15KP
+# ── 15-Keypoint Anatomical Mapping (Derived) ──────────────────────────────────
+KEYPOINT_NAMES_15KP = [
+    "toe_ground", "heel_back", "heel_ground", "ball_medial", "ball_lateral",
+    "ball_top", "instep_top", "arch_medial", "midfoot_lateral",
+    "malleolus_medial", "malleolus_lateral", "toe_tip", "throat", "achilles", "shin_mid"
+]
+
+def derive_secondary_keypoints_15kp(keypoints_13, bbox=None):
+    """Deterministically derives ball_top (5) and shin_mid (14) from 13-KP detections."""
+    k = {item["index"]: item for item in keypoints_13}
+    p_bm = np.array([k[3]["x"], k[3]["y"]], dtype=np.float32)
+    p_bl = np.array([k[4]["x"], k[4]["y"]], dtype=np.float32)
+    p_instep = np.array([k[5]["x"], k[5]["y"]], dtype=np.float32)
+    m_ball = 0.5 * (p_bm + p_bl)
+    p_ball_top = m_ball + 0.28 * (p_instep - m_ball)
+    v_ball_top = min(k[3]["visibility"], k[4]["visibility"], k[5]["visibility"])
+
+    p_throat = np.array([k[11]["x"], k[11]["y"]], dtype=np.float32)
+    p_ach = np.array([k[12]["x"], k[12]["y"]], dtype=np.float32)
+    p_toe = np.array([k[10]["x"], k[10]["y"]], dtype=np.float32)
+    p_hg = np.array([k[2]["x"], k[2]["y"]], dtype=np.float32)
+    p_mm = np.array([k[8]["x"], k[8]["y"]], dtype=np.float32)
+    p_ml = np.array([k[9]["x"], k[9]["y"]], dtype=np.float32)
+
+    v_toe, v_hg, v_ach, v_thr = k[10]["visibility"], k[2]["visibility"], k[12]["visibility"], k[11]["visibility"]
+    if bbox is not None:
+        ref_len = float(np.sqrt((bbox[2]-bbox[0])**2 + (bbox[3]-bbox[1])**2)) * 0.40
+    else:
+        xs = [kp["x"] for kp in keypoints_13]
+        ys = [kp["y"] for kp in keypoints_13]
+        ref_len = float(np.sqrt((max(xs)-min(xs))**2 + (max(ys)-min(ys))**2)) * 0.40
+
+    if v_toe < 0.30 and (v_hg > 0.40 or v_ach > 0.50):
+        v_leg = p_ach - p_hg
+        n_leg = float(np.linalg.norm(v_leg))
+        u_leg = (v_leg / n_leg) if n_leg > 1e-4 else np.array([0.0, -1.0], dtype=np.float32)
+        p_shin = p_throat + 1.20 * ref_len * u_leg
+        v_shin = min(v_thr, v_ach, max(v_hg, 0.4)) * 0.90
+    else:
+        v_dorsal = p_throat - p_toe
+        n_dorsal = float(np.linalg.norm(v_dorsal))
+        v_malleoli = p_ml - p_mm
+        perp = np.array([-v_malleoli[1], v_malleoli[0]], dtype=np.float32)
+        if np.dot(perp, v_dorsal) < 0:
+            perp = -perp
+        n_perp = float(np.linalg.norm(perp))
+        u_perp = (perp / n_perp) if n_perp > 1e-4 else np.array([0.0, 1.0], dtype=np.float32)
+        u_dorsal = (v_dorsal / n_dorsal) if n_dorsal > 1e-4 else u_perp
+        u_leg = 0.65 * u_dorsal + 0.35 * u_perp
+        n_u = float(np.linalg.norm(u_leg))
+        u_leg = (u_leg / n_u) if n_u > 1e-4 else np.array([0.0, 1.0], dtype=np.float32)
+        p_shin = p_throat + 1.10 * ref_len * u_leg
+        v_shin = min(v_thr, max(v_toe, 0.5)) * 0.92
+
+    return [
+        {"index": 0, "name": KEYPOINT_NAMES_15KP[0], "x": k[0]["x"], "y": k[0]["y"], "visibility": k[0]["visibility"]},
+        {"index": 1, "name": KEYPOINT_NAMES_15KP[1], "x": k[1]["x"], "y": k[1]["y"], "visibility": k[1]["visibility"]},
+        {"index": 2, "name": KEYPOINT_NAMES_15KP[2], "x": k[2]["x"], "y": k[2]["y"], "visibility": k[2]["visibility"]},
+        {"index": 3, "name": KEYPOINT_NAMES_15KP[3], "x": k[3]["x"], "y": k[3]["y"], "visibility": k[3]["visibility"]},
+        {"index": 4, "name": KEYPOINT_NAMES_15KP[4], "x": k[4]["x"], "y": k[4]["y"], "visibility": k[4]["visibility"]},
+        {"index": 5, "name": KEYPOINT_NAMES_15KP[5], "x": float(p_ball_top[0]), "y": float(p_ball_top[1]), "visibility": float(v_ball_top)},
+        {"index": 6, "name": KEYPOINT_NAMES_15KP[6], "x": k[5]["x"], "y": k[5]["y"], "visibility": k[5]["visibility"]},
+        {"index": 7, "name": KEYPOINT_NAMES_15KP[7], "x": k[6]["x"], "y": k[6]["y"], "visibility": k[6]["visibility"]},
+        {"index": 8, "name": KEYPOINT_NAMES_15KP[8], "x": k[7]["x"], "y": k[7]["y"], "visibility": k[7]["visibility"]},
+        {"index": 9, "name": KEYPOINT_NAMES_15KP[9], "x": k[8]["x"], "y": k[8]["y"], "visibility": k[8]["visibility"]},
+        {"index": 10, "name": KEYPOINT_NAMES_15KP[10], "x": k[9]["x"], "y": k[9]["y"], "visibility": k[9]["visibility"]},
+        {"index": 11, "name": KEYPOINT_NAMES_15KP[11], "x": k[10]["x"], "y": k[10]["y"], "visibility": k[10]["visibility"]},
+        {"index": 12, "name": KEYPOINT_NAMES_15KP[12], "x": k[11]["x"], "y": k[11]["y"], "visibility": k[11]["visibility"]},
+        {"index": 13, "name": KEYPOINT_NAMES_15KP[13], "x": k[12]["x"], "y": k[12]["y"], "visibility": k[12]["visibility"]},
+        {"index": 14, "name": KEYPOINT_NAMES_15KP[14], "x": float(p_shin[0]), "y": float(p_shin[1]), "visibility": float(v_shin)},
+    ]
 
 # ── 13-Keypoint Anatomical Mapping ─────────────────────────────────────────────
 KEYPOINT_NAMES = [

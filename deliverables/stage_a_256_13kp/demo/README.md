@@ -13,17 +13,17 @@ pip install ultralytics onnxruntime opencv-python numpy
 
 ### 2. Run Demo (ONNX or PyTorch)
 ```bash
-# Run ONNX inference (default: stage-a-256-13kp-fp32.onnx):
-python deliverables/stage_a_256_13kp/demo/run_video_demo.py \
-    --weights deliverables/stage_a_256_13kp/models/stage-a-256-13kp-fp32.onnx \
-    --video data/test_video.mp4 \
-    --output deliverables/stage_a_256_13kp/demo/annotated_output_256.mp4
+# Run ONNX inference (default: models/stage-a-256-13kp-fp32.onnx):
+python demo/run_video_demo.py \
+    --weights models/stage-a-256-13kp-fp32.onnx \
+    --video <path_to_input_video.mp4> \
+    --output demo/annotated_output_256.mp4
 
 # Run with optional 15-Keypoint Expansion (derived ball_top and shin_mid):
-python deliverables/stage_a_256_13kp/demo/run_video_demo.py \
-    --weights deliverables/stage_a_256_13kp/models/stage-a-256-13kp-fp32.onnx \
-    --video data/test_video.mp4 \
-    --output deliverables/stage_a_256_13kp/demo/annotated_output_256_15kp_derived.mp4 \
+python demo/run_video_demo.py \
+    --weights models/stage-a-256-13kp-fp32.onnx \
+    --video <path_to_input_video.mp4> \
+    --output demo/annotated_output_256_15kp_derived.mp4 \
     --expand_15kp
 ```
 
@@ -33,7 +33,7 @@ python deliverables/stage_a_256_13kp/demo/run_video_demo.py \
 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
-| `--video` | `data/test_video.mp4` | Path to input MP4 video file |
+| `--video` | `<required>` | Path to input MP4 video file |
 | `--weights` | `models/stage-a-256-13kp-fp32.onnx` | Path to ONNX or PyTorch weights |
 | `--output` | `demo/annotated_output_256.mp4` | Destination path for annotated MP4 video |
 | `--conf` | `0.25` | Foot confidence threshold `[0.0, 1.0]` |
