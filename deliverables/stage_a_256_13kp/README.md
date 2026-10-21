@@ -137,8 +137,8 @@ Expected output:
 
 ```javascript
 import * as ort from 'onnxruntime-web';
-import { decodeStageAOutput } from './reference-decoder.js';
-import { computeLetterboxTransform, transformDetectionsToOriginal } from './crop-transforms.js';
+import { decodeStageA256 } from './reference-decoder.js';
+import { getLetterboxParams } from './crop-transforms.js';
 
 // 1. Initialize ONNX WebGPU Session
 const session = await ort.InferenceSession.create(
@@ -149,23 +149,23 @@ const session = await ort.InferenceSession.create(
   }
 );
 
-// 2. Preprocess Video Frame
-const letterbox = computeLetterboxTransform(videoWidth, videoHeight, 256, 256);
+// 2. Preprocess Video Frame (256x256 Letterbox)
+const letterbox = getLetterboxParams(videoWidth, videoHeight, 256);
 const inputTensor = prepareLetterboxTensor(videoFrame, letterbox);
 
 // 3. Inference
 const results = await session.run({ images: inputTensor });
 const outputTensor = results[session.outputNames[0]]; // [1, 45, 1344]
 
-// 4. Decode Detections in 256 Letterbox Space
-const rawDetections = decodeStageAOutput(outputTensor.data, {
-  confThreshold: 0.25,
-  nmsThreshold: 0.45,
-  iouDeduplicateThreshold: 0.60
+// 4. Decode Detections Directly into Original Screen Coordinates:
+// decodeStageA256 performs NMS, deduplication, geometric chirality,
+// and maps all bounding boxes & keypoints back to original video dimensions.
+const finalDetections = decodeStageA256(outputTensor.data, videoWidth, videoHeight, {
+  confThresh: 0.25,
+  nmsThresh: 0.45,
+  dedupThresh: 0.60,
+  expand15kp: false // set to true to include derived ball_top & shin_mid
 });
-
-// 5. Map Bounding Boxes & Keypoints back to Original Screen Space
-const finalDetections = transformDetectionsToOriginal(rawDetections, letterbox);
 ```
 
 ---

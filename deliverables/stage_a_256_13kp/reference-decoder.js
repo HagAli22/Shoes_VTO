@@ -433,6 +433,7 @@ module.exports = {
   SKELETON_PAIRS_13,
   SKELETON_PAIRS_15,
   decodeStageA256,
+  decodeStageAOutput: decodeStageA256, // Convenience alias
   determineGeometricChirality13kp,
   deriveSecondaryKeypoints15kp
 };
