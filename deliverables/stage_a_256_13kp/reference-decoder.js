@@ -42,6 +42,13 @@ const KEYPOINT_NAMES_13 = [
 ];
 
 // ── 15-Keypoint Expanded Schema ────────────────────────────────────────────────
+const KEYPOINT_NAMES_16 = [
+  "toe_ground", "heel_back", "heel_ground", "ball_medial", "ball_lateral",
+  "ball_top", "instep_top", "arch_medial", "midfoot_lateral",
+  "malleolus_medial", "malleolus_lateral", "toe_tip", "ankle_center",
+  "throat", "achilles", "shin_mid"
+];
+
 const KEYPOINT_NAMES_15 = [
   'toe_ground',        // 0
   'heel_back',         // 1
@@ -237,11 +244,44 @@ function deriveSecondaryKeypoints15kp(keypoints13, bbox) {
  * @param {number} origH - Original image height.
  * @param {object} options - Thresholds & configuration.
  */
+/**
+ * Expands 13-keypoint detection into full 16-keypoint schema expected by FootPose.ts
+ * (matches exact index mapping of legacy stage_a_16kp).
+ */
+function deriveKeypoints16kp(keypoints13, bbox = null) {
+  const k15 = deriveSecondaryKeypoints15kp(keypoints13, bbox);
+  const mm = k15[9];  // malleolus_medial
+  const ml = k15[10]; // malleolus_lateral
+  const ankleCenterX = 0.5 * (mm.x + ml.x);
+  const ankleCenterY = 0.5 * (mm.y + ml.y);
+  const ankleCenterVis = 0.5 * (mm.visibility + ml.visibility);
+
+  return [
+    { index: 0,  name: KEYPOINT_NAMES_16[0],  x: k15[0].x, y: k15[0].y, visibility: k15[0].visibility },
+    { index: 1,  name: KEYPOINT_NAMES_16[1],  x: k15[1].x, y: k15[1].y, visibility: k15[1].visibility },
+    { index: 2,  name: KEYPOINT_NAMES_16[2],  x: k15[2].x, y: k15[2].y, visibility: k15[2].visibility },
+    { index: 3,  name: KEYPOINT_NAMES_16[3],  x: k15[3].x, y: k15[3].y, visibility: k15[3].visibility },
+    { index: 4,  name: KEYPOINT_NAMES_16[4],  x: k15[4].x, y: k15[4].y, visibility: k15[4].visibility },
+    { index: 5,  name: KEYPOINT_NAMES_16[5],  x: k15[5].x, y: k15[5].y, visibility: k15[5].visibility },
+    { index: 6,  name: KEYPOINT_NAMES_16[6],  x: k15[6].x, y: k15[6].y, visibility: k15[6].visibility },
+    { index: 7,  name: KEYPOINT_NAMES_16[7],  x: k15[7].x, y: k15[7].y, visibility: k15[7].visibility },
+    { index: 8,  name: KEYPOINT_NAMES_16[8],  x: k15[8].x, y: k15[8].y, visibility: k15[8].visibility },
+    { index: 9,  name: KEYPOINT_NAMES_16[9],  x: k15[9].x, y: k15[9].y, visibility: k15[9].visibility },
+    { index: 10, name: KEYPOINT_NAMES_16[10], x: k15[10].x, y: k15[10].y, visibility: k15[10].visibility },
+    { index: 11, name: KEYPOINT_NAMES_16[11], x: k15[11].x, y: k15[11].y, visibility: k15[11].visibility },
+    { index: 12, name: KEYPOINT_NAMES_16[12], x: ankleCenterX, y: ankleCenterY, visibility: ankleCenterVis },
+    { index: 13, name: KEYPOINT_NAMES_16[13], x: k15[12].x, y: k15[12].y, visibility: k15[12].visibility },
+    { index: 14, name: KEYPOINT_NAMES_16[14], x: k15[13].x, y: k15[13].y, visibility: k15[13].visibility },
+    { index: 15, name: KEYPOINT_NAMES_16[15], x: k15[14].x, y: k15[14].y, visibility: k15[14].visibility }
+  ];
+}
+
 function decodeStageA256(tensorData, origW, origH, options = {}) {
   const confThresh = options.confThresh !== undefined ? options.confThresh : 0.25;
   const nmsThresh = options.nmsThresh !== undefined ? options.nmsThresh : 0.45;
   const dedupThresh = options.dedupThresh !== undefined ? options.dedupThresh : 0.60;
   const expand15kp = !!options.expand15kp;
+  const expand16kp = !!options.expand16kp;
 
   const letterbox = getLetterboxParams(origW, origH, 256);
   const numChannels = 45;
@@ -345,7 +385,9 @@ function decodeStageA256(tensorData, origW, origH, options = {}) {
     const className = verifiedClassId === 0 ? 'left_foot' : 'right_foot';
 
     let keypointsOut = det.keypoints;
-    if (expand15kp) {
+    if (expand16kp) {
+      keypointsOut = deriveKeypoints16kp(det.keypoints, det.bbox);
+    } else if (expand15kp) {
       keypointsOut = deriveSecondaryKeypoints15kp(det.keypoints, det.bbox);
     }
 
@@ -437,5 +479,7 @@ module.exports = {
   decodeStageA13KP: decodeStageA256,    // Semantic schema alias
   decodeStageA: decodeStageA256,        // Generic alias
   determineGeometricChirality13kp,
-  deriveSecondaryKeypoints15kp
+  deriveSecondaryKeypoints15kp,
+  deriveKeypoints16kp,
+  KEYPOINT_NAMES_16
 };

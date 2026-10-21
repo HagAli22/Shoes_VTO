@@ -322,7 +322,8 @@ class VideoInferencePipeline:
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
             self.session = ort.InferenceSession(self.model_path, providers=providers)
             self.input_name = self.session.get_inputs()[0].name
-            print(f"    ONNX Session initialized using: {self.session.get_providers()[0]}")
+            self.input_type = self.session.get_inputs()[0].type
+            print(f"    ONNX Session initialized using: {self.session.get_providers()[0]} (Type: {self.input_type})")
         else:
             from ultralytics import YOLO
             self.model = YOLO(self.model_path)
@@ -390,6 +391,8 @@ class VideoInferencePipeline:
         img_lb, ratio, pad_x, pad_y = self.preprocess_letterbox(frame)
         blob = cv2.cvtColor(img_lb, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
         blob = np.transpose(blob, (2, 0, 1))[None, ...]
+        if hasattr(self, 'input_type') and 'float16' in self.input_type:
+            blob = blob.astype(np.float16)
 
         outputs = self.session.run(None, {self.input_name: blob})
         out0 = outputs[0]  # [1, 45, N]

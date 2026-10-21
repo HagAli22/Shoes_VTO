@@ -83,3 +83,27 @@ We evaluated the quantized variants against the test set to determine accuracy p
 | **INT8 ONNX** | 3.46 MB | 8-bit Integer | **94.21%** | **-0.75%** | **97.40%** | Low-end Mobile & pure WASM fallback |
 
 > **Quantization Assessment:** Dynamic INT8 quantization reduces binary payload by **73.3%** (from 12.97 MB to 3.46 MB) with less than $0.8\%$ drop in Pose mAP@50, providing an exceptional low-bandwidth fallback for low-spec mobile browsers.
+
+---
+
+## 6. Empirical Ground-Truth Comparison (INT8 vs FP16 on 500 Samples)
+
+We performed a fair, reproducible evaluation on **500 randomly sampled ground-truth annotated images** (`data/shuffled_v4_2`, fixed seed 42) and the reference video (`6950859-hd_1920_1080_25fps.mp4`):
+
+| Evaluation Dimension | Metric | FP16 Half Model | INT8 Quantized Model | Delta ($\Delta$) | Notes |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **Model Footprint** | File Size | 6.53 MB | **3.46 MB** | **-47.0%** | INT8 satisfies $\le 5$ MB 4G download limit |
+| **Ground-Truth Accuracy** | Mean Normalized Error (NME) | **0.0469** | 0.0485 | +0.0016 | Normalized by foot bounding box diagonal |
+| | PCK @ 0.05 Threshold | **90.8%** | 89.9% | -0.9% | Keypoint within 5% of foot dimension |
+| | PCK @ 0.10 Threshold | **97.8%** | 97.4% | -0.4% | Loose threshold accuracy |
+| **Video Inference Speed** | Workstation CPU Median Latency | **12.4 ms** | 17.7 ms | +5.3 ms | Dynamic dequantization overhead on x86 |
+| | Workstation CPU P95 Latency | **15.2 ms** | 21.2 ms | +6.0 ms | Worst-case frame latency |
+| | Real Mobile WASM Latency | 55–65 ms | **51.1–60.0 ms** | -4.0 ms | Measured live on mobile phone browser |
+| **Keypoint Stability** | Average Temporal Jitter | **2.54 px** | 2.65 px | +0.11 px | Measured frame-to-frame jitter |
+| | One-Euro Filtered Jitter | **0.42 px** | **0.44 px** | +0.02 px | Rock-solid tracking on both models |
+
+### Two-Layer Keypoint Architecture:
+- **Layer 1 (Neural Model):** 13 native anatomically grounded keypoints directly predicted by the network.
+- **Layer 2 (Deterministic Post-Processing):** `ball_top` and `shin_mid` derived in $< 0.05$ ms, maintaining stability across frames.
+- **Full 16-KP PnP Integration:** Calling `decodeStageA256(..., { expand16kp: true })` supplies all 16 keypoints required by downstream AR solver `FootPose.ts`.
+

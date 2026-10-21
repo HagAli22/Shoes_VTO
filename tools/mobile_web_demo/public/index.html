@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Shoes VTO - Mobile WASM Model Benchmark</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Float16Array polyfill for wide device compatibility -->
+  <script src="vendor/float16.min.js"></script>
+  <!-- ONNX Runtime Web -->
+  <script src="vendor/ort.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Shoes VTO - Stage-A Benchmark <span class="badge-wasm">WASM Only</span></h1>
+      <p>Client-side in-browser inference (INT8 vs FP16)</p>
+    </header>
+
+    <!-- Diagnostic Alerts / Status -->
+    <div id="diagnosticBanner" class="banner info">Initializing ONNX Runtime Web WASM engine...</div>
+
+    <!-- Controls Card -->
+    <div class="card">
+      <div class="control-group">
+        <label class="control-label">Active Model</label>
+        <div class="segmented-control" id="modelControl">
+          <button type="button" class="active" data-model="int8">INT8 (Quantized 3.46 MB)</button>
+          <button type="button" data-model="fp16">FP16 (Half 6.53 MB)</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label class="control-label">Input Source</label>
+        <div class="segmented-control" id="sourceControl">
+          <button type="button" class="active" data-source="video">Test Video (MP4)</button>
+          <button type="button" data-source="camera">Phone Camera</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <div class="toggle-row">
+          <label class="control-label" style="margin-bottom:0;">One-Euro Jitter Filter</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="filterToggle" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="btn-row" style="margin-top: 8px;">
+        <button type="button" class="btn btn-primary" id="playPauseBtn">
+          <span id="playPauseIcon">⏸</span> <span id="playPauseText">Pause</span>
+        </button>
+        <button type="button" class="btn" id="flipCameraBtn" style="display:none;">
+          🔄 Switch Cam
+        </button>
+        <button type="button" class="btn" id="restartBtn">
+          ⏮ Restart Video
+        </button>
+      </div>
+    </div>
+
+    <!-- Video & Canvas Viewport -->
+    <div class="viewport-container" id="viewportContainer">
+      <video id="inputVideo" playsinline muted loop crossorigin="anonymous"></video>
+      <canvas id="renderCanvas"></canvas>
+      <div class="viewport-overlay">
+        <div class="status-pill" id="overlayModelPill">INT8 WASM</div>
+        <div class="status-pill" id="overlayFpsPill">0.0 FPS</div>
+      </div>
+    </div>
+
+    <!-- Live Telemetry HUD -->
+    <div class="card">
+      <div class="control-label" style="margin-bottom: 8px;">Performance Telemetry (Rolling 30 Frames)</div>
+      <div class="hud-grid">
+        <div class="hud-item">
+          <div class="hud-val" id="hudFps">0.0</div>
+          <div class="hud-lbl">Effective FPS</div>
+        </div>
+        <div class="hud-item">
+          <div class="hud-val" id="hudInferMed">--</div>
+          <div class="hud-lbl">Median Infer (ms)</div>
+        </div>
+        <div class="hud-item">
+          <div class="hud-val" id="hudInferP95">--</div>
+          <div class="hud-lbl">P95 Infer (ms)</div>
+        </div>
+        <div class="hud-item">
+          <div class="hud-val" id="hudInferCur">--</div>
+          <div class="hud-lbl">Cur Infer (ms)</div>
+        </div>
+        <div class="hud-item">
+          <div class="hud-val" id="hudProc">--</div>
+          <div class="hud-lbl">Pre/Post (ms)</div>
+        </div>
+        <div class="hud-item">
+          <div class="hud-val" id="hudE2E">--</div>
+          <div class="hud-lbl">End-to-End (ms)</div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.75rem; color:var(--text-muted);">
+        <span>Load/Init Time: <strong id="hudLoadTime" style="color:var(--text-main);">--</strong></span>
+        <span>Detections: <strong id="hudDetections" style="color:var(--text-main);">0</strong></span>
+      </div>
+
+      <div class="legend">
+        <div class="legend-item">
+          <div class="legend-dot" style="background:var(--accent-left);"></div>
+          <span>Left Foot</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:var(--accent-right);"></div>
+          <span>Right Foot</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="demo.js"></script>
+</body>
+</html>
+

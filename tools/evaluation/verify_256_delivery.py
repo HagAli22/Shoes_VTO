@@ -147,18 +147,24 @@ def test_node_reference_decoder():
     print("  [OK] Node.js decoder regression passed 12/12 cases.")
 
 def test_onnx_runtime_inference():
-    print("[5/6] Testing ONNX Runtime inference on FP32 and FP16 models...")
+    print("[5/6] Testing ONNX Runtime inference on FP32, FP16 and INT8 models...")
     import onnxruntime as ort
 
-    fp32_path = PACKAGE_DIR / "models" / "stage-a-256-13kp-fp32.onnx"
-    sess = ort.InferenceSession(str(fp32_path), providers=["CPUExecutionProvider"])
-    inp_name = sess.get_inputs()[0].name
-    out_name = sess.get_outputs()[0].name
+    models = [
+        ("FP32", PACKAGE_DIR / "models" / "stage-a-256-13kp-fp32.onnx"),
+        ("FP16", PACKAGE_DIR / "models" / "stage-a-256-13kp-fp16.onnx"),
+        ("INT8", PACKAGE_DIR / "models" / "stage-a-256-13kp-int8.onnx"),
+    ]
 
-    dummy = np.random.uniform(0.0, 1.0, (1, 3, 256, 256)).astype(np.float32)
-    outs = sess.run([out_name], {inp_name: dummy})
-    assert outs[0].shape == (1, 45, 1344), f"Unexpected output shape: {outs[0].shape}"
-    print(f"  [OK] FP32 ONNX inference validated. Output tensor shape: {outs[0].shape}")
+    for label, path in models:
+        sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        inp_name = sess.get_inputs()[0].name
+        inp_type = sess.get_inputs()[0].type
+        dummy = np.random.uniform(0.0, 1.0, (1, 3, 256, 256))
+        feed_dummy = dummy.astype(np.float16) if "float16" in inp_type else dummy.astype(np.float32)
+        outs = sess.run(None, {inp_name: feed_dummy})
+        assert outs[0].shape == (1, 45, 1344), f"Unexpected output shape {outs[0].shape} for {label}"
+        print(f"  [OK] {label} ONNX inference validated. Output tensor shape: {outs[0].shape}")
 
 def test_demo_videos():
     print("[6/6] Verifying demo video files...")
