@@ -210,7 +210,39 @@ def merge_datasets(
         stats[split_name] = saved
         print(f"  [+] Split '{split_name}': {saved} image-label pairs written")
 
-    # 5. Generate data.yaml
+    # 5. Determine kpt_shape automatically from source data.yaml or label files
+    detected_kps = 16
+    for s_dir in src_dirs:
+        yaml_cand = s_dir / "data.yaml"
+        if yaml_cand.exists():
+            try:
+                import yaml
+                with open(yaml_cand, "r", encoding="utf-8") as yf:
+                    yd = yaml.safe_load(yf)
+                    if "kpt_shape" in yd:
+                        detected_kps = yd["kpt_shape"][0]
+                        break
+            except Exception:
+                pass
+
+    # If still 16, verify against non-empty labels in destination
+    if detected_kps == 16:
+        for lbl_file in (dst_dir / "train" / "labels").glob("*.txt"):
+            if lbl_file.stat().st_size > 0:
+                with open(lbl_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if len(parts) >= 5:
+                            cols = len(parts)
+                            kps = (cols - 5) // 3
+                            if kps in (13, 15, 16):
+                                detected_kps = kps
+                                break
+                if detected_kps != 16:
+                    break
+
+    flip_indices = list(range(detected_kps))
+
     yaml_text = f"""path: {dst_dir.resolve().as_posix()}
 train: train/images
 val: valid/images
@@ -221,12 +253,12 @@ names:
   - left_foot
   - right_foot
 
-kpt_shape: [16, 3]
-flip_idx: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+kpt_shape: [{detected_kps}, 3]
+flip_idx: {flip_indices}
 """
     (dst_dir / "data.yaml").write_text(yaml_text, encoding="utf-8")
     print(f"\n[OK] Successfully merged dataset created at: {dst_dir}")
-    print(f"     - Config: {dst_dir / 'data.yaml'}")
+    print(f"     - Config: {dst_dir / 'data.yaml'} (kpt_shape: [{detected_kps}, 3])")
     return stats
 
 
