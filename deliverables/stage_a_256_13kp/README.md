@@ -47,10 +47,10 @@ This delivery provides the production perception suite for the **Shoes Virtual T
 
 | File | Size | Role | Opset | Target Runtime | SHA-256 Checksum |
 | :--- | :---: | :--- | :---: | :--- | :--- |
-| **`models/stage-a-256-13kp-int8.onnx`** 🏆 | **3.46 MB** | **Primary Shipping Target** | 12 | WASM CPU | `240b5a39ca123c927f4b1e0e0e2ffddfe5bd6153c864e2d5f4b88cfb2c71e3d6` |
-| **`models/stage-a-256-13kp-fp16.onnx`** | 6.53 MB | Optional Fast Path | 12 | WebGPU / DirectML | `6d7e6932ee925b86fc31035f324287b1b285f9164862841d2c4738835bb52ab4` |
-| **`models/stage-a-256-13kp-fp32.onnx`** | 12.97 MB | Desktop / Reference | 12 | CPU / Desktop | `7db543b52c08baf5cdd9f44d8e2fd16d2108bd908064794b78a26b31bacafab2` |
-| **`models/stage-a-256-13kp-v7.pt`** | 6.63 MB | PyTorch Master | — | Python / PyTorch | `7912eba977482d1fd8907468f9007520e23063d8e0b2ace174d02fce33167467` |
+| **`models/stage-a-256-13kp-int8.onnx`** 🏆 | **3.46 MB** | **Primary Shipping Target** | 12 | WASM CPU | `92654b76ad2e55f9239fa04c2fdb87133a2bcce922a5926822d7b136282b78fd` |
+| **`models/stage-a-256-13kp-fp16.onnx`** | 6.53 MB | Optional Fast Path | 12 | WebGPU / DirectML | `d230ab5240e9feb52d8d62e1182b288b2e5f522f8b86953062c5d59e3990096a` |
+| **`models/stage-a-256-13kp-fp32.onnx`** | 12.97 MB | Desktop / Reference | 12 | CPU / Desktop | `7e473bd0af674c9066fb7cdbaac20e22ca7a7b5ffe25d652089b729fc7c73aac` |
+| **`models/stage-a-256-13kp-v7.pt`** | 6.63 MB | PyTorch Master | — | Python / PyTorch | `e728d0d1f199e9856b09ab3c708996a880c50703ecbefc07f084de1fec94629b` |
 
 ---
 

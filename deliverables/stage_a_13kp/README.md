@@ -1,15 +1,18 @@
 # Shoes VTO Stage A — 13-Keypoint Production Delivery Package
 
-**Version:** 3.1.0-13kp (v7 Production Suite: 320 Standard + 256 Mobile)  
+**Version:** 3.2.0-13kp (v7 Champion Suite: 320 Desktop + 256 Mobile & Background Rejection)  
 **Output Tensor Shapes:** 
 - **320 Model:** `[1, 45, 2100]` (Batch, Channels, Anchors)  
 - **256 Model:** `[1, 45, 1344]` (Batch, Channels, Anchors)  
 **Primary Deliverables:** 
 - **320 Desktop/Server ONNX:** [`deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.onnx`](models/stage-a-320-13kp-v7.onnx) (12.4 MB)  
-- **256 Mobile/WASM ONNX:** [`deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.onnx`](models/stage-a-256-13kp-v7.onnx) (12.4 MB)  
+- **256 Mobile Champion ONNX (FP32):** [`deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.onnx`](models/stage-a-256-13kp-v7.onnx) (12.4 MB)  
+- **256 Mobile Lightweight ONNX (INT8 WASM):** [`deliverables/stage_a_13kp/models/stage-a-256-13kp-int8.onnx`](models/stage-a-256-13kp-int8.onnx) (3.46 MB, $\le 5$ MB Web Budget)  
 **PyTorch Checkpoints:** 
 - [`deliverables/stage_a_13kp/models/stage-a-320-13kp-v7.pt`](models/stage-a-320-13kp-v7.pt) (6.6 MB)  
-- [`deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.pt`](models/stage-a-256-13kp-v7.pt) (6.6 MB)  
+- [`deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.pt`](models/stage-a-256-13kp-v7.pt) (6.6 MB, Champion fine-tuned on 8,275 images with background negatives)  
+- [`deliverables/stage_a_13kp/models/stage-a-256-13kp-v7-merged-negatives.pt`](models/stage-a-256-13kp-v7-merged-negatives.pt) (Direct alias)  
+- [`deliverables/stage_a_13kp/models/stage-a-256-13kp-v7-base.pt`](models/stage-a-256-13kp-v7-base.pt) (Base 256 checkpoint)  
 **Demo Videos:** 
 - [`deliverables/stage_a_13kp/demo/annotated_output_v7_unfreeze_noflip.mp4`](demo/annotated_output_v7_unfreeze_noflip.mp4) (41.8 MB)  
 - [`deliverables/stage_a_13kp/demo/annotated_output_v7_256.mp4`](demo/annotated_output_v7_256.mp4) (41.9 MB)  
@@ -129,7 +132,7 @@ The table and breakdown below illustrate the full chronological trajectory from 
 - **The Chirality Discovery:**
   Human feet are **chiral (asymmetric)**. When YOLO performs horizontal flipping (`fliplr: 0.5`), a left foot visually mirrors into a right foot, but YOLO **never swaps class IDs (0 $\leftrightarrow$ 1)**. Half of the augmented training samples trained the network that a left foot looks like a right foot, poisoning classifier certainty.
 
-#### Version 7 (Final Production Suite): 320 Standard + 256 Mobile 🏆
+#### Version 7 (Production Suite & Negative-Augmented 256 Champion): 320 Standard + 256 Mobile 🏆
 - **The Three Critical Fixes:**
   1. **`--fliplr 0.0`:** Completely disabled horizontal flipping to preserve true anatomical foot chirality.
   2. **`--agnostic_nms`:** Enabled class-agnostic NMS to strictly discard dual overlapping candidate boxes on the same physical foot.
@@ -138,11 +141,22 @@ The table and breakdown below illustrate the full chronological trajectory from 
   - Dataset: `merged_v4_1_v4_2_raw_13kp` (5,161 unique images).
   - 50 epochs, batch 32, imgsz 320, `lr0=0.0003`, `--freeze 0`, `--fliplr 0.0`, `--agnostic_nms`.
   - Deliverables: [`stage-a-320-13kp-v7.pt`](models/stage-a-320-13kp-v7.pt), [`stage-a-320-13kp-v7.onnx`](models/stage-a-320-13kp-v7.onnx).
-- **256 Mobile Model Fine-Tuning (`run_v7_256_13kp`):**
+- **256 Mobile Base Model (`run_v7_256_13kp`):**
   - Initialized from `stage-a-320-13kp-v7.pt`, fine-tuned at resolution $256\times256$ in **9.5 minutes**.
   - Output shape: `[1, 45, 1344]`, FLOPs reduced from 2.2 GFLOPs to **1.4 GFLOPs (~40% lighter)**.
-  - Test metrics reached all-time high: **97.97% Box mAP@50**, **94.96% Pose mAP@50**, and **96.1% Pose Precision**!
-  - Deliverables: [`stage-a-256-13kp-v7.pt`](models/stage-a-256-13kp-v7.pt), [`stage-a-256-13kp-v7.onnx`](models/stage-a-256-13kp-v7.onnx), [`annotated_output_v7_256.mp4`](demo/annotated_output_v7_256.mp4).
+  - Deliverables: [`stage-a-256-13kp-v7-base.pt`](models/stage-a-256-13kp-v7-base.pt), [`stage-a-256-13kp-v7-base.onnx`](models/stage-a-256-13kp-v7-base.onnx).
+- **256 Mobile Champion with Negative Backgrounds & Hard Edge Cases (`run_v7_256_merged_with_negatives`):**
+  - **Dataset:** Scaled to **8,275 unique images** (`merged_v4_1_v4_2_v5_raw_13kp_with_negative3`), incorporating **814 true negative background scenes** (empty floors, carpets, furniture, pets, hands) and ~2,500 hard edge-case foot poses from `shuffled_v5` (severe occlusions, socks/sandals, sharp lateral perspectives).
+  - **Training Config:** 60 epochs, batch 64, imgsz 256, `lr0=0.0002`, `lrf=0.01`, AdamW, 53.9 min on Tesla T4.
+  - **Hard Evaluation Benchmark (827 images including 84 negative backgrounds):**
+    - Box mAP@50: **94.84%** | Box mAP@50-95: **66.76%** | Pose mAP@50: **88.99%** | Pose mAP@50-95: **53.74%**.
+  - **Identical Apples-to-Apples Comparison on 516 Benchmark Images (vs Old Base Model):**
+    - **Box mAP@50:** **98.1%** vs 97.6% (+0.5% 📈)
+    - **Box mAP@50-95:** **72.4%** vs 64.2% (**+8.2% massive gain!** 🚀)
+    - **Pose mAP@50:** **96.0%** vs 92.8% (**+3.2% gain!** 🚀)
+    - **Pose mAP@50-95:** **62.1%** vs 51.3% (**+10.8% all-time record jump!** 🏆)
+    - **Pose Recall:** **94.3%** vs 90.9% (+3.4%) | **Box Recall:** **95.9%** vs 93.8% (+2.1%)
+  - **Deliverables:** [`stage-a-256-13kp-v7.pt`](models/stage-a-256-13kp-v7.pt), [`stage-a-256-13kp-v7.onnx`](models/stage-a-256-13kp-v7.onnx), [`stage-a-256-13kp-int8.onnx`](models/stage-a-256-13kp-int8.onnx).
 
 ---
 
@@ -154,7 +168,8 @@ The table and breakdown below illustrate the full chronological trajectory from 
 | **v5** | 320 | `[1, 45, 2100]` | 2.2 G | 85.63% | 49.49% | 90.3% | 92.69% | 59.38% | [`stage-a-320-13kp-v5-merged.onnx`](models/stage-a-320-13kp-v5-merged.onnx) |
 | **v6** | 320 | `[1, 45, 2100]` | 2.2 G | 85.72% | 49.68% | 80.4% | 93.78% | 60.05% | [`stage-a-320-13kp-v6-freeze.onnx`](models/stage-a-320-13kp-v6-freeze.onnx) |
 | **v7 (320)** | **320** | `[1, 45, 2100]` | 2.2 G | **89.15%** | **52.13%** | **92.5%** | **93.43%** | **64.46%** | [`stage-a-320-13kp-v7.onnx`](models/stage-a-320-13kp-v7.onnx) |
-| **v7 (256)** | **256** | `[1, 45, 1344]` | **1.4 G** | **94.96%** | **57.92%** | **96.1%** | **97.97%** | **65.46%** | [`stage-a-256-13kp-v7.onnx`](models/stage-a-256-13kp-v7.onnx) |
+| **v7 (256 Base)** | 256 | `[1, 45, 1344]` | 1.4 G | 92.80% | 51.30% | 94.1% | 97.60% | 64.20% | [`stage-a-256-13kp-v7-base.onnx`](models/stage-a-256-13kp-v7-base.onnx) |
+| **v7 (256 Champion + Negatives)** 🏆 | **256** | `[1, 45, 1344]` | **1.4 G** | **96.00%** | **62.10%** | **95.0%** | **98.10%** | **72.40%** | [`stage-a-256-13kp-v7.onnx`](models/stage-a-256-13kp-v7.onnx) |
 
 ---
 
@@ -166,8 +181,13 @@ deliverables/stage_a_13kp/
 ├── models/
 │   ├── stage-a-320-13kp-v7.onnx               # PRODUCTION CHAMPION ONNX - 320 Desktop/Server (12.4 MB)
 │   ├── stage-a-320-13kp-v7.pt                 # PRODUCTION CHAMPION PyTorch - 320 (6.6 MB)
-│   ├── stage-a-256-13kp-v7.onnx               # PRODUCTION CHAMPION ONNX - 256 Mobile/WASM (12.4 MB)
-│   ├── stage-a-256-13kp-v7.pt                 # PRODUCTION CHAMPION PyTorch - 256 (6.6 MB)
+│   ├── stage-a-256-13kp-v7.onnx               # PRODUCTION CHAMPION ONNX - 256 Mobile/WASM (12.4 MB, FP32 Master)
+│   ├── stage-a-256-13kp-v7.pt                 # PRODUCTION CHAMPION PyTorch - 256 (6.6 MB, with Negatives & Hard Poses)
+│   ├── stage-a-256-13kp-v7-merged-negatives.pt# Direct alias to 256 Champion PyTorch (6.6 MB)
+│   ├── stage-a-256-13kp-v7-merged-negatives.onnx # Direct alias to 256 Champion ONNX (12.4 MB)
+│   ├── stage-a-256-13kp-int8.onnx             # PRODUCTION LIGHTWEIGHT WASM - 256 Mobile (3.46 MB, <= 5 MB Web Budget)
+│   ├── stage-a-256-13kp-v7-base.onnx          # Historical Base 256 ONNX (12.4 MB)
+│   ├── stage-a-256-13kp-v7-base.pt            # Historical Base 256 PyTorch (6.6 MB)
 │   ├── stage-a-320-13kp-v6-freeze.onnx        # Version 6 ONNX (12.4 MB)
 │   ├── stage-a-320-13kp-v6-freeze.pt          # Version 6 PyTorch (6.6 MB)
 │   ├── stage-a-320-13kp-v5-merged.onnx        # Version 5 ONNX (12.4 MB)
