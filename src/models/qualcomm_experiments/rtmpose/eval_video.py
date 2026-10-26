@@ -206,8 +206,6 @@ def run_video_evaluation(
             frame_kps = simcc_kps.copy()
             frame_kps[:, 0] = orig_xy[:, 0]
             frame_kps[:, 1] = orig_xy[:, 1]
-            frame_kps[:, 0] = (frame_kps[:, 0] / 256.0) * cw + cx1
-            frame_kps[:, 1] = (frame_kps[:, 1] / 256.0) * ch + cy1
 
             is_left = (foot["class_id"] == 0)
             colors = COLOR_LEFT if is_left else COLOR_RIGHT

@@ -21,11 +21,26 @@ Chirality Swap Rule on Horizontal Mirroring:
 import os
 import random
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Union
 import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+
+
+def safe_path_str(p: Union[str, Path]) -> str:
+    """Handles Windows 260-character MAX_PATH limit via \\?\\ prefix."""
+    resolved = str(Path(p).resolve())
+    if os.name == "nt" and not resolved.startswith("\\\\?\\") and len(resolved) >= 240:
+        return "\\\\?\\" + resolved
+    return resolved
+
+
+def safe_imread(img_path: Union[str, Path]) -> Optional[np.ndarray]:
+    """Reads image safely even when path exceeds 260 characters on Windows."""
+    p_str = safe_path_str(img_path)
+    return cv2.imread(p_str)
+
 
 CHIRALITY_FLIP_MAP = {
     0: 0,   # toe_ground
@@ -61,6 +76,7 @@ class FootPoseDataset13KP(Dataset):
         augment: bool = False,
         allow_flip: bool = False,
         crop_padding: float = 0.25,
+        include_negatives: bool = True
     ):
         super().__init__()
         self.images_dir = Path(images_dir)
@@ -75,6 +91,7 @@ class FootPoseDataset13KP(Dataset):
         self.augment = augment
         self.allow_flip = allow_flip
         self.crop_padding = crop_padding
+        self.include_negatives = include_negatives
 
         # Find all valid image files
         valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -91,12 +108,19 @@ class FootPoseDataset13KP(Dataset):
     def _index_crops(self):
         for img_idx, img_path in enumerate(self.image_files):
             label_path = self.labels_dir / f"{img_path.stem}.txt"
-            if not label_path.exists():
+            p_label_str = safe_path_str(label_path)
+            if not Path(p_label_str).exists():
+                if self.include_negatives:
+                    self.crops_index.append((img_idx, -1))
                 continue
-            with open(label_path, "r", encoding="utf-8") as f:
+            with open(p_label_str, "r", encoding="utf-8") as f:
                 lines = [line.strip() for line in f if line.strip()]
-            for box_idx in range(len(lines)):
-                self.crops_index.append((img_idx, box_idx))
+            if len(lines) == 0:
+                if self.include_negatives:
+                    self.crops_index.append((img_idx, -1))
+            else:
+                for box_idx in range(len(lines)):
+                    self.crops_index.append((img_idx, box_idx))
 
     def __len__(self) -> int:
         if self.mode == "crop":
@@ -105,10 +129,11 @@ class FootPoseDataset13KP(Dataset):
 
     def _parse_label_file(self, label_path: Path) -> List[Dict[str, Any]]:
         instances = []
-        if not label_path.exists():
+        p_label_str = safe_path_str(label_path)
+        if not Path(p_label_str).exists():
             return instances
 
-        with open(label_path, "r", encoding="utf-8") as f:
+        with open(p_label_str, "r", encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split()
                 if len(parts) < 5:
@@ -141,6 +166,8 @@ class FootPoseDataset13KP(Dataset):
         if self.mode == "crop":
             img_idx, box_idx = self.crops_index[index]
             img_path = self.image_files[img_idx]
+            if box_idx == -1:
+                return self._get_negative_crop_item(img_path)
             instances = self._parse_label_file(self.labels_dir / f"{img_path.stem}.txt")
             inst = instances[box_idx]
             return self._get_crop_item(img_path, inst)
@@ -149,8 +176,35 @@ class FootPoseDataset13KP(Dataset):
             instances = self._parse_label_file(self.labels_dir / f"{img_path.stem}.txt")
             return self._get_full_item(img_path, instances)
 
+    def _get_negative_crop_item(self, img_path: Path) -> Dict[str, Any]:
+        img = safe_imread(img_path)
+        if img is None:
+            raise RuntimeError(f"Failed to read image: {img_path}")
+        h0, w0 = img.shape[:2]
+
+        size = min(w0, h0)
+        if self.augment and size > self.img_size:
+            crop_size = random.randint(self.img_size, size)
+            x1 = random.randint(0, w0 - crop_size)
+            y1 = random.randint(0, h0 - crop_size)
+            crop = img[y1:y1 + crop_size, x1:x1 + crop_size]
+            crop = cv2.resize(crop, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
+        else:
+            crop = cv2.resize(img, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
+
+        # All 13 keypoints zeroed (vis=0)
+        kps = np.zeros((13, 3), dtype=np.float32)
+        img_tensor = torch.from_numpy(crop).permute(2, 0, 1).float() / 255.0
+
+        return {
+            "image": img_tensor,
+            "class_id": torch.tensor(-1, dtype=torch.long),
+            "keypoints": torch.tensor(kps, dtype=torch.float32),
+            "img_path": str(img_path)
+        }
+
     def _get_full_item(self, img_path: Path, instances: List[Dict[str, Any]]) -> Dict[str, Any]:
-        img = cv2.imread(str(img_path))
+        img = safe_imread(img_path)
         if img is None:
             raise RuntimeError(f"Failed to read image: {img_path}")
         h_orig, w_orig = img.shape[:2]
@@ -236,7 +290,7 @@ class FootPoseDataset13KP(Dataset):
         }
 
     def _get_crop_item(self, img_path: Path, inst: Dict[str, Any]) -> Dict[str, Any]:
-        img = cv2.imread(str(img_path))
+        img = safe_imread(img_path)
         if img is None:
             raise RuntimeError(f"Failed to read image: {img_path}")
         h0, w0 = img.shape[:2]

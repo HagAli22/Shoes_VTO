@@ -60,7 +60,9 @@ def train_rtmpose(
     pretrained: bool = True,
     warmup_epochs: int = 4,
     workers: int = 4,
-    resume: str = None
+    resume: str = None,
+    init_weights: str = None,
+    include_negatives: bool = True
 ):
     set_seed(42)
     device = torch.device(device_name)
@@ -76,7 +78,9 @@ def train_rtmpose(
     print(f"  Epochs:          {epochs} (Warmup: {warmup_epochs}) | Batch: {batch_size}")
     print(f"  Backbone LR:     {lr * 0.2:.6f} | Head LR: {lr:.6f}")
     print(f"  Resolution:      {img_size}x{img_size} (SimCC Bins: 512x512, Dec Win: 12)")
-    print(f"  Data Workers:    {workers} (Pin Memory: True)")
+    print(f"  Data Workers:    {workers} (Pin Memory: True, Negatives: {include_negatives})")
+    if init_weights:
+        print(f"  Warm-Start Init: {init_weights}")
     print("=" * 75)
 
     train_ds = FootPoseDataset13KP(
@@ -84,14 +88,16 @@ def train_rtmpose(
         img_size=img_size,
         mode="crop",
         augment=True,
-        allow_flip=False  # NO flip as instructed!
+        allow_flip=False,  # NO flip as instructed!
+        include_negatives=include_negatives
     )
     val_ds = FootPoseDataset13KP(
         images_dir=str(data_path / "valid" / "images"),
         img_size=img_size,
         mode="crop",
         augment=False,
-        allow_flip=False
+        allow_flip=False,
+        include_negatives=include_negatives
     )
 
     train_loader = DataLoader(
@@ -112,8 +118,18 @@ def train_rtmpose(
         input_size=(img_size, img_size),
         simcc_split_ratio=2.0,
         backbone_name=backbone_name,
-        pretrained=pretrained
+        pretrained=pretrained and (init_weights is None)
     ).to(device)
+
+    # Warm-start fine-tuning from existing trained model if provided
+    if init_weights and Path(init_weights).exists():
+        print(f"[*] Warm-starting model weights from: {init_weights}")
+        try:
+            ckpt = torch.load(init_weights, map_location=device, weights_only=False)
+        except TypeError:
+            ckpt = torch.load(init_weights, map_location=device)
+        model.load_state_dict(ckpt["model_state"] if "model_state" in ckpt else ckpt)
+        print("[+] Model parameters successfully warm-started from checkpoint.")
 
     criterion = SimCCLoss(simcc_split_ratio=2.0, sigma=6.0).to(device)
 
@@ -269,6 +285,9 @@ if __name__ == "__main__":
     parser.add_argument("--backbone", type=str, default="cspnext", choices=["cspnext", "mobilenetv3", "mobilenetv2"])
     parser.add_argument("--pretrained", dest="pretrained", action="store_true", default=True)
     parser.add_argument("--no-pretrained", dest="pretrained", action="store_false")
+    parser.add_argument("--init_weights", type=str, default=None)
+    parser.add_argument("--include_negatives", dest="include_negatives", action="store_true", default=True)
+    parser.add_argument("--no-include_negatives", dest="include_negatives", action="store_false")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
@@ -284,5 +303,7 @@ if __name__ == "__main__":
         pretrained=args.pretrained,
         warmup_epochs=args.warmup,
         workers=args.workers,
-        resume=args.resume
+        resume=args.resume,
+        init_weights=args.init_weights,
+        include_negatives=args.include_negatives
     )
