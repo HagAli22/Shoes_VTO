@@ -141,7 +141,10 @@ def train_rtmpose(
 
     if resume and Path(resume).exists():
         print(f"[*] Resuming checkpoint from: {resume}")
-        ckpt = torch.load(resume, map_location=device)
+        try:
+            ckpt = torch.load(resume, map_location=device, weights_only=False)
+        except TypeError:
+            ckpt = torch.load(resume, map_location=device)
         model.load_state_dict(ckpt["model_state"])
         if "optimizer_state" in ckpt:
             optimizer.load_state_dict(ckpt["optimizer_state"])

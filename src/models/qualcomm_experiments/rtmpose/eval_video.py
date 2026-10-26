@@ -113,7 +113,10 @@ def run_video_evaluation(
     print("=" * 70)
 
     # 1. Load RTMPose Model
-    ckpt = torch.load(rtmpose_weights, map_location=device)
+    try:
+        ckpt = torch.load(rtmpose_weights, map_location=device, weights_only=False)
+    except TypeError:
+        ckpt = torch.load(rtmpose_weights, map_location=device)
     backbone_name = ckpt.get("backbone_name", "cspnext")
     rtmpose = RTMPose13KP(num_keypoints=13, input_size=(256, 256), simcc_split_ratio=2.0, backbone_name=backbone_name).to(device)
     rtmpose.load_state_dict(ckpt["model_state"] if "model_state" in ckpt else ckpt)

@@ -115,7 +115,10 @@ def main():
     device = torch.device(args.device)
 
     print(f"[*] Loading model from {weights_path} on {device}...")
-    ckpt = torch.load(weights_path, map_location=device)
+    try:
+        ckpt = torch.load(weights_path, map_location=device, weights_only=False)
+    except TypeError:
+        ckpt = torch.load(weights_path, map_location=device)
     backbone_name = ckpt.get("backbone_name", "cspnext")
     model = RTMPose13KP(num_keypoints=13, input_size=(256, 256), simcc_split_ratio=2.0, backbone_name=backbone_name, pretrained=False).to(device)
     model.load_state_dict(ckpt["model_state"] if "model_state" in ckpt else ckpt)

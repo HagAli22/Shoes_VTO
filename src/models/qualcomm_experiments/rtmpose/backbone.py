@@ -163,7 +163,10 @@ def load_official_coco_weights(
         ckpt_file.parent.mkdir(parents=True, exist_ok=True)
         torch.hub.download_url_to_file(url, str(ckpt_file))
 
-    ckpt = torch.load(str(ckpt_file), map_location="cpu")
+    try:
+        ckpt = torch.load(str(ckpt_file), map_location="cpu", weights_only=False)
+    except TypeError:
+        ckpt = torch.load(str(ckpt_file), map_location="cpu")
     state = ckpt["state_dict"] if "state_dict" in ckpt else ckpt
 
     bb_state = {k.replace("backbone.", ""): v for k, v in state.items() if k.startswith("backbone.")}
