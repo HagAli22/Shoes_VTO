@@ -246,7 +246,7 @@ def nms_postprocess(
     boxes: torch.Tensor,
     scores: torch.Tensor,
     conf_thresh: float = 0.35,
-    iou_thresh: float = 0.45,
+    iou_thresh: float = 0.20,
     max_area_ratio: float = 0.30,
     min_area_ratio: float = 0.005,
     max_aspect_ratio: float = 4.0

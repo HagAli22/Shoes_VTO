@@ -20,7 +20,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import cv2
 import numpy as np
 import torch
@@ -158,6 +158,7 @@ class OneEuroFilter:
 class FootTrack:
     def __init__(self, track_id: int, t0: float, raw_bbox: np.ndarray, initial_hand_prob: float):
         self.track_id = track_id
+        self.hits = 1
         # Filter the tight rectangular detection box [x1, y1, x2, y2]
         self.box_filter = OneEuroFilter(
             t0,
@@ -214,6 +215,184 @@ class FootTrack:
         self.lost_count = 0
         self.age += 1
         return out
+
+
+class DualFootTracker:
+    """
+    Physical 2-Slot Anatomical Foot Tracker for Shoes VTO.
+    Guarantees:
+      1. Exactly at most 2 active feet: Left Foot (ID: 1) and Right Foot (ID: 2).
+      2. Temporal confirmation (min_hits=2): A candidate must be detected in at least 2 consecutive
+         frames before it is confirmed and rendered on screen. Transient single-frame noise / carpet leaves
+         are never displayed.
+      3. Lost bridge: If a confirmed foot is temporarily occluded for up to max_lost=4 frames,
+         it is gracefully maintained with zero visual jitter.
+      4. Inter-track NMS: Enforces physical separation so left and right feet cannot collapse into the same box.
+    """
+    def __init__(self, min_hits: int = 2, max_lost: int = 4):
+        self.min_hits = min_hits
+        self.max_lost = max_lost
+        self.slots: Dict[str, Optional[FootTrack]] = {"left": None, "right": None}
+        self.pending: Dict[str, Optional[Dict[str, Any]]] = {"left": None, "right": None}
+        self.slot_ids = {"left": 1, "right": 2}
+
+    def update(
+        self,
+        t_current: float,
+        frame_idx: int,
+        candidates: List[Dict[str, Any]],
+        rtmpose: torch.nn.Module,
+        frame: np.ndarray,
+        device: torch.device,
+        use_postprocessing: bool = True
+    ) -> List[Dict[str, Any]]:
+        # Step 1: Assign candidates to 'left' and 'right' slots
+        best_candidate: Dict[str, Optional[Dict[str, Any]]] = {"left": None, "right": None}
+
+        if candidates:
+            left_cands = [c for c in candidates if c["class_id"] == 0]
+            right_cands = [c for c in candidates if c["class_id"] == 1]
+
+            # Chirality conflict resolution: if both are same class, sort by horizontal x-position
+            if len(candidates) >= 2 and (len(left_cands) == 0 or len(right_cands) == 0):
+                sorted_by_x = sorted(candidates, key=lambda c: (c["bbox"][0] + c["bbox"][2]) / 2.0)
+                left_cands = [sorted_by_x[0]]
+                right_cands = [sorted_by_x[-1]]
+
+            # Match or select best candidate for left slot
+            if left_cands:
+                trk = self.slots["left"]
+                if trk is not None:
+                    left_cands.sort(key=lambda c: box_iou(trk.smoothed_bbox, c["bbox"]), reverse=True)
+                else:
+                    left_cands.sort(key=lambda c: c["score"], reverse=True)
+                best_candidate["left"] = left_cands[0]
+
+            # Match or select best candidate for right slot
+            if right_cands:
+                trk = self.slots["right"]
+                if trk is not None:
+                    right_cands.sort(key=lambda c: box_iou(trk.smoothed_bbox, c["bbox"]), reverse=True)
+                else:
+                    right_cands.sort(key=lambda c: c["score"], reverse=True)
+                best_candidate["right"] = right_cands[0]
+
+        # Step 2: Update slots with matched candidate or handle occlusion
+        for slot in ["left", "right"]:
+            cand = best_candidate[slot]
+            track = self.slots[slot]
+
+            if track is not None:
+                # Existing active track
+                matched = False
+                if cand is not None:
+                    iou = box_iou(track.smoothed_bbox, cand["bbox"])
+                    c_trk = ((track.smoothed_bbox[0] + track.smoothed_bbox[2]) / 2.0, (track.smoothed_bbox[1] + track.smoothed_bbox[3]) / 2.0)
+                    c_det = ((cand["bbox"][0] + cand["bbox"][2]) / 2.0, (cand["bbox"][1] + cand["bbox"][3]) / 2.0)
+                    dist = np.hypot(c_trk[0] - c_det[0], c_trk[1] - c_det[1])
+                    if iou >= 0.15 or dist < 120.0:
+                        matched = True
+
+                if matched and cand is not None:
+                    track.hits += 1
+                    track.lost_count = 0
+                    raw_bbox = cand["bbox"]
+                    if use_postprocessing:
+                        s_bbox = track.update_box(t_current, raw_bbox)
+                        cx, cy, size = track.get_crop_params(crop_padding=0.25)
+                    else:
+                        s_bbox = raw_bbox
+                        x1, y1, x2, y2 = raw_bbox
+                        bw, bh = max(1.0, x2 - x1), max(1.0, y2 - y1)
+                        cx, cy, size = compute_crop_box((x1 + x2) / 2.0, (y1 + y2) / 2.0, bw, bh, crop_padding=0.25)
+
+                    M, M_inv = get_crop_affine_transform(cx, cy, size, out_size=256, rot=0.0)
+                    crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
+                    crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
+
+                    with torch.no_grad():
+                        preds = rtmpose(crop_t)
+                        simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
+                        pose_hand = float(preds["hand"].item()) if "hand" in preds else float(cand["class_id"])
+                        det_hand = float(cand["class_id"])
+                        hand_prob = 0.6 * pose_hand + 0.4 * det_hand
+
+                    frame_kps = invert_keypoints(simcc_kps, M_inv)
+                    if use_postprocessing:
+                        track.update_keypoints(t_current, frame_kps, hand_prob)
+                    else:
+                        track.last_kps = frame_kps
+                        track.hand_prob = hand_prob
+                else:
+                    track.lost_count += 1
+                    if track.lost_count > self.max_lost:
+                        self.slots[slot] = None
+            else:
+                # Slot is empty: require temporal confirmation (min_hits=2)
+                if cand is not None:
+                    prev = self.pending[slot]
+                    confirmed = False
+                    if prev is not None and (frame_idx - prev["frame_idx"] <= 2):
+                        iou = box_iou(prev["bbox"], cand["bbox"])
+                        c_prev = ((prev["bbox"][0] + prev["bbox"][2]) / 2.0, (prev["bbox"][1] + prev["bbox"][3]) / 2.0)
+                        c_det = ((cand["bbox"][0] + cand["bbox"][2]) / 2.0, (cand["bbox"][1] + cand["bbox"][3]) / 2.0)
+                        dist = np.hypot(c_prev[0] - c_det[0], c_prev[1] - c_det[1])
+                        if iou >= 0.15 or dist < 120.0:
+                            confirmed = True
+
+                    if confirmed:
+                        tid = self.slot_ids[slot]
+                        init_hand = 0.0 if slot == "left" else 1.0
+                        new_track = FootTrack(tid, t_current, cand["bbox"], initial_hand_prob=init_hand)
+                        new_track.hits = self.min_hits
+                        cx, cy, size = new_track.get_crop_params(crop_padding=0.25)
+                        M, M_inv = get_crop_affine_transform(cx, cy, size, out_size=256, rot=0.0)
+                        crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
+                        crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
+
+                        with torch.no_grad():
+                            preds = rtmpose(crop_t)
+                            simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
+                            hand_prob = float(preds["hand"].item()) if "hand" in preds else float(cand["class_id"])
+
+                        frame_kps = invert_keypoints(simcc_kps, M_inv)
+                        new_track.update_keypoints(t_current, frame_kps, hand_prob)
+                        self.slots[slot] = new_track
+                        self.pending[slot] = None
+                    else:
+                        self.pending[slot] = {"bbox": cand["bbox"], "score": cand["score"], "frame_idx": frame_idx}
+                else:
+                    if self.pending[slot] is not None and (frame_idx - self.pending[slot]["frame_idx"] > 2):
+                        self.pending[slot] = None
+
+        # Step 3: Inter-track spatial suppression (prevent overlap between left and right)
+        if self.slots["left"] is not None and self.slots["right"] is not None:
+            trk_l = self.slots["left"]
+            trk_r = self.slots["right"]
+            overlap_iou = box_iou(trk_l.smoothed_bbox, trk_r.smoothed_bbox)
+            if overlap_iou > 0.35:
+                l_conf = 1.0 - trk_l.hand_prob
+                r_conf = trk_r.hand_prob
+                if l_conf >= r_conf:
+                    self.slots["right"] = None
+                else:
+                    self.slots["left"] = None
+
+        # Step 4: Collect confirmed active tracks to render
+        results = []
+        for slot in ["left", "right"]:
+            trk = self.slots[slot]
+            if trk is not None and trk.hits >= self.min_hits and trk.lost_count <= 2 and trk.last_kps is not None:
+                results.append({
+                    "slot": slot,
+                    "track_id": trk.track_id,
+                    "bbox": trk.smoothed_bbox,
+                    "kps": trk.last_kps,
+                    "is_left": (slot == "left"),
+                    "hand_prob": trk.hand_prob,
+                    "lost": trk.lost_count
+                })
+        return results
 
 
 def box_iou(b1, b2) -> float:
@@ -327,9 +506,7 @@ def run_video_evaluation(
     t_start = time.time()
     latencies = []
 
-    # Active foot tracks dictionary: track_id -> FootTrack
-    tracks: Dict[int, FootTrack] = {}
-    next_track_id = 1
+    tracker = DualFootTracker(min_hits=2, max_lost=4)
 
     while True:
         ret, frame = cap.read()
@@ -348,7 +525,8 @@ def run_video_evaluation(
             inp = torch.from_numpy(frame_resized).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
             with torch.no_grad():
                 out = nanodet(inp)
-                preds = nms_postprocess(out["boxes"][0], out["scores"][0], conf_thresh=conf_thresh, iou_thresh=0.45)
+                # Tight NMS iou_thresh=0.20 eliminates duplicate proposals on same foot
+                preds = nms_postprocess(out["boxes"][0], out["scores"][0], conf_thresh=conf_thresh, iou_thresh=0.20)
             sx = w0 / float(det_img_size)
             sy = h0 / float(det_img_size)
             for p in preds:
@@ -356,11 +534,10 @@ def run_video_evaluation(
                 scaled_box = np.array([bx[0] * sx, bx[1] * sy, bx[2] * sx, bx[3] * sy], dtype=np.float32)
                 y_cent = (scaled_box[1] + scaled_box[3]) / 2.0
 
-                # Anatomical spatial prior: In downward-facing Shoes VTO camera view,
-                # real feet attached to legs are positioned in the lower portion of the frame (y >= 0.50*H).
-                # Isolated detections floating in the upper half (y < 0.50*H) must have very high confidence (>=0.98)
-                # to prevent distant floor textures/carpet leaves from spawning false tracks.
-                if y_cent < (0.50 * h0) and p["score"] < 0.98:
+                # Anatomical spatial floor prior:
+                # In downward-facing Shoes VTO camera view, feet attached to user are in lower frame (y >= 0.45*H).
+                # Isolated detections floating in upper frame (y < 0.45*H) require >=0.95 confidence.
+                if y_cent < (0.45 * h0) and p["score"] < 0.95:
                     continue
 
                 detected_feet.append({
@@ -369,7 +546,7 @@ def run_video_evaluation(
                     "score": p["score"]
                 })
         else:
-            det_res = detector(frame, imgsz=256, conf=conf_thresh, verbose=False, device=device)[0]
+            det_res = detector(frame, imgsz=256, conf=conf_thresh, iou=0.20, verbose=False, device=device)[0]
             if det_res.boxes is not None and len(det_res.boxes) > 0:
                 for b in det_res.boxes:
                     xyxy = b.xyxy[0].cpu().numpy()
@@ -381,127 +558,35 @@ def run_video_evaluation(
                         "score": score
                     })
 
-        # Step B: Associate detections with existing tracks
-        # Compute IoU matrix between active tracks and detections
-        active_track_ids = list(tracks.keys())
-        matched_tracks = set()
-        matched_detections = set()
+        # Step B: Update Dual-Slot Foot Tracker
+        confirmed_feet = tracker.update(
+            t_current=t_current,
+            frame_idx=frame_idx,
+            candidates=detected_feet,
+            rtmpose=rtmpose,
+            frame=frame,
+            device=device,
+            use_postprocessing=use_postprocessing
+        )
 
-        if active_track_ids and detected_feet:
-            iou_matrix = np.zeros((len(active_track_ids), len(detected_feet)), dtype=np.float32)
-            for r, tid in enumerate(active_track_ids):
-                trk_b = tracks[tid].smoothed_bbox
-                for c, det in enumerate(detected_feet):
-                    iou_matrix[r, c] = box_iou(trk_b, det["bbox"])
-
-            # Greedy match on highest IoU
-            while True:
-                max_val = iou_matrix.max()
-                if max_val < 0.25:
-                    break
-                r, c = np.unravel_index(iou_matrix.argmax(), iou_matrix.shape)
-                tid = active_track_ids[r]
-                matched_tracks.add(tid)
-                matched_detections.add(c)
-
-                # Process matched foot
-                det = detected_feet[c]
-                raw_bbox = det["bbox"]
-
-                if use_postprocessing:
-                    s_bbox = tracks[tid].update_box(t_current, raw_bbox)
-                    cx, cy, size = tracks[tid].get_crop_params(crop_padding=0.25)
-                else:
-                    s_bbox = raw_bbox
-                    x1, y1, x2, y2 = raw_bbox
-                    bw, bh = max(1.0, x2 - x1), max(1.0, y2 - y1)
-                    raw_cx, raw_cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-                    cx, cy, size = compute_crop_box(raw_cx, raw_cy, bw, bh, crop_padding=0.25)
-
-                # Affine Crop & Inference
-                M, M_inv = get_crop_affine_transform(cx, cy, size, out_size=256, rot=0.0)
-                crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
-                crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
-
-                with torch.no_grad():
-                    preds = rtmpose(crop_t)
-                    simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
-                    if "hand" in preds and det.get("class_id", -1) in (0, 1):
-                        pose_hand = float(preds["hand"].item())
-                        det_hand = float(det["class_id"])
-                        # Blend high-resolution RTMPose crop prediction (60%) with full-frame NanoDet chirality (40%)
-                        hand_prob = 0.6 * pose_hand + 0.4 * det_hand
-                    elif "hand" in preds:
-                        hand_prob = float(preds["hand"].item())
-                    else:
-                        hand_prob = float(det.get("class_id", 0))
-
-                frame_kps = invert_keypoints(simcc_kps, M_inv)
-
-                if use_postprocessing:
-                    smooth_kps = tracks[tid].update_keypoints(t_current, frame_kps, hand_prob)
-                    is_left = (tracks[tid].hand_prob < 0.50)
-                else:
-                    smooth_kps = frame_kps
-                    is_left = (det["class_id"] == 0)
-
-                colors = COLOR_LEFT if is_left else COLOR_RIGHT
-                # Render tight stabilized box
-                box_x1 = int(round(s_bbox[0]))
-                box_y1 = int(round(s_bbox[1]))
-                box_x2 = int(round(s_bbox[2]))
-                box_y2 = int(round(s_bbox[3]))
-                cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), colors["bbox"], 2)
-
-                lbl = f"ID:{tid} {colors['label']} (Hand: {1.0 - tracks[tid].hand_prob if is_left else tracks[tid].hand_prob:.2f})"
-                cv2.putText(frame, lbl, (box_x1, max(20, box_y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 2)
-
-                # Draw 13-KP anatomical skeleton
-                draw_skeleton(frame, smooth_kps, is_left=is_left)
-
-                iou_matrix[r, :] = -1.0
-                iou_matrix[:, c] = -1.0
-
-        # Step C: Spawn new tracks for unmatched detections
-        for c, det in enumerate(detected_feet):
-            if c in matched_detections:
-                continue
-            raw_bbox = det["bbox"]
-            tid = next_track_id
-            next_track_id += 1
-            init_hand = float(det["class_id"])
-            tracks[tid] = FootTrack(tid, t_current, raw_bbox, initial_hand_prob=init_hand)
-
-            cx, cy, size = tracks[tid].get_crop_params(crop_padding=0.25)
-            M, M_inv = get_crop_affine_transform(cx, cy, size, out_size=256, rot=0.0)
-            crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
-            crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
-
-            with torch.no_grad():
-                preds = rtmpose(crop_t)
-                simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
-                hand_prob = float(preds["hand"].item()) if "hand" in preds else float(det["class_id"])
-
-            frame_kps = invert_keypoints(simcc_kps, M_inv)
-            smooth_kps = tracks[tid].update_keypoints(t_current, frame_kps, hand_prob)
-            is_left = (tracks[tid].hand_prob < 0.50)
+        # Step C: Render confirmed feet (Max 2 physical feet)
+        for foot in confirmed_feet:
+            s_bbox = foot["bbox"]
+            smooth_kps = foot["kps"]
+            is_left = foot["is_left"]
+            tid = foot["track_id"]
+            hand_prob = foot["hand_prob"]
             colors = COLOR_LEFT if is_left else COLOR_RIGHT
 
-            box_x1 = int(round(raw_bbox[0]))
-            box_y1 = int(round(raw_bbox[1]))
-            box_x2 = int(round(raw_bbox[2]))
-            box_y2 = int(round(raw_bbox[3]))
+            box_x1 = int(round(s_bbox[0]))
+            box_y1 = int(round(s_bbox[1]))
+            box_x2 = int(round(s_bbox[2]))
+            box_y2 = int(round(s_bbox[3]))
             cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), colors["bbox"], 2)
-            lbl = f"ID:{tid} {colors['label']} (New)"
+
+            lbl = f"ID:{tid} {colors['label']} (Hand: {1.0 - hand_prob if is_left else hand_prob:.2f})"
             cv2.putText(frame, lbl, (box_x1, max(20, box_y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 2)
             draw_skeleton(frame, smooth_kps, is_left=is_left)
-
-        # Step D: Handle lost tracks (missing frame bridge & cleanup)
-        for tid in list(tracks.keys()):
-            if tid not in matched_tracks and tid < next_track_id - len(detected_feet):
-                tracks[tid].lost_count += 1
-                if tracks[tid].lost_count > 6:
-                    del tracks[tid]
 
         elapsed_ms = (time.perf_counter() - t_frame_start) * 1000.0
         latencies.append(elapsed_ms)
@@ -512,9 +597,9 @@ def run_video_evaluation(
         cv2.rectangle(frame, (10, 10), (480, 95), (20, 20, 20), -1)
         cv2.rectangle(frame, (10, 10), (480, 95), (0, 255, 255), 1)
         cv2.putText(frame, f"SHOES VTO: {detector_lbl} + RTMPose-13KP", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1)
-        cv2.putText(frame, f"Post-Processing: 1-Euro Filter + Box Track + Hand EMA", (20, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 180), 1)
+        cv2.putText(frame, f"Post-Processing: Dual-Slot Tracker + 1-Euro Filter", (20, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 180), 1)
         cv2.putText(frame, f"Frame: {frame_idx}/{total_frames} | Latency: {elapsed_ms:.1f}ms ({rolling_fps:.1f} FPS)", (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 0), 1)
-        cv2.putText(frame, f"Active Foot Tracks: {len(tracks)}", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 200, 255), 1)
+        cv2.putText(frame, f"Active Confirmed Feet: {len(confirmed_feet)} (Max 2)", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 200, 255), 1)
 
         writer.write(frame)
 
