@@ -151,7 +151,6 @@ class SingleStageRTMPose(nn.Module):
             det_outputs, img_size=(img_w, img_h)
         )
 
-        all_batch_detections = []
         # Construct [B, 45, max_det] unified tensor matching project contract
         batch_out_tensors = []
 
@@ -180,7 +179,8 @@ class SingleStageRTMPose(nn.Module):
 
                 # RoI-Align on surviving detected boxes
                 K = len(keep)
-                b_idx_col = torch.full((K, 1), b, dtype=torch.float32, device=device)
+                # rois_b batch index is 0 because p2[b:b+1] has batch size 1
+                b_idx_col = torch.zeros((K, 1), dtype=torch.float32, device=device)
                 rois_b = torch.cat([b_idx_col, kept_boxes], dim=1)
 
                 simcc_out = self.roi_head.forward_rois(p2[b:b+1], rois_b)
@@ -209,16 +209,6 @@ class SingleStageRTMPose(nn.Module):
                     b_det_tensor = torch.cat([k_det_tensor, pad], dim=0)
                 else:
                     b_det_tensor = k_det_tensor[:max_det]
-
-                # Build python detections dict list for convenient direct consumption
-                for k_i in range(K):
-                    all_batch_detections.append({
-                        "batch_idx": b,
-                        "bbox": kept_boxes[k_i].cpu().numpy().tolist(),
-                        "score": float(kept_scores[k_i].item()),
-                        "class_id": int(kept_cls[k_i].item()),
-                        "keypoints": kpts_b[k_i].cpu().numpy()
-                    })
             else:
                 b_det_tensor = torch.zeros((max_det, 45), dtype=torch.float32, device=device)
 
