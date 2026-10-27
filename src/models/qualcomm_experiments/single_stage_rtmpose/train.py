@@ -80,7 +80,9 @@ def evaluate_val_metrics(
     """
     Evaluates validation metrics across bounding boxes, chirality, and 13 keypoints:
       - Box F1@0.50 (with exact Left/Right foot class match)
-      - Pose PCK@0.2 (Percentage of Correct Keypoints within 20% of foot box diagonal)
+      - Pose PCK@0.20 (Percentage of Correct Keypoints within 20% of foot box diagonal)
+      - Pose PCK@0.10 (Percentage of Correct Keypoints within 10% of foot box diagonal)
+      - Pose PCK@0.05 (Percentage of Correct Keypoints within 5% of foot box diagonal)
       - Negative precision (% of empty carpet/floor images with zero detections)
     """
     model.eval()
@@ -88,7 +90,9 @@ def evaluate_val_metrics(
     clean_negatives = 0
     total_negatives = 0
 
-    pck_hits = 0
+    pck_hits_02 = 0
+    pck_hits_01 = 0
+    pck_hits_005 = 0
     total_gt_kpts = 0
 
     with torch.no_grad():
@@ -148,11 +152,13 @@ def evaluate_val_metrics(
                         tp += 1
                         matched_gt.add(gt_id)
 
-                        # PCK Calculation: threshold = 0.20 * box diagonal
+                        # Scale diagonal for multi-threshold PCK
                         bw = gt_boxes[gt_id, 2] - gt_boxes[gt_id, 0]
                         bh = gt_boxes[gt_id, 3] - gt_boxes[gt_id, 1]
                         diag = torch.sqrt(bw ** 2 + bh ** 2).item()
-                        pck_thresh = max(10.0, 0.20 * diag)
+                        thresh_02 = max(8.0, 0.20 * diag)
+                        thresh_01 = max(4.0, 0.10 * diag)
+                        thresh_005 = max(2.0, 0.05 * diag)
 
                         pred_kps = preds[p_idx]["keypoints"]  # [13, 3]
                         gt_k = gt_kpts[gt_id].cpu().numpy()   # [13, 3]
@@ -160,8 +166,12 @@ def evaluate_val_metrics(
                             if gt_k[k_i, 2] > 0:
                                 total_gt_kpts += 1
                                 dist = np.hypot(pred_kps[k_i, 0] - gt_k[k_i, 0], pred_kps[k_i, 1] - gt_k[k_i, 1])
-                                if dist <= pck_thresh:
-                                    pck_hits += 1
+                                if dist <= thresh_02:
+                                    pck_hits_02 += 1
+                                if dist <= thresh_01:
+                                    pck_hits_01 += 1
+                                if dist <= thresh_005:
+                                    pck_hits_005 += 1
                     else:
                         fp += 1
 
@@ -170,7 +180,9 @@ def evaluate_val_metrics(
     prec = tp / max(1, tp + fp)
     rec = tp / max(1, tp + fn)
     f1_50 = 2 * (prec * rec) / max(1e-6, prec + rec) * 100.0
-    pck_02 = (pck_hits / max(1, total_gt_kpts)) * 100.0
+    pck_02 = (pck_hits_02 / max(1, total_gt_kpts)) * 100.0
+    pck_01 = (pck_hits_01 / max(1, total_gt_kpts)) * 100.0
+    pck_005 = (pck_hits_005 / max(1, total_gt_kpts)) * 100.0
     neg_prec = (clean_negatives / max(1, total_negatives)) * 100.0
 
     return {
@@ -178,6 +190,8 @@ def evaluate_val_metrics(
         "prec": prec * 100.0,
         "rec": rec * 100.0,
         "pck_02": pck_02,
+        "pck_01": pck_01,
+        "pck_005": pck_005,
         "neg_prec": neg_prec
     }
 
@@ -291,7 +305,10 @@ def train_single_stage_rtmpose(
         return 0.05 + 0.95 * 0.5 * (1.0 + math.cos(math.pi * progress))
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    scaler = torch.cuda.amp.GradScaler(enabled=amp and (device.type == "cuda"))
+    try:
+        scaler = torch.amp.GradScaler('cuda', enabled=amp and (device.type == "cuda"))
+    except (TypeError, AttributeError):
+        scaler = torch.cuda.amp.GradScaler(enabled=amp and (device.type == "cuda"))
     ema = ModelEMA(model, decay=0.9998)
 
     best_score = 0.0
@@ -311,7 +328,12 @@ def train_single_stage_rtmpose(
             kpts = batch["keypoints"]
 
             optimizer.zero_grad()
-            with torch.cuda.amp.autocast(enabled=amp and (device.type == "cuda")):
+            try:
+                autocast_ctx = torch.amp.autocast('cuda', enabled=amp and (device.type == "cuda"))
+            except (TypeError, AttributeError):
+                autocast_ctx = torch.cuda.amp.autocast(enabled=amp and (device.type == "cuda"))
+
+            with autocast_ctx:
                 preds = model(imgs, gt_boxes=boxes, gt_labels=labels, gt_kpts=kpts, export_mode=False)
                 losses = criterion(preds, boxes, labels, kpts, img_size=(img_size, img_size))
                 total_loss = losses["total_loss"]
@@ -343,18 +365,23 @@ def train_single_stage_rtmpose(
             ema.restore()
 
             f1 = metrics["f1_50"]
-            pck = metrics["pck_02"]
+            pck_02 = metrics["pck_02"]
+            pck_01 = metrics["pck_01"]
+            pck_005 = metrics["pck_005"]
             neg_p = metrics["neg_prec"]
 
-            # Composite validation score (balancing Box F1 and Pose PCK)
-            score = 0.5 * f1 + 0.5 * pck
+            # Composite validation score (balancing Box F1 and PCK@0.10)
+            score = 0.4 * f1 + 0.3 * pck_01 + 0.3 * pck_005
 
-            print(
+            log_str = (
                 f"Epoch [{epoch:02d}/{epochs:02d}] ({dt:.1f}s) | "
-                f"Loss: {train_loss:.4f} (Cls: {train_cls:.3f}, Box: {train_box:.3f}, Kpt: {train_kpt:.3f}) | "
-                f"Box F1: {f1:.1f}% | Pose PCK: {pck:.1f}% | NegPrec: {neg_p:.1f}%",
-                flush=True
+                f"Loss: {train_loss:.4f} (Cls: {train_cls:.3f}, Box: {train_box:.3f}, SimCC: {train_kpt:.3f}) | "
+                f"Box F1: {f1:.1f}% | PCK@0.20: {pck_02:.1f}% | PCK@0.10: {pck_01:.1f}% | PCK@0.05: {pck_005:.1f}% | NegPrec: {neg_p:.1f}%"
             )
+            print(log_str, flush=True)
+
+            with open(out_path / "trainlog.md", "a", encoding="utf-8") as f_log:
+                f_log.write(log_str + "\n")
 
             ckpt = {
                 "epoch": epoch,
@@ -362,7 +389,9 @@ def train_single_stage_rtmpose(
                 "ema_state": ema.shadow,
                 "optimizer_state": optimizer.state_dict(),
                 "f1_50": f1,
-                "pck_02": pck,
+                "pck_02": pck_02,
+                "pck_01": pck_01,
+                "pck_005": pck_005,
                 "neg_prec": neg_p
             }
             torch.save(ckpt, out_path / "last.pt")
@@ -370,13 +399,18 @@ def train_single_stage_rtmpose(
             if score > best_score:
                 best_score = score
                 torch.save(ckpt, out_path / "best.pt")
-                print(f"  [*] New best model saved! (Box F1: {f1:.1f}%, Pose PCK: {pck:.1f}%)", flush=True)
+                best_msg = f"  [*] New best model saved! (Box F1: {f1:.1f}%, PCK@0.20: {pck_02:.1f}%, PCK@0.10: {pck_01:.1f}%, PCK@0.05: {pck_005:.1f}%)"
+                print(best_msg, flush=True)
+                with open(out_path / "trainlog.md", "a", encoding="utf-8") as f_log:
+                    f_log.write(best_msg + "\n")
         else:
-            print(
+            log_str = (
                 f"Epoch [{epoch:02d}/{epochs:02d}] ({dt:.1f}s) | "
-                f"Loss: {train_loss:.4f} (Cls: {train_cls:.3f}, Box: {train_box:.3f}, Kpt: {train_kpt:.3f})",
-                flush=True
+                f"Loss: {train_loss:.4f} (Cls: {train_cls:.3f}, Box: {train_box:.3f}, SimCC: {train_kpt:.3f})"
             )
+            print(log_str, flush=True)
+            with open(out_path / "trainlog.md", "a", encoding="utf-8") as f_log:
+                f_log.write(log_str + "\n")
 
     print("\n[OK] Single-Stage RTMPose training completed.")
     print(f"Best Checkpoint: {out_path / 'best.pt'}")
