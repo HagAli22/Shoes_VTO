@@ -198,9 +198,9 @@ def run_single_stage_video_eval(
         input_size=(img_size, img_size),
         pretrained=False
     ).to(device)
-    model.load_state_dict(state)
+    missing, unexpected = model.load_state_dict(state, strict=False)
     model.eval()
-    print("[+] Loaded SingleStageRTMPose model successfully.")
+    print(f"[+] Loaded SingleStageRTMPose model (missing: {len(missing)}, unexpected: {len(unexpected)}).")
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():

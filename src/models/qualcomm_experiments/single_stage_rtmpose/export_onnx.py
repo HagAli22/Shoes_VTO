@@ -49,9 +49,9 @@ def export_single_stage_rtmpose_onnx(
 
     if Path(weights_path).exists():
         ckpt = torch.load(weights_path, map_location=device, weights_only=False)
-        state = ckpt.get("ema_state", ckpt.get("model_state", ckpt))
-        model.load_state_dict(state)
-        print(f"[+] Loaded weights from {weights_path} successfully.")
+        state = ckpt.get("ema_state", ckpt.get("model_state", ckpt.get("state_dict", ckpt)))
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        print(f"[+] Loaded weights from {weights_path} (missing: {len(missing)}, unexpected: {len(unexpected)}).")
     else:
         print(f"[!] Warning: {weights_path} not found. Exporting initialized architecture.")
 

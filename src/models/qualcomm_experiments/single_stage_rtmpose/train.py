@@ -193,7 +193,8 @@ def train_single_stage_rtmpose(
     workers: int = 4,
     amp: bool = True,
     device_name: str = "cuda" if torch.cuda.is_available() else "cpu",
-    ckpt_path: str = "checkpoints/rtmpose_tiny_coco.pth"
+    ckpt_path: str = "checkpoints/rtmpose_tiny_coco.pth",
+    simcc_ckpt: str = "checkpoints/rtmpose_13kp_official_coco_full_data/best_with_hand.pt"
 ):
     device = torch.device(device_name)
     out_path = Path(output_dir)
@@ -247,7 +248,7 @@ def train_single_stage_rtmpose(
     print(f"  Dataset:         {data_dir} ({len(train_dataset)} train, {len(val_dataset)} val)")
     print(f"  Backbone:        CSPNeXt Multi-Scale (Pretrained COCO)")
     print(f"  Neck:            CSPNeXt-PAFPN (96 channels across strides 8, 16, 32)")
-    print(f"  Head:            Decoupled Anchor-Free [2 classes, 4 box, 39 KPs]")
+    print(f"  Head:            RoI-Align + SimCC [2 classes, 4 box, 13 SimCC KPs with Continuous Expectation]")
     print(f"  Device:          {device} (AMP: {amp})")
     print(f"  Epochs:          {epochs} | Batch: {batch_size} | LR: {lr:.6f}")
     print(f"  Resolution:      {img_size}x{img_size}")
@@ -260,7 +261,8 @@ def train_single_stage_rtmpose(
         neck_channels=96,
         strides=[8, 16, 32],
         pretrained=True,
-        ckpt_path=ckpt_path
+        backbone_ckpt=ckpt_path,
+        simcc_ckpt=simcc_ckpt
     ).to(device)
 
     criterion = SingleStagePoseLoss(
@@ -310,7 +312,7 @@ def train_single_stage_rtmpose(
 
             optimizer.zero_grad()
             with torch.cuda.amp.autocast(enabled=amp and (device.type == "cuda")):
-                preds = model(imgs, export_mode=False)
+                preds = model(imgs, gt_boxes=boxes, gt_labels=labels, gt_kpts=kpts, export_mode=False)
                 losses = criterion(preds, boxes, labels, kpts, img_size=(img_size, img_size))
                 total_loss = losses["total_loss"]
 
@@ -325,7 +327,7 @@ def train_single_stage_rtmpose(
             train_loss += total_loss.item()
             train_cls += losses["loss_cls"].item()
             train_box += losses["loss_box"].item()
-            train_kpt += losses["loss_kpt"].item()
+            train_kpt += losses["loss_simcc"].item()
 
         scheduler.step()
         n_steps = max(1, len(train_loader))
@@ -392,6 +394,7 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--amp", action="store_true", default=True)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--simcc_ckpt", type=str, default="checkpoints/rtmpose_13kp_official_coco_full_data/best_with_hand.pt")
     args = parser.parse_args()
 
     train_single_stage_rtmpose(
@@ -404,6 +407,7 @@ if __name__ == "__main__":
         img_size=args.img_size,
         workers=args.workers,
         amp=args.amp,
-        device_name=args.device
+        device_name=args.device,
+        simcc_ckpt=args.simcc_ckpt
     )
 
