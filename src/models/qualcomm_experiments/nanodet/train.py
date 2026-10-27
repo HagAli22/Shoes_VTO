@@ -36,18 +36,22 @@ def set_seed(seed: int = 42):
 
 
 class ModelEMA:
-    """Exponential Moving Average of model parameters (decay 0.9998) matching official NanoDet recipe."""
+    """Exponential Moving Average with warmup decay matching official NanoDet / YOLO recipe."""
     def __init__(self, model: torch.nn.Module, decay: float = 0.9998):
         self.module = model
         self.decay = decay
+        self.iteration = 0
         self.shadow = {k: v.clone().detach() for k, v in model.state_dict().items()}
 
     def update(self, model: torch.nn.Module):
+        self.iteration += 1
+        # Warmup decay: ramps up smoothly from 0 to decay over first 2000 iterations
+        d = self.decay * (1.0 - math.exp(-self.iteration / 2000.0))
         with torch.no_grad():
             for k, v in model.state_dict().items():
                 if k in self.shadow:
                     if v.dtype.is_floating_point:
-                        self.shadow[k] = self.decay * self.shadow[k] + (1.0 - self.decay) * v
+                        self.shadow[k] = d * self.shadow[k] + (1.0 - d) * v
                     else:
                         self.shadow[k] = v.clone()
 
@@ -59,13 +63,14 @@ class ModelEMA:
         self.module.load_state_dict(self.backup)
 
 
-def evaluate_val_metrics(model, val_loader, device, conf_thresh=0.30):
+def evaluate_val_metrics(model, val_loader, device, conf_thresh=0.20):
     model.eval()
     tp_50, fp_50, fn_50 = 0, 0, 0
     tp_75, fp_75, fn_75 = 0, 0, 0
     ious_collected = []
     clean_negatives = 0
     total_negatives = 0
+    max_score_seen = 0.0
 
     with torch.no_grad():
         for batch in val_loader:
@@ -75,6 +80,7 @@ def evaluate_val_metrics(model, val_loader, device, conf_thresh=0.30):
             out = model(imgs, export_mode=False)
             boxes = out["boxes"]
             scores = out["scores"]
+            max_score_seen = max(max_score_seen, float(scores.max().item()))
 
             B = imgs.shape[0]
             for b in range(B):
@@ -151,7 +157,8 @@ def evaluate_val_metrics(model, val_loader, device, conf_thresh=0.30):
         "f1_50": f1_50 * 100.0,
         "f1_75": f1_75 * 100.0,
         "mean_iou": mean_iou * 100.0,
-        "neg_prec": neg_prec
+        "neg_prec": neg_prec,
+        "max_conf": max_score_seen * 100.0
     }
 
 
@@ -252,7 +259,7 @@ def train_nanodet(
         return 0.5 * (1.0 + math.cos(math.pi * progress))
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-    scaler = torch.cuda.amp.GradScaler(enabled=amp and (device.type == "cuda"))
+    scaler = torch.amp.GradScaler("cuda", enabled=amp and (device.type == "cuda"))
     ema = ModelEMA(model, decay=0.9998)
 
     best_f1 = 0.0
@@ -284,7 +291,7 @@ def train_nanodet(
             labels = batch["labels"]
 
             optimizer.zero_grad()
-            with torch.cuda.amp.autocast(enabled=amp and (device.type == "cuda")):
+            with torch.amp.autocast("cuda", enabled=amp and (device.type == "cuda")):
                 preds = model(imgs)
                 losses = criterion(preds, boxes, labels, img_size=(img_size, img_size))
                 loss = losses["total_loss"]
@@ -318,11 +325,12 @@ def train_nanodet(
             f1_75 = metrics["f1_75"]
             m_iou = metrics["mean_iou"]
             neg_p = metrics["neg_prec"]
+            m_conf = metrics["max_conf"]
 
             print(
                 f"Epoch [{epoch:02d}/{epochs:02d}] ({dt:.1f}s) | "
                 f"Loss: {train_loss:.4f} (Cls: {train_cls:.3f}, GIoU: {train_giou:.3f}, DFL: {train_dfl:.3f}) | "
-                f"F1@0.50: {f1_50:.1f}% | F1@0.75: {f1_75:.1f}% | mIoU: {m_iou:.1f}% | NegPrec: {neg_p:.1f}%",
+                f"F1@0.50: {f1_50:.1f}% | F1@0.75: {f1_75:.1f}% | mIoU: {m_iou:.1f}% | MaxConf: {m_conf:.1f}% | NegPrec: {neg_p:.1f}%",
                 flush=True
             )
 
