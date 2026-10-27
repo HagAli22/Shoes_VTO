@@ -363,6 +363,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--num_classes", type=int, default=1)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--img_size", type=int, default=320)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--amp", action="store_true", default=True)
     parser.add_argument("--ckpt", type=str, default=DEFAULT_CKPT_PATH)
@@ -377,6 +378,7 @@ if __name__ == "__main__":
         lr=args.lr,
         num_classes=args.num_classes,
         device_name=args.device,
+        img_size=args.img_size,
         workers=args.workers,
         amp=args.amp,
         ckpt_path=args.ckpt,

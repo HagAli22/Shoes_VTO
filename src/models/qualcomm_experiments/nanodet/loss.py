@@ -79,22 +79,6 @@ def distribution_focal_loss(
     loss_right = F.nll_loss(log_prob, right, reduction="none") * weight_right
 
     return loss_left + loss_right
-    pred: torch.Tensor,
-    target: torch.Tensor,
-    reg_max: int = 7
-) -> torch.Tensor:
-    target = target.clamp(min=0.0, max=float(reg_max))
-    left = target.long()
-    right = (left + 1).clamp(max=reg_max)
-
-    weight_left = right.float() - target
-    weight_right = target - left.float()
-
-    log_prob = F.log_softmax(pred, dim=-1)
-    loss_left = F.nll_loss(log_prob, left, reduction="none") * weight_left
-    loss_right = F.nll_loss(log_prob, right, reduction="none") * weight_right
-
-    return loss_left + loss_right
 
 
 class NanoDetPlusLoss(nn.Module):
