@@ -298,7 +298,7 @@ def train_single_stage_rtmpose(
         {"params": head_params, "lr": lr}
     ], weight_decay=1e-4)
 
-    warmup_epochs = 3
+    warmup_epochs = 2 if resume else 3
     def lr_lambda(epoch_idx):
         if epoch_idx < warmup_epochs:
             return float(epoch_idx + 1) / float(warmup_epochs)
