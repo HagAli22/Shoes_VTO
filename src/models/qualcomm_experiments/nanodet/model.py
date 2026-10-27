@@ -206,8 +206,9 @@ class NanoDetPlus(nn.Module):
         all_boxes = []
         all_scores = []
 
-        max_w = float(self.input_size[0])
-        max_h = float(self.input_size[1])
+        # Dynamically compute bounds from actual feature map resolution instead of hardcoded 256
+        max_w = float(cls_preds[0].shape[3] * self.strides[0])
+        max_h = float(cls_preds[0].shape[2] * self.strides[0])
 
         for stride, cls_p, reg_p in zip(self.strides, cls_preds, reg_preds):
             _, _, h, w = cls_p.shape
@@ -245,7 +246,10 @@ def nms_postprocess(
     boxes: torch.Tensor,
     scores: torch.Tensor,
     conf_thresh: float = 0.35,
-    iou_thresh: float = 0.45
+    iou_thresh: float = 0.45,
+    max_area_ratio: float = 0.30,
+    min_area_ratio: float = 0.005,
+    max_aspect_ratio: float = 4.0
 ) -> List[Dict[str, Any]]:
     results = []
     max_scores, class_ids = scores.max(dim=-1)
@@ -258,7 +262,30 @@ def nms_postprocess(
     b_scores = max_scores[keep_mask]
     b_classes = class_ids[keep_mask]
 
-    keep_indices = ops.batched_nms(b_boxes, b_scores, b_classes, iou_thresh)
+    # Anatomical area and aspect ratio sanity filtering
+    bw = b_boxes[:, 2] - b_boxes[:, 0]
+    bh = b_boxes[:, 3] - b_boxes[:, 1]
+
+    img_w = float(boxes[..., 2].max().item())
+    img_h = float(boxes[..., 3].max().item())
+    total_area = max(1.0, img_w * img_h)
+
+    box_areas = bw * bh
+    area_valid = (box_areas <= max_area_ratio * total_area) & (box_areas >= min_area_ratio * total_area)
+
+    aspect_ratios = torch.maximum(bw / bh.clamp(min=1.0), bh / bw.clamp(min=1.0))
+    aspect_valid = aspect_ratios <= max_aspect_ratio
+
+    valid_mask = area_valid & aspect_valid
+    if not valid_mask.any():
+        return results
+
+    b_boxes = b_boxes[valid_mask]
+    b_scores = b_scores[valid_mask]
+    b_classes = b_classes[valid_mask]
+
+    # Class-Agnostic NMS eliminates giant overlapping duplicate boxes across classes
+    keep_indices = ops.nms(b_boxes, b_scores, iou_thresh)
 
     for idx in keep_indices:
         results.append({

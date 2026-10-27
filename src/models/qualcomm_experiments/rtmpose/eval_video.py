@@ -296,11 +296,12 @@ def run_video_evaluation(
     is_nanodet = ("nanodet" in detector_weights.lower())
     if is_nanodet:
         det_ckpt = torch.load(detector_weights, map_location=device, weights_only=False)
-        nanodet = NanoDetPlus(num_classes=1).to(device)
         model_weights = det_ckpt.get("ema_state", det_ckpt.get("model_state", det_ckpt.get("model", det_ckpt)))
+        num_classes = 2 if "head.gfl_cls.0.weight" in model_weights and model_weights["head.gfl_cls.0.weight"].shape[0] == 34 else 1
+        nanodet = NanoDetPlus(num_classes=num_classes, input_size=(320, 320)).to(device)
         nanodet.load_state_dict(model_weights)
         nanodet.eval()
-        print("[+] Loaded NanoDet-Plus Foot Detector (Apache-2.0, 1.17M params) successfully.")
+        print(f"[+] Loaded NanoDet-Plus Foot Detector (Apache-2.0, {num_classes}-Class, 1.17M params) successfully.")
     else:
         from ultralytics import YOLO
         detector = YOLO(detector_weights)
@@ -353,6 +354,15 @@ def run_video_evaluation(
             for p in preds:
                 bx = p["bbox"]
                 scaled_box = np.array([bx[0] * sx, bx[1] * sy, bx[2] * sx, bx[3] * sy], dtype=np.float32)
+                y_cent = (scaled_box[1] + scaled_box[3]) / 2.0
+
+                # Anatomical spatial prior: In downward-facing Shoes VTO camera view,
+                # real feet attached to legs are positioned in the lower portion of the frame (y >= 0.50*H).
+                # Isolated detections floating in the upper half (y < 0.50*H) must have very high confidence (>=0.98)
+                # to prevent distant floor textures/carpet leaves from spawning false tracks.
+                if y_cent < (0.50 * h0) and p["score"] < 0.98:
+                    continue
+
                 detected_feet.append({
                     "bbox": scaled_box,
                     "class_id": p["class_id"],
@@ -416,7 +426,15 @@ def run_video_evaluation(
                 with torch.no_grad():
                     preds = rtmpose(crop_t)
                     simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
-                    hand_prob = float(preds["hand"].item()) if "hand" in preds else float(det["class_id"])
+                    if "hand" in preds and det.get("class_id", -1) in (0, 1):
+                        pose_hand = float(preds["hand"].item())
+                        det_hand = float(det["class_id"])
+                        # Blend high-resolution RTMPose crop prediction (60%) with full-frame NanoDet chirality (40%)
+                        hand_prob = 0.6 * pose_hand + 0.4 * det_hand
+                    elif "hand" in preds:
+                        hand_prob = float(preds["hand"].item())
+                    else:
+                        hand_prob = float(det.get("class_id", 0))
 
                 frame_kps = invert_keypoints(simcc_kps, M_inv)
 
@@ -521,14 +539,16 @@ if __name__ == "__main__":
     if not Path(default_rtm).exists():
         default_rtm = "checkpoints/rtmpose_13kp_official_coco_full_data/best.pt"
 
-    default_det = "checkpoints/nanodet_foot_320/best.pt"
+    default_det = "checkpoints/nanodet_foot_2class_320/best.pt"
+    if not Path(default_det).exists():
+        default_det = "checkpoints/nanodet_foot_320/best.pt"
     if not Path(default_det).exists():
         default_det = "deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.pt"
 
     parser.add_argument("--rtmpose", type=str, default=default_rtm)
     parser.add_argument("--detector", type=str, default=default_det)
     parser.add_argument("--video", type=str, default="data/test_video.mp4")
-    parser.add_argument("--output", type=str, default="deliverables/qualcomm_experiments/nanodet_rtmpose_apache2_demo.mp4")
+    parser.add_argument("--output", type=str, default="deliverables/qualcomm_experiments/demos/nanodet_2class_rtmpose_demo.mp4")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--conf", type=float, default=0.30)
     parser.add_argument("--no_postprocessing", action="store_true", help="Disable temporal filtering")
