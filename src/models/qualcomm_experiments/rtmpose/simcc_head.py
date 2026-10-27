@@ -69,12 +69,14 @@ class RTMCCHead13KP(nn.Module):
         feat_hw: int = 64,  # 8x8 = 64 at stride 32 for 256x256
         hidden_dim: int = 256,
         input_size: Tuple[int, int] = (256, 256),
-        simcc_split_ratio: float = 2.0
+        simcc_split_ratio: float = 2.0,
+        include_handedness: bool = True
     ):
         super().__init__()
         self.num_keypoints = num_keypoints
         self.w_bins = int(input_size[0] * simcc_split_ratio)
         self.h_bins = int(input_size[1] * simcc_split_ratio)
+        self.include_handedness = include_handedness
 
         # 7x7 Conv preserves per-keypoint spatial layout
         self.final = nn.Conv2d(in_channels, num_keypoints, kernel_size=7, stride=1, padding=3)
@@ -85,6 +87,17 @@ class RTMCCHead13KP(nn.Module):
         self.cls_y = nn.Linear(hidden_dim, self.h_bins)
         self.vis = nn.Linear(hidden_dim, 1)
 
+        # In-model handedness classification (0: Left Foot, 1: Right Foot)
+        if include_handedness:
+            # Flatten 13 keypoint tokens [B, 13, 256] -> [B, 3328] to preserve keypoint identity
+            self.hand = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(num_keypoints * hidden_dim, 128),
+                nn.SiLU(),
+                nn.Dropout(0.1),
+                nn.Linear(128, 1)
+            )
+
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         # x: [B, in_channels, H, W]
         # self.final(x): [B, K, H, W] -> flatten(2): [B, K, H*W]
@@ -94,12 +107,19 @@ class RTMCCHead13KP(nn.Module):
         logits_y = self.cls_y(f)  # [B, K, h_bins]
         vis_logits = self.vis(f)   # [B, K, 1]
 
-        return {
+        out = {
             "simcc_x": logits_x,
             "simcc_y": logits_y,
             "vis_logits": vis_logits,
             "vis": torch.sigmoid(vis_logits)
         }
+
+        if self.include_handedness:
+            hand_logits = self.hand(f).squeeze(-1)  # [B]
+            out["hand_logits"] = hand_logits
+            out["hand"] = torch.sigmoid(hand_logits)
+
+        return out
 
 
 # Alias for backwards compatibility
@@ -117,10 +137,12 @@ class RTMPose13KP(nn.Module):
         input_size: Tuple[int, int] = (256, 256),
         simcc_split_ratio: float = 2.0,
         backbone_name: str = "cspnext",
-        pretrained: bool = True
+        pretrained: bool = True,
+        include_handedness: bool = True
     ):
         super().__init__()
         self.backbone_name = backbone_name.lower()
+        self.include_handedness = include_handedness
 
         if self.backbone_name == "mobilenetv3":
             from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
@@ -152,7 +174,8 @@ class RTMPose13KP(nn.Module):
             feat_hw=feat_hw,
             hidden_dim=256,
             input_size=input_size,
-            simcc_split_ratio=simcc_split_ratio
+            simcc_split_ratio=simcc_split_ratio,
+            include_handedness=include_handedness
         )
 
         # Register official ImageNet/COCO normalization buffers

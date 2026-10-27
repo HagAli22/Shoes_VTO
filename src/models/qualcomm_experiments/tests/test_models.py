@@ -51,6 +51,11 @@ class TestRTMPoseSuite(unittest.TestCase):
         self.assertEqual(preds["simcc_y"].shape, (B, 13, 512))
         self.assertEqual(preds["vis_logits"].shape, (B, 13, 1))
         self.assertEqual(preds["vis"].shape, (B, 13, 1))
+        # In-model handedness classification
+        self.assertIn("hand_logits", preds)
+        self.assertEqual(preds["hand_logits"].shape, (B,))
+        self.assertIn("hand", preds)
+        self.assertEqual(preds["hand"].shape, (B,))
 
     def test_vectorized_simcc_loss_and_peak_decoder(self):
         B = 2
@@ -63,6 +68,7 @@ class TestRTMPoseSuite(unittest.TestCase):
         kps[:, :, 2] = 2.0  # visible
 
         targets = criterion.build_targets(kps, w_bins=512, h_bins=512)
+        targets["classes"] = torch.tensor([0, 1], dtype=torch.long)
         self.assertEqual(targets["target_x"].shape, (B, 13, 512))
         self.assertEqual(targets["target_y"].shape, (B, 13, 512))
         self.assertEqual(targets["mask"].shape, (B, 13))
@@ -71,7 +77,14 @@ class TestRTMPoseSuite(unittest.TestCase):
         losses = criterion(preds, targets)
 
         self.assertIn("total_loss", losses)
+        self.assertIn("loss_hand", losses)
         self.assertGreater(losses["total_loss"].item(), 0.0)
+        self.assertGreater(losses["loss_hand"].item(), 0.0)
+
+        # Ensure gradient flows back into handedness linear layer
+        losses["total_loss"].backward()
+        self.assertIsNotNone(model.head.hand.weight.grad)
+        self.assertGreater(model.head.hand.weight.grad.norm().item(), 0.0)
 
         # Test peak-windowed decoder
         decoded_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=6)

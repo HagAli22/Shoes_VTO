@@ -62,7 +62,8 @@ def train_rtmpose(
     workers: int = 4,
     resume: str = None,
     init_weights: str = None,
-    include_negatives: bool = True
+    include_negatives: bool = True,
+    amp: bool = True
 ):
     set_seed(42)
     device = torch.device(device_name)
@@ -74,7 +75,7 @@ def train_rtmpose(
     print("  EXPERIMENT 2: Qualcomm RTMPose-13KP Foot Pose (SimCC + GAU) Training")
     print(f"  Dataset:         {data_path}")
     print(f"  Backbone:        {backbone_name} (Pretrained: {pretrained})")
-    print(f"  Device:          {device}")
+    print(f"  Device:          {device} (AMP: {amp})")
     print(f"  Epochs:          {epochs} (Warmup: {warmup_epochs}) | Batch: {batch_size}")
     print(f"  Backbone LR:     {lr * 0.2:.6f} | Head LR: {lr:.6f}")
     print(f"  Resolution:      {img_size}x{img_size} (SimCC Bins: 512x512, Dec Win: 12)")
@@ -104,12 +105,14 @@ def train_rtmpose(
         train_ds, batch_size=batch_size, shuffle=True,
         num_workers=workers, pin_memory=(device.type == "cuda"),
         persistent_workers=(workers > 0),
+        prefetch_factor=2 if workers > 0 else None,
         collate_fn=collate_fn_rtmpose
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False,
         num_workers=workers, pin_memory=(device.type == "cuda"),
         persistent_workers=(workers > 0),
+        prefetch_factor=2 if workers > 0 else None,
         collate_fn=collate_fn_rtmpose
     )
 
@@ -128,7 +131,10 @@ def train_rtmpose(
             ckpt = torch.load(init_weights, map_location=device, weights_only=False)
         except TypeError:
             ckpt = torch.load(init_weights, map_location=device)
-        model.load_state_dict(ckpt["model_state"] if "model_state" in ckpt else ckpt)
+        state = ckpt["model_state"] if "model_state" in ckpt else ckpt
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        if missing:
+            print(f"[*] Note: Newly initialized layers: {missing}")
         print("[+] Model parameters successfully warm-started from checkpoint.")
 
     criterion = SimCCLoss(simcc_split_ratio=2.0, sigma=6.0).to(device)
@@ -170,6 +176,8 @@ def train_rtmpose(
         best_val_err = ckpt.get("mean_px_err", float("inf"))
         best_val_pck05 = ckpt.get("val_pck05", 0.0)
 
+    scaler = torch.cuda.amp.GradScaler(enabled=amp and (device.type == "cuda"))
+
     for epoch in range(start_epoch, epochs + 1):
         model.train()
         train_loss = 0.0
@@ -178,19 +186,23 @@ def train_rtmpose(
         for step, batch in enumerate(train_loader):
             imgs = batch["images"].to(device)
             kps = batch["keypoints"].to(device)
+            classes = batch["classes"].to(device)
             targets = criterion.build_targets(
                 kps, w_bins=int(img_size * 2), h_bins=int(img_size * 2), device=device
             )
+            targets["classes"] = classes
 
             optimizer.zero_grad()
-            preds = model(imgs)
-            losses = criterion(preds, targets)
-            loss = losses["total_loss"]
-            loss.backward()
+            with torch.cuda.amp.autocast(enabled=amp and (device.type == "cuda")):
+                preds = model(imgs)
+                losses = criterion(preds, targets)
+                loss = losses["total_loss"]
 
-            # Gradient clipping prevents gradient explosion during early head adaptation
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
 
             train_loss += loss.item()
 
@@ -204,17 +216,27 @@ def train_rtmpose(
         val_pck_05_hits = 0
         val_pck_10_hits = 0
         total_valid_kps = 0
+        val_hand_correct = 0
+        val_hand_total = 0
 
         with torch.no_grad():
             for batch in val_loader:
                 imgs = batch["images"].to(device)
                 kps = batch["keypoints"].to(device)
+                classes = batch["classes"].to(device)
                 targets = criterion.build_targets(
                     kps, w_bins=int(img_size * 2), h_bins=int(img_size * 2), device=device
                 )
+                targets["classes"] = classes
                 preds = model(imgs)
                 losses = criterion(preds, targets)
                 val_loss += losses["total_loss"].item()
+
+                if "hand_logits" in preds:
+                    val_hand_preds = (preds["hand_logits"] > 0).long()
+                    valid_hand = classes >= 0
+                    val_hand_correct += (val_hand_preds[valid_hand] == classes[valid_hand]).sum().item()
+                    val_hand_total += valid_hand.sum().item()
 
                 decoded = decode_simcc(preds, simcc_split_ratio=2.0, win=12)
                 gt = kps.cpu().numpy()
@@ -240,13 +262,15 @@ def train_rtmpose(
         val_pck05 = (val_pck_05_hits / max(1, total_valid_kps)) * 100.0
         val_pck10 = (val_pck_10_hits / max(1, total_valid_kps)) * 100.0
         mean_px_err = float(np.mean(val_errors)) if val_errors else 0.0
+        val_hand_acc = (val_hand_correct / max(1, val_hand_total)) * 100.0 if val_hand_total > 0 else 0.0
         dt = time.time() - start_t
 
+        hand_str = f" | Hand Acc: {val_hand_acc:.1f}%" if val_hand_total > 0 else ""
         print(
             f"Epoch [{epoch:02d}/{epochs:02d}] ({dt:.1f}s) | "
             f"Train: {train_loss:.4f} | Val: {val_loss:.4f} | "
             f"Val PCK@0.05: {val_pck05:.2f}% | PCK@0.10: {val_pck10:.2f}% | "
-            f"Mean Err: {mean_px_err:.2f}px"
+            f"Mean Err: {mean_px_err:.2f}px{hand_str}"
         )
 
         # Checkpoints with complete resume states
@@ -259,6 +283,7 @@ def train_rtmpose(
             "val_pck10": val_pck10,
             "val_pck05": val_pck05,
             "mean_px_err": mean_px_err,
+            "val_hand_acc": val_hand_acc,
             "backbone_name": backbone_name
         }
         torch.save(ckpt, out_path / "last.pt")
@@ -288,6 +313,8 @@ if __name__ == "__main__":
     parser.add_argument("--init_weights", type=str, default=None)
     parser.add_argument("--include_negatives", dest="include_negatives", action="store_true", default=True)
     parser.add_argument("--no-include_negatives", dest="include_negatives", action="store_false")
+    parser.add_argument("--amp", dest="amp", action="store_true", default=True)
+    parser.add_argument("--no-amp", dest="amp", action="store_false")
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
@@ -305,5 +332,6 @@ if __name__ == "__main__":
         workers=args.workers,
         resume=args.resume,
         init_weights=args.init_weights,
-        include_negatives=args.include_negatives
+        include_negatives=args.include_negatives,
+        amp=args.amp
     )

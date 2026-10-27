@@ -26,6 +26,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.models.qualcomm_experiments.rtmpose.simcc_head import RTMPose13KP
 from src.models.qualcomm_experiments.rtmpose.decoder import decode_simcc
+from src.models.qualcomm_experiments.common.crop import (
+    compute_crop_box,
+    get_crop_affine_transform,
+    warp_image_crop,
+    invert_keypoints
+)
 from ultralytics import YOLO
 
 KEYPOINT_NAMES = [
@@ -102,6 +108,9 @@ def run_video_evaluation(
     device_name: str = "cuda" if torch.cuda.is_available() else "cpu",
     conf_thresh: float = 0.30
 ):
+    if device_name == "cuda" and not torch.cuda.is_available():
+        print("[!] CUDA is not available in the current Python environment. Falling back to CPU.")
+        device_name = "cpu"
     device = torch.device(device_name)
     print("=" * 70)
     print("  QUALCOMM RTMPOSE-13KP VIDEO EVALUATION & VISUALIZATION")
@@ -118,8 +127,16 @@ def run_video_evaluation(
     except TypeError:
         ckpt = torch.load(rtmpose_weights, map_location=device)
     backbone_name = ckpt.get("backbone_name", "cspnext")
-    rtmpose = RTMPose13KP(num_keypoints=13, input_size=(256, 256), simcc_split_ratio=2.0, backbone_name=backbone_name).to(device)
-    rtmpose.load_state_dict(ckpt["model_state"] if "model_state" in ckpt else ckpt)
+    state_dict = ckpt["model_state"] if "model_state" in ckpt else ckpt
+    has_hand = any("hand" in k for k in state_dict.keys())
+    rtmpose = RTMPose13KP(
+        num_keypoints=13,
+        input_size=(256, 256),
+        simcc_split_ratio=2.0,
+        backbone_name=backbone_name,
+        include_handedness=has_hand
+    ).to(device)
+    rtmpose.load_state_dict(state_dict, strict=False)
     rtmpose.eval()
     print(f"[+] Loaded RTMPose-13KP Checkpoint ({backbone_name}) successfully.")
 
@@ -177,21 +194,10 @@ def run_video_evaluation(
             cx = (x1 + x2) / 2.0
             cy = (y1 + y2) / 2.0
 
-            # Adaptive padding: Elongated feet get higher margin
-            aspect_ratio = max(bw / max(1.0, bh), bh / max(1.0, bw))
-            size = max(bw, bh) * (1.0 + 0.20 + (0.15 if aspect_ratio > 1.3 else 0.05))
-
-            # Affine warp to 256x256 with constant (114, 114, 114) border
-            M = cv2.getRotationMatrix2D((cx, cy), 0.0, 256.0 / size)
-            M[0, 2] += 128.0 - cx
-            M[1, 2] += 128.0 - cy
-
-            crop = cv2.warpAffine(
-                frame, M, (256, 256),
-                flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_CONSTANT,
-                borderValue=(114, 114, 114)
-            )
+            # Centralized crop geometry with crop_padding=0.25 (exact parity with training)
+            cx, cy, size = compute_crop_box(cx, cy, bw, bh, crop_padding=0.25)
+            M, M_inv = get_crop_affine_transform(cx, cy, size, out_size=256, rot=0.0)
+            crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
 
             crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
 
@@ -200,12 +206,7 @@ def run_video_evaluation(
                 simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]  # [13, 3]
 
             # Invert affine warp M to project keypoints back to full video frame coordinates
-            M_inv = cv2.invertAffineTransform(M)
-            kps_homo = np.stack([simcc_kps[:, 0], simcc_kps[:, 1], np.ones(13)], axis=1)
-            orig_xy = kps_homo @ M_inv.T
-            frame_kps = simcc_kps.copy()
-            frame_kps[:, 0] = orig_xy[:, 0]
-            frame_kps[:, 1] = orig_xy[:, 1]
+            frame_kps = invert_keypoints(simcc_kps, M_inv)
 
             is_left = (foot["class_id"] == 0)
             colors = COLOR_LEFT if is_left else COLOR_RIGHT

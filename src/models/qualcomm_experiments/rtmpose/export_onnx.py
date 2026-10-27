@@ -17,9 +17,10 @@ from src.models.qualcomm_experiments.rtmpose.simcc_head import RTMPose13KP
 
 
 def export_rtmpose_onnx(
-    weights_path: str = "checkpoints/rtmpose_13kp_official_coco/best.pt",
-    output_onnx: str = "deliverables/qualcomm_experiments/models/rtmpose-13kp-coco-256.onnx",
-    img_size: int = 256
+    weights_path: str = "checkpoints/rtmpose_13kp_official_coco_full_data/best_with_hand.pt",
+    output_onnx: str = "deliverables/qualcomm_experiments/models/rtmpose-13kp-full-champion-256.onnx",
+    img_size: int = 256,
+    include_handedness: bool = True
 ):
     out_file = Path(output_onnx)
     out_file.parent.mkdir(parents=True, exist_ok=True)
@@ -33,12 +34,28 @@ def export_rtmpose_onnx(
         input_size=(img_size, img_size),
         simcc_split_ratio=2.0,
         backbone_name=backbone_name,
-        pretrained=False
+        pretrained=False,
+        include_handedness=include_handedness
     )
-    model.load_state_dict(ckpt["model_state"] if "model_state" in ckpt else ckpt)
+    state_dict = ckpt["model_state"] if "model_state" in ckpt else ckpt
+    # Enforce strict=True if include_handedness is requested, preventing accidental export of random uninitialized hand weights
+    model.load_state_dict(state_dict, strict=include_handedness)
     model.eval()
 
     dummy_input = torch.randn(1, 3, img_size, img_size)
+
+    output_names = ["simcc_x", "simcc_y", "vis_logits", "vis"]
+    dynamic_axes = {
+        "images": {0: "batch"},
+        "simcc_x": {0: "batch"},
+        "simcc_y": {0: "batch"},
+        "vis_logits": {0: "batch"},
+        "vis": {0: "batch"},
+    }
+    if include_handedness:
+        output_names.extend(["hand_logits", "hand"])
+        dynamic_axes["hand_logits"] = {0: "batch"}
+        dynamic_axes["hand"] = {0: "batch"}
 
     print(f"[*] Exporting to ONNX: {out_file}...")
     torch.onnx.export(
@@ -46,14 +63,8 @@ def export_rtmpose_onnx(
         dummy_input,
         str(out_file),
         input_names=["images"],
-        output_names=["simcc_x", "simcc_y", "vis_logits", "vis"],
-        dynamic_axes={
-            "images": {0: "batch"},
-            "simcc_x": {0: "batch"},
-            "simcc_y": {0: "batch"},
-            "vis_logits": {0: "batch"},
-            "vis": {0: "batch"}
-        },
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
         opset_version=12,
         dynamo=False
     )

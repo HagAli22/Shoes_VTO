@@ -26,6 +26,12 @@ import cv2
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from src.models.qualcomm_experiments.common.crop import (
+    compute_crop_box,
+    get_crop_affine_transform,
+    warp_image_crop,
+    transform_keypoints
+)
 
 
 def safe_path_str(p: Union[str, Path]) -> str:
@@ -113,13 +119,17 @@ class FootPoseDataset13KP(Dataset):
                 if self.include_negatives:
                     self.crops_index.append((img_idx, -1))
                 continue
+            valid_box_count = 0
             with open(p_label_str, "r", encoding="utf-8") as f:
-                lines = [line.strip() for line in f if line.strip()]
-            if len(lines) == 0:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 5:
+                        valid_box_count += 1
+            if valid_box_count == 0:
                 if self.include_negatives:
                     self.crops_index.append((img_idx, -1))
             else:
-                for box_idx in range(len(lines)):
+                for box_idx in range(valid_box_count):
                     self.crops_index.append((img_idx, box_idx))
 
     def __len__(self) -> int:
@@ -300,8 +310,8 @@ class FootPoseDataset13KP(Dataset):
         bw = inst["bbox"][2] * w0
         bh = inst["bbox"][3] * h0
 
-        ar = max(bw / max(1.0, bh), bh / max(1.0, bw))
-        size = max(bw, bh) * (1.0 + self.crop_padding + (0.15 if ar > 1.3 else 0.05))
+        # Shared crop box computation with consistent padding
+        cx, cy, size = compute_crop_box(cx, cy, bw, bh, crop_padding=self.crop_padding)
         rot = 0.0
 
         # Jitter augmentation (scale, shift, rotation) for robust detection tolerance
@@ -312,25 +322,16 @@ class FootPoseDataset13KP(Dataset):
             rot = random.uniform(-30, 30)
 
         # Affine warp matrix centered at (cx, cy)
-        M = cv2.getRotationMatrix2D((cx, cy), rot, self.img_size / size)
-        M[0, 2] += self.img_size / 2.0 - cx
-        M[1, 2] += self.img_size / 2.0 - cy
+        M, _ = get_crop_affine_transform(cx, cy, size, out_size=self.img_size, rot=rot)
 
         # Constant border prevents mirror ghost reflections
-        crop = cv2.warpAffine(
-            img, M, (self.img_size, self.img_size),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=(114, 114, 114)
-        )
+        crop = warp_image_crop(img, M, out_size=self.img_size, border_value=(114, 114, 114))
 
         # Transform keypoints via the exact affine transformation
         kps = inst["keypoints"].copy()
-        kps[:, :2] = np.stack([kps[:, 0] * w0, kps[:, 1] * h0, np.ones(len(kps))], axis=1) @ M.T
-
-        # Invalidate keypoints transformed outside crop boundaries
-        out = (kps[:, 0] < 0) | (kps[:, 0] >= self.img_size) | (kps[:, 1] < 0) | (kps[:, 1] >= self.img_size)
-        kps[out, 2] = 0.0
+        kps[:, 0] *= w0
+        kps[:, 1] *= h0
+        kps = transform_keypoints(kps, M, out_size=self.img_size, invalidate_out_of_bounds=True)
 
         img_tensor = torch.from_numpy(crop).permute(2, 0, 1).float() / 255.0
 

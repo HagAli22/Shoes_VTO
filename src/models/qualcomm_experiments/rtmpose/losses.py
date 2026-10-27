@@ -31,10 +31,18 @@ class SimCCLoss(nn.Module):
     Kullback-Leibler Divergence Loss for SimCC Coordinate Classification.
     Vectorized target generation eliminates GPU-CPU synchronization bottlenecks.
     """
-    def __init__(self, simcc_split_ratio: float = 2.0, sigma: float = 6.0):
+    def __init__(
+        self,
+        simcc_split_ratio: float = 2.0,
+        sigma: float = 6.0,
+        vis_weight: float = 0.5,
+        hand_weight: float = 0.5
+    ):
         super().__init__()
         self.split_ratio = simcc_split_ratio
         self.sigma = sigma
+        self.vis_weight = vis_weight
+        self.hand_weight = hand_weight
 
     def build_targets(
         self,
@@ -108,12 +116,26 @@ class SimCCLoss(nn.Module):
         else:
             loss_vis = F.binary_cross_entropy(preds["vis"].squeeze(-1), mask)
 
-        total_loss = loss_x + loss_y + 0.5 * loss_vis
+        # Handedness loss (BCEWithLogits) on valid instances (ignoring negative background crops where class_id == -1)
+        loss_hand = torch.tensor(0.0, device=pred_x.device)
+        hand_logits = preds.get("hand_logits", None)
+        classes = targets.get("classes", None)
+
+        if hand_logits is not None and classes is not None:
+            valid_hand_mask = classes >= 0
+            if valid_hand_mask.sum() > 0:
+                loss_hand = F.binary_cross_entropy_with_logits(
+                    hand_logits[valid_hand_mask],
+                    classes[valid_hand_mask].float()
+                )
+
+        total_loss = loss_x + loss_y + self.vis_weight * loss_vis + self.hand_weight * loss_hand
 
         return {
             "total_loss": total_loss,
             "loss_x": loss_x,
             "loss_y": loss_y,
-            "loss_vis": loss_vis
+            "loss_vis": loss_vis,
+            "loss_hand": loss_hand
         }
 
