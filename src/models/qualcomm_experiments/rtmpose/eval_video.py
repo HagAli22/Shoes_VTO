@@ -159,6 +159,7 @@ class FootTrack:
     def __init__(self, track_id: int, t0: float, raw_bbox: np.ndarray, initial_hand_prob: float):
         self.track_id = track_id
         self.hits = 1
+        self.last_t = t0
         # Filter the tight rectangular detection box [x1, y1, x2, y2]
         self.box_filter = OneEuroFilter(
             t0,
@@ -174,11 +175,32 @@ class FootTrack:
         self.age = 1
         self.last_kps: Optional[np.ndarray] = None
         self.smoothed_bbox = tuple(float(v) for v in raw_bbox)
+        self.vx = 0.0
+        self.vy = 0.0
 
     def update_box(self, t: float, raw_bbox: np.ndarray) -> Tuple[float, float, float, float]:
+        dt = max(1e-4, t - self.last_t)
+        prev_cx = (self.smoothed_bbox[0] + self.smoothed_bbox[2]) / 2.0
+        prev_cy = (self.smoothed_bbox[1] + self.smoothed_bbox[3]) / 2.0
+
         smoothed = self.box_filter.filter(t, np.array(raw_bbox, dtype=np.float64))
         self.smoothed_bbox = (float(smoothed[0]), float(smoothed[1]), float(smoothed[2]), float(smoothed[3]))
+
+        curr_cx = (self.smoothed_bbox[0] + self.smoothed_bbox[2]) / 2.0
+        curr_cy = (self.smoothed_bbox[1] + self.smoothed_bbox[3]) / 2.0
+
+        alpha_v = 0.3
+        self.vx = (1.0 - alpha_v) * self.vx + alpha_v * ((curr_cx - prev_cx) / dt)
+        self.vy = (1.0 - alpha_v) * self.vy + alpha_v * ((curr_cy - prev_cy) / dt)
+        self.last_t = t
         return self.smoothed_bbox
+
+    def coast_box(self, dt: float = 0.033):
+        """Extrapolates box position during temporary occlusion using linear velocity."""
+        dx = float(np.clip(self.vx * dt, -30.0, 30.0))
+        dy = float(np.clip(self.vy * dt, -30.0, 30.0))
+        x1, y1, x2, y2 = self.smoothed_bbox
+        self.smoothed_bbox = (x1 + dx, y1 + dy, x2 + dx, y2 + dy)
 
     def get_crop_params(self, crop_padding: float = 0.25) -> Tuple[float, float, float]:
         x1, y1, x2, y2 = self.smoothed_bbox
@@ -225,11 +247,11 @@ class DualFootTracker:
       2. Temporal confirmation (min_hits=2): A candidate must be detected in at least 2 consecutive
          frames before it is confirmed and rendered on screen. Transient single-frame noise / carpet leaves
          are never displayed.
-      3. Lost bridge: If a confirmed foot is temporarily occluded for up to max_lost=4 frames,
-         it is gracefully maintained with zero visual jitter.
+      3. Lost bridge with Linear Velocity Coasting: If a confirmed foot is temporarily occluded or moving fast
+         for up to max_lost=8 frames, its position is smoothly coasted using its linear velocity vector.
       4. Inter-track NMS: Enforces physical separation so left and right feet cannot collapse into the same box.
     """
-    def __init__(self, min_hits: int = 2, max_lost: int = 4):
+    def __init__(self, min_hits: int = 1, max_lost: int = 8):
         self.min_hits = min_hits
         self.max_lost = max_lost
         self.slots: Dict[str, Optional[FootTrack]] = {"left": None, "right": None}
@@ -290,7 +312,7 @@ class DualFootTracker:
                     c_trk = ((track.smoothed_bbox[0] + track.smoothed_bbox[2]) / 2.0, (track.smoothed_bbox[1] + track.smoothed_bbox[3]) / 2.0)
                     c_det = ((cand["bbox"][0] + cand["bbox"][2]) / 2.0, (cand["bbox"][1] + cand["bbox"][3]) / 2.0)
                     dist = np.hypot(c_trk[0] - c_det[0], c_trk[1] - c_det[1])
-                    if iou >= 0.15 or dist < 120.0:
+                    if iou >= 0.15 or dist < 220.0:
                         matched = True
 
                 if matched and cand is not None:
@@ -325,6 +347,8 @@ class DualFootTracker:
                         track.hand_prob = hand_prob
                 else:
                     track.lost_count += 1
+                    if use_postprocessing:
+                        track.coast_box(dt=1.0 / 30.0)
                     if track.lost_count > self.max_lost:
                         self.slots[slot] = None
             else:
@@ -337,7 +361,7 @@ class DualFootTracker:
                         c_prev = ((prev["bbox"][0] + prev["bbox"][2]) / 2.0, (prev["bbox"][1] + prev["bbox"][3]) / 2.0)
                         c_det = ((cand["bbox"][0] + cand["bbox"][2]) / 2.0, (cand["bbox"][1] + cand["bbox"][3]) / 2.0)
                         dist = np.hypot(c_prev[0] - c_det[0], c_prev[1] - c_det[1])
-                        if iou >= 0.15 or dist < 120.0:
+                        if iou >= 0.15 or dist < 220.0:
                             confirmed = True
 
                     if confirmed:
@@ -506,7 +530,7 @@ def run_video_evaluation(
     t_start = time.time()
     latencies = []
 
-    tracker = DualFootTracker(min_hits=2, max_lost=4)
+    tracker = DualFootTracker(min_hits=1, max_lost=8)
 
     while True:
         ret, frame = cap.read()
@@ -532,13 +556,6 @@ def run_video_evaluation(
             for p in preds:
                 bx = p["bbox"]
                 scaled_box = np.array([bx[0] * sx, bx[1] * sy, bx[2] * sx, bx[3] * sy], dtype=np.float32)
-                y_cent = (scaled_box[1] + scaled_box[3]) / 2.0
-
-                # Anatomical spatial floor prior:
-                # In downward-facing Shoes VTO camera view, feet attached to user are in lower frame (y >= 0.45*H).
-                # Isolated detections floating in upper frame (y < 0.45*H) require >=0.95 confidence.
-                if y_cent < (0.45 * h0) and p["score"] < 0.95:
-                    continue
 
                 detected_feet.append({
                     "bbox": scaled_box,
@@ -635,7 +652,7 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, default="data/test_video.mp4")
     parser.add_argument("--output", type=str, default="deliverables/qualcomm_experiments/demos/nanodet_2class_rtmpose_demo.mp4")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--conf", type=float, default=0.30)
+    parser.add_argument("--conf", type=float, default=0.25)
     parser.add_argument("--no_postprocessing", action="store_true", help="Disable temporal filtering")
     args = parser.parse_args()
 

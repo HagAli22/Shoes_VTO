@@ -57,3 +57,4 @@ Visual analysis of evaluation frames (`nanodet_2class_demo.mp4`) revealed severe
 1. **Drop Stride 64:** Restrict GhostPAN and Head to Strides `[8, 16, 32]`. Feet in a 320px image never require Stride 64.
 2. **Hard Carpet Negative Mining:** Extract empty carpet crops directly from the room video and add them to the negative training pool.
 3. **Mosaic Augmentation:** Mix floor textures into the training images so the network explicitly learns that carpet leaves are background.
+

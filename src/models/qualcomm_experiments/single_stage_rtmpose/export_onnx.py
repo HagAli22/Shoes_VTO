@@ -82,7 +82,8 @@ def export_single_stage_rtmpose_onnx(
             "output0": {0: "batch"}
         },
         opset_version=opset,
-        do_constant_folding=True
+        do_constant_folding=True,
+        dynamo=False
     )
     print(f"[+] ONNX export succeeded: {out_file} ({out_file.stat().st_size / (1024*1024):.2f} MB)")
 

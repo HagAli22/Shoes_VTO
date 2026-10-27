@@ -4,7 +4,8 @@ nanodet/dataset.py
 Dataset loader for NanoDet-Plus Foot Detector (Apache-2.0).
 Directly parses standard YOLO-format text bounding box annotations without
 needing to modify or convert the existing dataset on disk.
-Supports negative background images (empty label files) to suppress false positives.
+Includes Mosaic 4-Image Augmentation, multi-scale jitter, and robust negative
+background handling (empty label files) to permanently suppress false positives.
 """
 
 from pathlib import Path
@@ -20,7 +21,7 @@ from src.models.qualcomm_experiments.common.dataset import safe_imread, safe_pat
 
 class NanoDetFootDataset(Dataset):
     """
-    YOLO Bounding Box Dataset for NanoDet-Plus.
+    YOLO Bounding Box Dataset for NanoDet-Plus with Mosaic 4-Image Augmentation.
     Classes:
       num_classes = 1: 0 (foot)
       num_classes = 2: 0 (left_foot), 1 (right_foot)
@@ -30,11 +31,12 @@ class NanoDetFootDataset(Dataset):
         self,
         images_dir: str,
         labels_dir: Optional[str] = None,
-        img_size: int = 256,
-        num_classes: int = 1,
+        img_size: int = 320,
+        num_classes: int = 2,
         augment: bool = False,
-        allow_flip: bool = True,  # Safe for single-class 'foot' detector
-        include_negatives: bool = True
+        allow_flip: bool = True,
+        include_negatives: bool = True,
+        mosaic_prob: float = 0.50
     ):
         super().__init__()
         self.images_dir = Path(images_dir)
@@ -48,6 +50,7 @@ class NanoDetFootDataset(Dataset):
         self.augment = augment
         self.allow_flip = allow_flip
         self.include_negatives = include_negatives
+        self.mosaic_prob = mosaic_prob if augment else 0.0
 
         valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
         self.image_files = [
@@ -104,35 +107,107 @@ class NanoDetFootDataset(Dataset):
 
         return np.array(boxes, dtype=np.float32), np.array(labels, dtype=np.int64)
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
+    def _load_single_image(self, idx: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Path]:
         img_path = self.image_files[idx]
         img = safe_imread(img_path)
         if img is None:
             raise RuntimeError(f"Failed to read image: {img_path}")
-
         h0, w0 = img.shape[:2]
         boxes, labels = self._parse_yolo_labels(self.labels_dir / f"{img_path.stem}.txt", w0, h0)
+        return img, boxes, labels, img_path
 
-        scale = min(self.img_size / w0, self.img_size / h0)
-        nw = int(round(w0 * scale))
-        nh = int(round(h0 * scale))
+    def _load_mosaic(self, idx: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Loads 4 images and collates into 1 mosaic canvas."""
+        indices = [idx] + [random.randint(0, len(self.image_files) - 1) for _ in range(3)]
+        s = self.img_size
+        xc = int(random.uniform(s * 0.35, s * 0.65))
+        yc = int(random.uniform(s * 0.35, s * 0.65))
 
-        resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        canvas = np.full((self.img_size, self.img_size, 3), 114, dtype=np.uint8)
-        pad_x = (self.img_size - nw) // 2
-        pad_y = (self.img_size - nh) // 2
-        canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
+        mosaic_img = np.full((s, s, 3), 114, dtype=np.uint8)
+        mosaic_boxes = []
+        mosaic_labels = []
 
-        if len(boxes) > 0:
-            boxes[:, [0, 2]] = boxes[:, [0, 2]] * scale + pad_x
-            boxes[:, [1, 3]] = boxes[:, [1, 3]] * scale + pad_y
+        for i, img_idx in enumerate(indices):
+            img, boxes, labels, _ = self._load_single_image(img_idx)
+            h, w = img.shape[:2]
+
+            # Quadrants: 0=top-left, 1=top-right, 2=bottom-left, 3=bottom-right
+            if i == 0:
+                x1a, y1a, x2a, y2a = 0, 0, xc, yc
+                scale = min(xc / w, yc / h)
+            elif i == 1:
+                x1a, y1a, x2a, y2a = xc, 0, s, yc
+                scale = min((s - xc) / w, yc / h)
+            elif i == 2:
+                x1a, y1a, x2a, y2a = 0, yc, xc, s
+                scale = min(xc / w, (s - yc) / h)
+            elif i == 3:
+                x1a, y1a, x2a, y2a = xc, yc, s, s
+                scale = min((s - xc) / w, (s - yc) / h)
+
+            nw = int(round(w * scale))
+            nh = int(round(h * scale))
+            resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+
+            # Center resized in quadrant
+            qw, qh = x2a - x1a, y2a - y1a
+            pad_x = x1a + max(0, (qw - nw) // 2)
+            pad_y = y1a + max(0, (qh - nh) // 2)
+            nw = min(nw, s - pad_x)
+            nh = min(nh, s - pad_y)
+
+            if nw > 0 and nh > 0:
+                mosaic_img[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized[:nh, :nw]
+
+            if len(boxes) > 0:
+                b_scaled = boxes.copy()
+                b_scaled[:, [0, 2]] = np.clip(b_scaled[:, [0, 2]] * scale + pad_x, 0, s - 1)
+                b_scaled[:, [1, 3]] = np.clip(b_scaled[:, [1, 3]] * scale + pad_y, 0, s - 1)
+
+                valid = ((b_scaled[:, 2] - b_scaled[:, 0]) >= 4.0) & ((b_scaled[:, 3] - b_scaled[:, 1]) >= 4.0)
+                if valid.any():
+                    mosaic_boxes.append(b_scaled[valid])
+                    mosaic_labels.append(labels[valid])
+
+        if mosaic_boxes:
+            all_boxes = np.concatenate(mosaic_boxes, axis=0)
+            all_labels = np.concatenate(mosaic_labels, axis=0)
+        else:
+            all_boxes = np.zeros((0, 4), dtype=np.float32)
+            all_labels = np.zeros((0,), dtype=np.int64)
+
+        return mosaic_img, all_boxes, all_labels
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        if self.augment and random.random() < self.mosaic_prob:
+            canvas, boxes, labels = self._load_mosaic(idx)
+            img_path = self.image_files[idx]
+        else:
+            img, boxes, labels, img_path = self._load_single_image(idx)
+            h0, w0 = img.shape[:2]
+
+            scale = min(self.img_size / w0, self.img_size / h0)
+            nw = int(round(w0 * scale))
+            nh = int(round(h0 * scale))
+
+            resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            canvas = np.full((self.img_size, self.img_size, 3), 114, dtype=np.uint8)
+            pad_x = (self.img_size - nw) // 2
+            pad_y = (self.img_size - nh) // 2
+            canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
+
+            if len(boxes) > 0:
+                boxes[:, [0, 2]] = boxes[:, [0, 2]] * scale + pad_x
+                boxes[:, [1, 3]] = boxes[:, [1, 3]] * scale + pad_y
 
         if self.augment:
+            # Photometric color jitter
             if random.random() < 0.5:
                 alpha = random.uniform(0.8, 1.2)
                 beta = random.uniform(-20, 20)
                 canvas = cv2.convertScaleAbs(canvas, alpha=alpha, beta=beta)
 
+            # Random horizontal flip with chirality label swap
             if self.allow_flip and random.random() < 0.5:
                 canvas = cv2.flip(canvas, 1)
                 if len(boxes) > 0:

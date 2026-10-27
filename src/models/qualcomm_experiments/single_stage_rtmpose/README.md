@@ -145,3 +145,4 @@ src/models/qualcomm_experiments/single_stage_rtmpose/
 ├── train.py              # Multi-metric training engine (AMP, EMA, Cosine LR)
 └── README.md             # This technical documentation
 ```
+

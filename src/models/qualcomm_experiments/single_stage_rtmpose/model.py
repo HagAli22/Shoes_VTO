@@ -23,6 +23,23 @@ from src.models.qualcomm_experiments.single_stage_rtmpose.simcc_roi_head import 
 DEFAULT_SIMCC_CKPT = "checkpoints/rtmpose_13kp_official_coco_full_data/best_with_hand.pt"
 
 
+def expand_boxes(boxes: torch.Tensor, pad_ratio: float = 0.20, img_size: Tuple[int, int] = (320, 320)) -> torch.Tensor:
+    """Expands bounding boxes by pad_ratio for full anatomical foot context without clipping keypoints."""
+    if boxes.shape[0] == 0:
+        return boxes
+    bw = boxes[:, 2] - boxes[:, 0]
+    bh = boxes[:, 3] - boxes[:, 1]
+    cx = (boxes[:, 0] + boxes[:, 2]) / 2.0
+    cy = (boxes[:, 1] + boxes[:, 3]) / 2.0
+    w_pad = bw * (1.0 + pad_ratio)
+    h_pad = bh * (1.0 + pad_ratio)
+    x1 = (cx - w_pad / 2.0).clamp(min=0.0)
+    y1 = (cy - h_pad / 2.0).clamp(min=0.0)
+    x2 = (cx + w_pad / 2.0).clamp(max=float(img_size[0]))
+    y2 = (cy + h_pad / 2.0).clamp(max=float(img_size[1]))
+    return torch.stack([x1, y1, x2, y2], dim=-1)
+
+
 class SingleStageRTMPose(nn.Module):
     """
     Single-Stage RTMPose-13KP with RoI-Align + SimCC (Apache-2.0).
@@ -110,7 +127,7 @@ class SingleStageRTMPose(nn.Module):
         # 2. Detection Head
         det_outputs = self.det_head((p2, p3, p4))
 
-        # TRAINING MODE: RoI-Align on Ground-Truth foot boxes
+        # TRAINING MODE: RoI-Align on Ground-Truth foot boxes with RoI Jitter + 20% Context Expansion
         if self.training and not export_mode:
             rois_list = []
             roi_kpts_list = []
@@ -120,8 +137,28 @@ class SingleStageRTMPose(nn.Module):
                 for b_idx in range(B):
                     b_boxes = gt_boxes[b_idx].to(device)
                     if b_boxes.shape[0] > 0:
+                        # 1. RoI Jitter Augmentation: 50% chance of random translation/scale noise
+                        # Trains SimCC to be resilient to detector localization shifts
+                        if torch.rand(1).item() < 0.50:
+                            bw = (b_boxes[:, 2] - b_boxes[:, 0]).clamp(min=1.0)
+                            bh = (b_boxes[:, 3] - b_boxes[:, 1]).clamp(min=1.0)
+                            dx = (torch.rand_like(bw) * 0.24 - 0.12) * bw
+                            dy = (torch.rand_like(bh) * 0.24 - 0.12) * bh
+                            dw = (torch.rand_like(bw) * 0.25 - 0.10) * bw
+                            dh = (torch.rand_like(bh) * 0.25 - 0.10) * bh
+                            j_x1 = (b_boxes[:, 0] + dx - dw * 0.5).clamp(min=0.0)
+                            j_y1 = (b_boxes[:, 1] + dy - dh * 0.5).clamp(min=0.0)
+                            j_x2 = (b_boxes[:, 2] + dx + dw * 0.5).clamp(max=float(img_w))
+                            j_y2 = (b_boxes[:, 3] + dy + dh * 0.5).clamp(max=float(img_h))
+                            sampled_boxes = torch.stack([j_x1, j_y1, j_x2, j_y2], dim=-1)
+                        else:
+                            sampled_boxes = b_boxes
+
+                        # 2. 20% Anatomical Context Expansion (eliminates boundary clipping)
+                        pad_boxes = expand_boxes(sampled_boxes, pad_ratio=0.20, img_size=(img_w, img_h))
+
                         b_idx_col = torch.full((b_boxes.shape[0], 1), b_idx, dtype=torch.float32, device=device)
-                        rois_list.append(torch.cat([b_idx_col, b_boxes], dim=1))
+                        rois_list.append(torch.cat([b_idx_col, pad_boxes], dim=1))
                         roi_kpts_list.append(gt_kpts[b_idx].to(device))
                         roi_labels_list.append(gt_labels[b_idx].to(device))
 
@@ -169,19 +206,33 @@ class SingleStageRTMPose(nn.Module):
 
                 # Class-Agnostic NMS eliminates duplicate boxes on the same foot
                 keep = ops.nms(cand_boxes, cand_scores, iou_thresh)
-                if len(keep) > max_det:
-                    keep = keep[:max_det]
+                
+                # Centroid distance suppression
+                final_keep = []
+                centers = (cand_boxes[:, :2] + cand_boxes[:, 2:]) / 2.0
+                for idx in keep:
+                    c_i = centers[idx]
+                    too_close = False
+                    for f_idx in final_keep:
+                        dist = torch.norm(c_i - centers[f_idx]).item()
+                        if dist < 25.0:
+                            too_close = True
+                            break
+                    if not too_close:
+                        final_keep.append(idx)
+                    if len(final_keep) >= max_det:
+                        break
 
-                kept_boxes = cand_boxes[keep]
-                kept_scores = cand_scores[keep]
-                kept_cls = cand_cls[keep]
-                kept_probs = cand_probs[keep]
+                kept_boxes = cand_boxes[final_keep]
+                kept_scores = cand_scores[final_keep]
+                kept_cls = cand_cls[final_keep]
+                kept_probs = cand_probs[final_keep]
 
-                # RoI-Align on surviving detected boxes
-                K = len(keep)
-                # rois_b batch index is 0 because p2[b:b+1] has batch size 1
+                # RoI-Align on surviving detected boxes with 20% Context Expansion
+                K = len(final_keep)
+                pad_kept_boxes = expand_boxes(kept_boxes, pad_ratio=0.20, img_size=(img_w, img_h))
                 b_idx_col = torch.zeros((K, 1), dtype=torch.float32, device=device)
-                rois_b = torch.cat([b_idx_col, kept_boxes], dim=1)
+                rois_b = torch.cat([b_idx_col, pad_kept_boxes], dim=1)
 
                 simcc_out = self.roi_head.forward_rois(p2[b:b+1], rois_b)
                 kpts_b = self.roi_head.decode_continuous_expectation(

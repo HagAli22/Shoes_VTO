@@ -210,6 +210,14 @@ class SingleStagePoseLoss(nn.Module):
         num_pos = max(1, sum(len(p) for p in pos_box_preds))
         loss_cls = quality_focal_loss(flat_cls, cls_targets) / float(num_pos)
 
+        # Dedicated background floor/carpet suppression loss for pure negative images
+        neg_img_mask = torch.tensor([gt_boxes[b].shape[0] == 0 for b in range(B)], device=device)
+        if neg_img_mask.any():
+            neg_cls_preds = flat_cls[neg_img_mask]
+            neg_targets = torch.zeros_like(neg_cls_preds)
+            loss_bg = quality_focal_loss(neg_cls_preds, neg_targets) / max(1, neg_cls_preds.numel() // self.num_classes)
+            loss_cls = loss_cls + loss_bg * 0.5
+
         # Bounding Box Loss (CIoU)
         if len(pos_box_preds) > 0:
             all_pred_boxes = torch.cat(pos_box_preds, dim=0)

@@ -274,16 +274,26 @@ def train_nanodet(
     start_epoch = 1
 
     if resume and Path(resume).exists():
-        print(f"[*] Resuming from: {resume}")
+        print(f"[*] Loading weights from: {resume}")
         ckpt = torch.load(resume, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model_state"])
+        state_to_load = ckpt.get("ema_state", ckpt.get("model_state", ckpt))
+        model.load_state_dict(state_to_load)
         if "ema_state" in ckpt:
-            ema.shadow = ckpt["ema_state"]
-        optimizer.load_state_dict(ckpt["optimizer_state"])
-        scheduler.load_state_dict(ckpt["scheduler_state"])
-        start_epoch = ckpt["epoch"] + 1
-        best_f1 = ckpt.get("f1_75", ckpt.get("f1", 0.0))
-        print(f"[+] Resumed training from epoch {start_epoch} (Best F1: {best_f1:.2f}%)")
+            ema.shadow = {k: v.clone().detach() for k, v in ckpt["ema_state"].items()}
+        
+        # If resuming an unfinished run with same total epochs, restore optimizer & epoch.
+        # Otherwise, if epoch in ckpt >= epochs, treat as fine-tuning with fresh schedule.
+        ckpt_epoch = ckpt.get("epoch", 0)
+        if ckpt_epoch < epochs and "optimizer_state" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+            scheduler.load_state_dict(ckpt["scheduler_state"])
+            start_epoch = ckpt_epoch + 1
+            best_f1 = ckpt.get("f1_75", ckpt.get("f1", 0.0))
+            print(f"[+] Resumed training from epoch {start_epoch} (Best F1: {best_f1:.2f}%)")
+        else:
+            print(f"[+] Fine-tuning initialized from checkpoint! Running fresh schedule for {epochs} epochs at lr={lr:.6f}.")
+            start_epoch = 1
+            best_f1 = ckpt.get("f1_75", ckpt.get("f1", 0.0))
 
     for epoch in range(start_epoch, epochs + 1):
         model.train()

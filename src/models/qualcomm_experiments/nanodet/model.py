@@ -287,7 +287,21 @@ def nms_postprocess(
     # Class-Agnostic NMS eliminates giant overlapping duplicate boxes across classes
     keep_indices = ops.nms(b_boxes, b_scores, iou_thresh)
 
+    # Centroid distance suppression: eliminates concentric duplicate anchors on the exact same foot
+    final_indices = []
+    centers = (b_boxes[:, :2] + b_boxes[:, 2:]) / 2.0
     for idx in keep_indices:
+        c_i = centers[idx]
+        too_close = False
+        for f_idx in final_indices:
+            dist = torch.norm(c_i - centers[f_idx]).item()
+            if dist < 25.0:
+                too_close = True
+                break
+        if not too_close:
+            final_indices.append(idx)
+
+    for idx in final_indices:
         results.append({
             "bbox": b_boxes[idx].cpu().numpy().tolist(),
             "score": float(b_scores[idx].item()),

@@ -211,6 +211,14 @@ class NanoDetPlusLoss(nn.Module):
         # Sigmoid Focal Loss normalized by total positive anchors (matching official Quality Focal Loss recipe)
         loss_cls = sigmoid_focal(flat_cls, cls_targets, gamma=2.0, alpha=0.25) / max(num_pos, 1)
 
+        # Dedicated background floor/carpet suppression loss for pure negative images
+        neg_img_mask = torch.tensor([gt_boxes[b].shape[0] == 0 for b in range(B)], device=device)
+        if neg_img_mask.any():
+            neg_cls_preds = flat_cls[neg_img_mask]
+            neg_targets = torch.zeros_like(neg_cls_preds)
+            loss_bg = sigmoid_focal(neg_cls_preds, neg_targets, gamma=2.0, alpha=0.25) / max(1, neg_cls_preds.numel() // self.num_classes)
+            loss_cls = loss_cls + loss_bg * 0.5
+
         if num_pos == 0:
             zero_loss = torch.tensor(0.0, device=device, requires_grad=True)
             return {

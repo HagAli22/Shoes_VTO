@@ -208,7 +208,8 @@ def train_single_stage_rtmpose(
     amp: bool = True,
     device_name: str = "cuda" if torch.cuda.is_available() else "cpu",
     ckpt_path: str = "checkpoints/rtmpose_tiny_coco.pth",
-    simcc_ckpt: str = "checkpoints/rtmpose_13kp_official_coco_full_data/best_with_hand.pt"
+    simcc_ckpt: str = "checkpoints/rtmpose_13kp_official_coco_full_data/best_with_hand.pt",
+    resume: Optional[str] = None
 ):
     device = torch.device(device_name)
     out_path = Path(output_dir)
@@ -312,8 +313,35 @@ def train_single_stage_rtmpose(
     ema = ModelEMA(model, decay=0.9998)
 
     best_score = 0.0
+    start_epoch = 1
 
-    for epoch in range(1, epochs + 1):
+    if resume and Path(resume).exists():
+        print(f"[*] Loading weights from checkpoint: {resume}")
+        ckpt = torch.load(resume, map_location=device, weights_only=False)
+        state_to_load = ckpt.get("ema_state", ckpt.get("model_state", ckpt))
+        missing, unexpected = model.load_state_dict(state_to_load, strict=False)
+        print(f"[+] Loaded weights successfully (missing keys: {len(missing)}, unexpected: {len(unexpected)})")
+        if "ema_state" in ckpt:
+            for k, v in ckpt["ema_state"].items():
+                if k in ema.shadow and ema.shadow[k].shape == v.shape:
+                    ema.shadow[k] = v.clone().detach()
+
+        ckpt_epoch = ckpt.get("epoch", 0)
+        if ckpt_epoch < epochs and "optimizer_state" in ckpt:
+            try:
+                optimizer.load_state_dict(ckpt["optimizer_state"])
+                scheduler.load_state_dict(ckpt["scheduler_state"])
+                start_epoch = ckpt_epoch + 1
+                best_score = float(ckpt.get("f1_50", 0.0)) * 0.4 + float(ckpt.get("pck_02", 0.0)) * 0.6
+                print(f"[+] Resumed training from epoch {start_epoch} (Best composite score: {best_score:.2f})")
+            except Exception as e:
+                print(f"[!] Optimizer state mismatch ({e}), starting fine-tuning with fresh optimizer at lr={lr:.6f}.")
+        else:
+            print(f"[+] Fine-tuning initialized from checkpoint! Running fresh schedule for {epochs} epochs at lr={lr:.6f}.")
+            start_epoch = 1
+            best_score = float(ckpt.get("f1_50", 0.0)) * 0.4 + float(ckpt.get("pck_02", 0.0)) * 0.6
+
+    for epoch in range(start_epoch, epochs + 1):
         t_start = time.time()
         model.train()
         train_loss = 0.0
@@ -429,6 +457,7 @@ if __name__ == "__main__":
     parser.add_argument("--amp", action="store_true", default=True)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--simcc_ckpt", type=str, default="checkpoints/rtmpose_13kp_official_coco_full_data/best_with_hand.pt")
+    parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume or fine-tune from")
     args = parser.parse_args()
 
     train_single_stage_rtmpose(
@@ -442,6 +471,7 @@ if __name__ == "__main__":
         workers=args.workers,
         amp=args.amp,
         device_name=args.device,
-        simcc_ckpt=args.simcc_ckpt
+        simcc_ckpt=args.simcc_ckpt,
+        resume=args.resume
     )
 

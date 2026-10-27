@@ -62,3 +62,4 @@ If ultra-lightweight (< 2M params) is required:
 - The mathematical architecture of YOLO (CSPDarknet, SPPF, PANet, TAL Head) is published scientific literature and not restricted by copyright.
 - The AGPL copyleft restriction only applies to Ultralytics' specific code repository and weights.
 - We can write a clean-room `yolov8_nano.py` detector under Apache-2.0 in `src/models/qualcomm_experiments/` and train it on the 6,620-image dataset to get 100% YOLO detection accuracy with zero AGPL risk.
+
