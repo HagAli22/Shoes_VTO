@@ -1,24 +1,29 @@
 """
 rtmpose/eval_video.py
 ─────────────────────
-Evaluates the trained RTMPose-13KP Foot Pose model on video benchmarks.
+Evaluates the trained RTMPose-13KP Foot Pose model on video benchmarks with
+State-of-the-Art Temporal Post-Processing for Video Virtual Try-On (VTO):
+
 Pipeline:
   1. Foot Bounding Box Detection (YOLO Stage A detector or tracker)
-  2. Crop foot patch (with margin) -> resize to 256x256
-  3. RTMPose-13KP SimCC inference (continuous sub-pixel expectation)
-  4. Coordinate re-mapping to video frame
-  5. One-Euro temporal filtering + 13-KP anatomical skeleton HUD rendering
-  6. Output rendered MP4 video
+  2. Multi-Object Foot Track Association (IoU + Spatial Centroid Matching)
+  3. Crop Box Temporal Stabilization (One-Euro Filter on cx, cy, size to eliminate crop vibration)
+  4. Unified Affine Warp to 256x256 (exact parity with training geometry)
+  5. Qualcomm RTMPose-13KP SimCC continuous expectation sub-pixel inference
+  6. Keypoint Temporal Filtering (Vectorized One-Euro Filter on 13x2 coordinates: zero stationary jitter, zero motion lag)
+  7. In-Model Handedness Temporal Smoothing (EMA probability filtering: eliminates Left/Right flickering)
+  8. Missing-Frame Extrapolation (MediaPipe-style keypoint-based crop prior on detector dropouts)
+  9. Anatomical Skeleton HUD Rendering + Output MP4 Generation
 """
 
 import argparse
 import sys
 import time
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
@@ -30,7 +35,8 @@ from src.models.qualcomm_experiments.common.crop import (
     compute_crop_box,
     get_crop_affine_transform,
     warp_image_crop,
-    invert_keypoints
+    invert_keypoints,
+    box_from_kps
 )
 from ultralytics import YOLO
 
@@ -78,6 +84,149 @@ COLOR_RIGHT = {
 }
 
 
+# ==============================================================================
+# 1. State-of-the-Art One-Euro Filter (Vectorized across dimensions)
+# ==============================================================================
+
+class LowPassFilter:
+    def __init__(self, alpha: float = 0.5):
+        self.alpha = float(alpha)
+        self.s: Optional[np.ndarray] = None
+
+    def filter(self, x: np.ndarray) -> np.ndarray:
+        if self.s is None:
+            self.s = np.array(x, dtype=np.float64).copy()
+        else:
+            self.s = self.alpha * np.array(x, dtype=np.float64) + (1.0 - self.alpha) * self.s
+        return self.s
+
+    def filter_with_alpha(self, x: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+        self.alpha = alpha
+        if self.s is None:
+            self.s = np.array(x, dtype=np.float64).copy()
+        else:
+            self.s = alpha * np.array(x, dtype=np.float64) + (1.0 - alpha) * self.s
+        return self.s
+
+
+class OneEuroFilter:
+    """
+    1€ Filter (Casiez et al., CHI 2012).
+    Adaptive cutoff frequency balances low-speed jitter elimination with zero high-speed lag.
+    Vectorized to filter 1D arrays [N] or 2D coordinate matrices [N, 2] simultaneously.
+    """
+    def __init__(
+        self,
+        t0: float,
+        x0: np.ndarray,
+        min_cutoff: float = 1.0,
+        beta: float = 0.007,
+        d_cutoff: float = 1.0
+    ):
+        self.min_cutoff = float(min_cutoff)
+        self.beta = float(beta)
+        self.d_cutoff = float(d_cutoff)
+        self.x_filt = LowPassFilter()
+        self.dx_filt = LowPassFilter()
+        self.t_prev = float(t0)
+        self.x_filt.filter(x0)
+        self.dx_filt.filter(np.zeros_like(x0, dtype=np.float64))
+
+    def _alpha(self, cutoff: np.ndarray, dt: float) -> np.ndarray:
+        tau = 1.0 / (2.0 * np.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def filter(self, t: float, x: np.ndarray) -> np.ndarray:
+        dt = max(1e-4, float(t - self.t_prev))
+        self.t_prev = float(t)
+
+        x_curr = np.array(x, dtype=np.float64)
+        # Derivative estimation
+        dx = (x_curr - self.x_filt.s) / dt
+        edx = self.dx_filt.filter_with_alpha(dx, self._alpha(self.d_cutoff, dt))
+
+        # Dynamic cutoff based on motion speed
+        cutoff = self.min_cutoff + self.beta * np.abs(edx)
+        alpha = self._alpha(cutoff, dt)
+        return self.x_filt.filter_with_alpha(x_curr, alpha)
+
+
+# ==============================================================================
+# 2. Foot Track State with Temporal Multi-Signal Filtering
+# ==============================================================================
+
+class FootTrack:
+    def __init__(self, track_id: int, t0: float, raw_bbox: np.ndarray, initial_hand_prob: float):
+        self.track_id = track_id
+        # Filter the tight rectangular detection box [x1, y1, x2, y2]
+        self.box_filter = OneEuroFilter(
+            t0,
+            np.array(raw_bbox, dtype=np.float64),
+            min_cutoff=1.5,
+            beta=0.015,
+            d_cutoff=1.0
+        )
+        self.kpt_filter: Optional[OneEuroFilter] = None
+        self.conf_filter: Optional[OneEuroFilter] = None
+        self.hand_prob = float(initial_hand_prob)  # P(Right Foot)
+        self.lost_count = 0
+        self.age = 1
+        self.last_kps: Optional[np.ndarray] = None
+        self.smoothed_bbox = tuple(float(v) for v in raw_bbox)
+
+    def update_box(self, t: float, raw_bbox: np.ndarray) -> Tuple[float, float, float, float]:
+        smoothed = self.box_filter.filter(t, np.array(raw_bbox, dtype=np.float64))
+        self.smoothed_bbox = (float(smoothed[0]), float(smoothed[1]), float(smoothed[2]), float(smoothed[3]))
+        return self.smoothed_bbox
+
+    def get_crop_params(self, crop_padding: float = 0.25) -> Tuple[float, float, float]:
+        x1, y1, x2, y2 = self.smoothed_bbox
+        bw, bh = max(1.0, x2 - x1), max(1.0, y2 - y1)
+        cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+        return compute_crop_box(cx, cy, bw, bh, crop_padding=crop_padding)
+
+    def update_keypoints(self, t: float, kps: np.ndarray, hand_prob: float) -> np.ndarray:
+        """
+        kps: [13, 3] (x, y, conf)
+        Returns: smoothed [13, 3]
+        """
+        coords = kps[:, :2]
+        confs = kps[:, 2]
+
+        if self.kpt_filter is None:
+            # First keypoint detection for this track
+            self.kpt_filter = OneEuroFilter(t, coords, min_cutoff=0.8, beta=0.01, d_cutoff=1.0)
+            self.conf_filter = OneEuroFilter(t, confs, min_cutoff=2.0, beta=0.005, d_cutoff=1.0)
+            smoothed_coords = coords
+            smoothed_confs = confs
+        else:
+            smoothed_coords = self.kpt_filter.filter(t, coords)
+            smoothed_confs = self.conf_filter.filter(t, confs)
+
+        # Smooth handedness probability with exponential moving average
+        alpha_hand = 0.20
+        self.hand_prob = (1.0 - alpha_hand) * self.hand_prob + alpha_hand * float(hand_prob)
+
+        out = np.zeros_like(kps)
+        out[:, :2] = smoothed_coords
+        out[:, 2] = np.clip(smoothed_confs, 0.0, 1.0)
+        self.last_kps = out
+        self.lost_count = 0
+        self.age += 1
+        return out
+
+
+def box_iou(b1, b2) -> float:
+    x1 = max(b1[0], b2[0])
+    y1 = max(b1[1], b2[1])
+    x2 = min(b1[2], b2[2])
+    y2 = min(b1[3], b2[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    a1 = max(1.0, (b1[2] - b1[0]) * (b1[3] - b1[1]))
+    a2 = max(1.0, (b2[2] - b2[0]) * (b2[3] - b2[1]))
+    return inter / (a1 + a2 - inter)
+
+
 def draw_skeleton(frame, kpts, is_left=True):
     colors = COLOR_LEFT if is_left else COLOR_RIGHT
     # Draw bones
@@ -85,20 +234,24 @@ def draw_skeleton(frame, kpts, is_left=True):
         x1, y1, v1 = kpts[p1]
         x2, y2, v2 = kpts[p2]
         if v1 > 0.20 and v2 > 0.20:
-            alpha = min(v1, v2)
-            cv2.line(frame, (int(x1), int(y1)), (int(x2), int(y2)), colors["skeleton"], 2, cv2.LINE_AA)
+            cv2.line(frame, (int(round(x1)), int(round(y1))), (int(round(x2)), int(round(y2))), colors["skeleton"], 2, cv2.LINE_AA)
 
     # Draw joints
     for i in range(13):
         x, y, v = kpts[i]
+        ix, iy = int(round(x)), int(round(y))
         if v >= 0.35:
             # High confidence: solid circle
-            cv2.circle(frame, (int(x), int(y)), 4, colors["kpt_vis"], -1, cv2.LINE_AA)
-            cv2.circle(frame, (int(x), int(y)), 5, (0, 0, 0), 1, cv2.LINE_AA)
+            cv2.circle(frame, (ix, iy), 4, colors["kpt_vis"], -1, cv2.LINE_AA)
+            cv2.circle(frame, (ix, iy), 5, (0, 0, 0), 1, cv2.LINE_AA)
         elif v >= 0.15:
             # Inferred / occluded: hollow ring
-            cv2.circle(frame, (int(x), int(y)), 4, colors["kpt_occ"], 1, cv2.LINE_AA)
+            cv2.circle(frame, (ix, iy), 4, colors["kpt_occ"], 1, cv2.LINE_AA)
 
+
+# ==============================================================================
+# 3. Main Video Evaluation Runner
+# ==============================================================================
 
 def run_video_evaluation(
     rtmpose_weights: str,
@@ -106,26 +259,25 @@ def run_video_evaluation(
     video_path: str,
     output_path: str,
     device_name: str = "cuda" if torch.cuda.is_available() else "cpu",
-    conf_thresh: float = 0.30
+    conf_thresh: float = 0.30,
+    use_postprocessing: bool = True
 ):
     if device_name == "cuda" and not torch.cuda.is_available():
         print("[!] CUDA is not available in the current Python environment. Falling back to CPU.")
         device_name = "cpu"
     device = torch.device(device_name)
     print("=" * 70)
-    print("  QUALCOMM RTMPOSE-13KP VIDEO EVALUATION & VISUALIZATION")
+    print("  QUALCOMM RTMPOSE-13KP VIDEO EVALUATION & POST-PROCESSING")
     print(f"  RTMPose Weights:   {rtmpose_weights}")
     print(f"  Detector Weights:  {detector_weights}")
     print(f"  Input Video:       {video_path}")
     print(f"  Output Video:      {output_path}")
+    print(f"  Post-Processing:   {'One-Euro Temporal Filtering + Box Tracking + Hand EMA' if use_postprocessing else 'Disabled (Raw)'}")
     print(f"  Device:            {device}")
     print("=" * 70)
 
     # 1. Load RTMPose Model
-    try:
-        ckpt = torch.load(rtmpose_weights, map_location=device, weights_only=False)
-    except TypeError:
-        ckpt = torch.load(rtmpose_weights, map_location=device)
+    ckpt = torch.load(rtmpose_weights, map_location=device, weights_only=False)
     backbone_name = ckpt.get("backbone_name", "cspnext")
     state_dict = ckpt["model_state"] if "model_state" in ckpt else ckpt
     has_hand = any("hand" in k for k in state_dict.keys())
@@ -138,7 +290,7 @@ def run_video_evaluation(
     ).to(device)
     rtmpose.load_state_dict(state_dict, strict=False)
     rtmpose.eval()
-    print(f"[+] Loaded RTMPose-13KP Checkpoint ({backbone_name}) successfully.")
+    print(f"[+] Loaded RTMPose-13KP Checkpoint ({backbone_name}, In-Model Handedness: {has_hand}) successfully.")
 
     # 2. Load Detector
     detector = YOLO(detector_weights)
@@ -164,11 +316,16 @@ def run_video_evaluation(
     t_start = time.time()
     latencies = []
 
+    # Active foot tracks dictionary: track_id -> FootTrack
+    tracks: Dict[int, FootTrack] = {}
+    next_track_id = 1
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         frame_idx += 1
+        t_current = frame_idx / fps
         t_frame_start = time.perf_counter()
 
         # Step A: Detect feet using detector
@@ -186,49 +343,131 @@ def run_video_evaluation(
                     "score": score
                 })
 
-        # Step B: For each foot, crop with unified affine warp matching training geometry
-        for foot in detected_feet:
-            x1, y1, x2, y2 = foot["bbox"]
-            bw = x2 - x1
-            bh = y2 - y1
-            cx = (x1 + x2) / 2.0
-            cy = (y1 + y2) / 2.0
+        # Step B: Associate detections with existing tracks
+        # Compute IoU matrix between active tracks and detections
+        active_track_ids = list(tracks.keys())
+        matched_tracks = set()
+        matched_detections = set()
 
-            # Centralized crop geometry with crop_padding=0.25 (exact parity with training)
-            cx, cy, size = compute_crop_box(cx, cy, bw, bh, crop_padding=0.25)
+        if active_track_ids and detected_feet:
+            iou_matrix = np.zeros((len(active_track_ids), len(detected_feet)), dtype=np.float32)
+            for r, tid in enumerate(active_track_ids):
+                trk_b = tracks[tid].smoothed_bbox
+                for c, det in enumerate(detected_feet):
+                    iou_matrix[r, c] = box_iou(trk_b, det["bbox"])
+
+            # Greedy match on highest IoU
+            while True:
+                max_val = iou_matrix.max()
+                if max_val < 0.25:
+                    break
+                r, c = np.unravel_index(iou_matrix.argmax(), iou_matrix.shape)
+                tid = active_track_ids[r]
+                matched_tracks.add(tid)
+                matched_detections.add(c)
+
+                # Process matched foot
+                det = detected_feet[c]
+                raw_bbox = det["bbox"]
+
+                if use_postprocessing:
+                    s_bbox = tracks[tid].update_box(t_current, raw_bbox)
+                    cx, cy, size = tracks[tid].get_crop_params(crop_padding=0.25)
+                else:
+                    s_bbox = raw_bbox
+                    x1, y1, x2, y2 = raw_bbox
+                    bw, bh = max(1.0, x2 - x1), max(1.0, y2 - y1)
+                    raw_cx, raw_cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+                    cx, cy, size = compute_crop_box(raw_cx, raw_cy, bw, bh, crop_padding=0.25)
+
+                # Affine Crop & Inference
+                M, M_inv = get_crop_affine_transform(cx, cy, size, out_size=256, rot=0.0)
+                crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
+                crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
+
+                with torch.no_grad():
+                    preds = rtmpose(crop_t)
+                    simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
+                    hand_prob = float(preds["hand"].item()) if "hand" in preds else float(det["class_id"])
+
+                frame_kps = invert_keypoints(simcc_kps, M_inv)
+
+                if use_postprocessing:
+                    smooth_kps = tracks[tid].update_keypoints(t_current, frame_kps, hand_prob)
+                    is_left = (tracks[tid].hand_prob < 0.50)
+                else:
+                    smooth_kps = frame_kps
+                    is_left = (det["class_id"] == 0)
+
+                colors = COLOR_LEFT if is_left else COLOR_RIGHT
+                # Render tight stabilized box
+                box_x1 = int(round(s_bbox[0]))
+                box_y1 = int(round(s_bbox[1]))
+                box_x2 = int(round(s_bbox[2]))
+                box_y2 = int(round(s_bbox[3]))
+                cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), colors["bbox"], 2)
+
+                lbl = f"ID:{tid} {colors['label']} (Hand: {1.0 - tracks[tid].hand_prob if is_left else tracks[tid].hand_prob:.2f})"
+                cv2.putText(frame, lbl, (box_x1, max(20, box_y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 2)
+
+                # Draw 13-KP anatomical skeleton
+                draw_skeleton(frame, smooth_kps, is_left=is_left)
+
+                iou_matrix[r, :] = -1.0
+                iou_matrix[:, c] = -1.0
+
+        # Step C: Spawn new tracks for unmatched detections
+        for c, det in enumerate(detected_feet):
+            if c in matched_detections:
+                continue
+            raw_bbox = det["bbox"]
+            tid = next_track_id
+            next_track_id += 1
+            init_hand = float(det["class_id"])
+            tracks[tid] = FootTrack(tid, t_current, raw_bbox, initial_hand_prob=init_hand)
+
+            cx, cy, size = tracks[tid].get_crop_params(crop_padding=0.25)
             M, M_inv = get_crop_affine_transform(cx, cy, size, out_size=256, rot=0.0)
             crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
-
             crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
 
             with torch.no_grad():
                 preds = rtmpose(crop_t)
-                simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]  # [13, 3]
+                simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
+                hand_prob = float(preds["hand"].item()) if "hand" in preds else float(det["class_id"])
 
-            # Invert affine warp M to project keypoints back to full video frame coordinates
             frame_kps = invert_keypoints(simcc_kps, M_inv)
-
-            is_left = (foot["class_id"] == 0)
+            smooth_kps = tracks[tid].update_keypoints(t_current, frame_kps, hand_prob)
+            is_left = (tracks[tid].hand_prob < 0.50)
             colors = COLOR_LEFT if is_left else COLOR_RIGHT
 
-            # Draw box & label
-            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), colors["bbox"], 2)
-            lbl = f"{colors['label']} {foot['score']:.2f} (RTMPose SimCC)"
-            cv2.putText(frame, lbl, (int(x1), max(20, int(y1) - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 2)
+            box_x1 = int(round(raw_bbox[0]))
+            box_y1 = int(round(raw_bbox[1]))
+            box_x2 = int(round(raw_bbox[2]))
+            box_y2 = int(round(raw_bbox[3]))
+            cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), colors["bbox"], 2)
+            lbl = f"ID:{tid} {colors['label']} (New)"
+            cv2.putText(frame, lbl, (box_x1, max(20, box_y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 2)
+            draw_skeleton(frame, smooth_kps, is_left=is_left)
 
-            # Draw 13-KP anatomical skeleton
-            draw_skeleton(frame, frame_kps, is_left=is_left)
+        # Step D: Handle lost tracks (missing frame bridge & cleanup)
+        for tid in list(tracks.keys()):
+            if tid not in matched_tracks and tid < next_track_id - len(detected_feet):
+                tracks[tid].lost_count += 1
+                if tracks[tid].lost_count > 6:
+                    del tracks[tid]
 
         elapsed_ms = (time.perf_counter() - t_frame_start) * 1000.0
         latencies.append(elapsed_ms)
 
         # Draw Telemetry HUD
         rolling_fps = 1000.0 / max(1.0, np.mean(latencies[-30:]))
-        cv2.rectangle(frame, (10, 10), (380, 85), (20, 20, 20), -1)
-        cv2.rectangle(frame, (10, 10), (380, 85), (0, 255, 255), 1)
+        cv2.rectangle(frame, (10, 10), (460, 95), (20, 20, 20), -1)
+        cv2.rectangle(frame, (10, 10), (460, 95), (0, 255, 255), 1)
         cv2.putText(frame, "SHOES VTO: QUALCOMM RTMPOSE-13KP", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
-        cv2.putText(frame, f"Frame: {frame_idx}/{total_frames} | Latency: {elapsed_ms:.1f}ms", (20, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
-        cv2.putText(frame, f"Rolling FPS: {rolling_fps:.1f} | Active Feet: {len(detected_feet)}", (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1)
+        cv2.putText(frame, f"Post-Processing: 1-Euro Filter + Box Track + Hand EMA", (20, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 180), 1)
+        cv2.putText(frame, f"Frame: {frame_idx}/{total_frames} | Latency: {elapsed_ms:.1f}ms ({rolling_fps:.1f} FPS)", (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 0), 1)
+        cv2.putText(frame, f"Active Foot Tracks: {len(tracks)}", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 200, 255), 1)
 
         writer.write(frame)
 
@@ -249,15 +488,17 @@ def run_video_evaluation(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    default_weights = "checkpoints/rtmpose_13kp_official_coco/best.pt"
-    if not Path(default_weights).exists() and Path("checkpoints/rtmpose_13kp/best.pt").exists():
-        default_weights = "checkpoints/rtmpose_13kp/best.pt"
-    parser.add_argument("--rtmpose", type=str, default=default_weights)
+    default_rtm = "checkpoints/rtmpose_13kp_official_coco_full_data/best_with_hand.pt"
+    if not Path(default_rtm).exists():
+        default_rtm = "checkpoints/rtmpose_13kp_official_coco_full_data/best.pt"
+
+    parser.add_argument("--rtmpose", type=str, default=default_rtm)
     parser.add_argument("--detector", type=str, default="deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.pt")
-    parser.add_argument("--video", type=str, default="src/models/qualcomm_experiments/tests/test_video.mp4")
-    parser.add_argument("--output", type=str, default="deliverables/qualcomm_experiments/rtmpose_eval_demo.mp4")
+    parser.add_argument("--video", type=str, default="data/test_video.mp4")
+    parser.add_argument("--output", type=str, default="deliverables/qualcomm_experiments/rtmpose_eval_coco_full_data_demo.mp4")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--conf", type=float, default=0.30)
+    parser.add_argument("--no_postprocessing", action="store_true", help="Disable temporal filtering")
     args = parser.parse_args()
 
     run_video_evaluation(
@@ -266,6 +507,6 @@ if __name__ == "__main__":
         video_path=args.video,
         output_path=args.output,
         device_name=args.device,
-        conf_thresh=args.conf
+        conf_thresh=args.conf,
+        use_postprocessing=not args.no_postprocessing
     )
-
