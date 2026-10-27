@@ -38,7 +38,7 @@ from src.models.qualcomm_experiments.common.crop import (
     invert_keypoints,
     box_from_kps
 )
-from ultralytics import YOLO
+from src.models.qualcomm_experiments.nanodet.model import NanoDetPlus, nms_postprocess
 
 KEYPOINT_NAMES = [
     "toe_ground", "heel_back", "heel_ground", "ball_medial", "ball_lateral",
@@ -293,8 +293,18 @@ def run_video_evaluation(
     print(f"[+] Loaded RTMPose-13KP Checkpoint ({backbone_name}, In-Model Handedness: {has_hand}) successfully.")
 
     # 2. Load Detector
-    detector = YOLO(detector_weights)
-    print("[+] Loaded Foot Bounding Box Detector successfully.")
+    is_nanodet = ("nanodet" in detector_weights.lower())
+    if is_nanodet:
+        det_ckpt = torch.load(detector_weights, map_location=device, weights_only=False)
+        nanodet = NanoDetPlus(num_classes=1).to(device)
+        model_weights = det_ckpt.get("ema_state", det_ckpt.get("model_state", det_ckpt.get("model", det_ckpt)))
+        nanodet.load_state_dict(model_weights)
+        nanodet.eval()
+        print("[+] Loaded NanoDet-Plus Foot Detector (Apache-2.0, 1.17M params) successfully.")
+    else:
+        from ultralytics import YOLO
+        detector = YOLO(detector_weights)
+        print("[+] Loaded YOLO Foot Detector successfully.")
 
     # 3. Open Video
     cap = cv2.VideoCapture(str(video_path))
@@ -329,19 +339,37 @@ def run_video_evaluation(
         t_frame_start = time.perf_counter()
 
         # Step A: Detect feet using detector
-        det_res = detector(frame, imgsz=256, conf=conf_thresh, verbose=False, device=device)[0]
-
         detected_feet = []
-        if det_res.boxes is not None and len(det_res.boxes) > 0:
-            for b in det_res.boxes:
-                xyxy = b.xyxy[0].cpu().numpy()
-                cls_id = int(b.cls[0].item())
-                score = float(b.conf[0].item())
+        if is_nanodet:
+            h0, w0 = frame.shape[:2]
+            det_img_size = 320
+            frame_resized = cv2.resize(frame, (det_img_size, det_img_size))
+            inp = torch.from_numpy(frame_resized).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
+            with torch.no_grad():
+                out = nanodet(inp)
+                preds = nms_postprocess(out["boxes"][0], out["scores"][0], conf_thresh=conf_thresh, iou_thresh=0.45)
+            sx = w0 / float(det_img_size)
+            sy = h0 / float(det_img_size)
+            for p in preds:
+                bx = p["bbox"]
+                scaled_box = np.array([bx[0] * sx, bx[1] * sy, bx[2] * sx, bx[3] * sy], dtype=np.float32)
                 detected_feet.append({
-                    "bbox": xyxy,
-                    "class_id": cls_id,
-                    "score": score
+                    "bbox": scaled_box,
+                    "class_id": p["class_id"],
+                    "score": p["score"]
                 })
+        else:
+            det_res = detector(frame, imgsz=256, conf=conf_thresh, verbose=False, device=device)[0]
+            if det_res.boxes is not None and len(det_res.boxes) > 0:
+                for b in det_res.boxes:
+                    xyxy = b.xyxy[0].cpu().numpy()
+                    cls_id = int(b.cls[0].item())
+                    score = float(b.conf[0].item())
+                    detected_feet.append({
+                        "bbox": xyxy,
+                        "class_id": cls_id,
+                        "score": score
+                    })
 
         # Step B: Associate detections with existing tracks
         # Compute IoU matrix between active tracks and detections
@@ -462,9 +490,10 @@ def run_video_evaluation(
 
         # Draw Telemetry HUD
         rolling_fps = 1000.0 / max(1.0, np.mean(latencies[-30:]))
-        cv2.rectangle(frame, (10, 10), (460, 95), (20, 20, 20), -1)
-        cv2.rectangle(frame, (10, 10), (460, 95), (0, 255, 255), 1)
-        cv2.putText(frame, "SHOES VTO: QUALCOMM RTMPOSE-13KP", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 1)
+        detector_lbl = "NanoDet-Plus (Apache-2.0)" if is_nanodet else "YOLOv8 Stage-A"
+        cv2.rectangle(frame, (10, 10), (480, 95), (20, 20, 20), -1)
+        cv2.rectangle(frame, (10, 10), (480, 95), (0, 255, 255), 1)
+        cv2.putText(frame, f"SHOES VTO: {detector_lbl} + RTMPose-13KP", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1)
         cv2.putText(frame, f"Post-Processing: 1-Euro Filter + Box Track + Hand EMA", (20, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 180), 1)
         cv2.putText(frame, f"Frame: {frame_idx}/{total_frames} | Latency: {elapsed_ms:.1f}ms ({rolling_fps:.1f} FPS)", (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 0), 1)
         cv2.putText(frame, f"Active Foot Tracks: {len(tracks)}", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 200, 255), 1)
@@ -492,10 +521,14 @@ if __name__ == "__main__":
     if not Path(default_rtm).exists():
         default_rtm = "checkpoints/rtmpose_13kp_official_coco_full_data/best.pt"
 
+    default_det = "checkpoints/nanodet_foot_320/best.pt"
+    if not Path(default_det).exists():
+        default_det = "deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.pt"
+
     parser.add_argument("--rtmpose", type=str, default=default_rtm)
-    parser.add_argument("--detector", type=str, default="deliverables/stage_a_13kp/models/stage-a-256-13kp-v7.pt")
+    parser.add_argument("--detector", type=str, default=default_det)
     parser.add_argument("--video", type=str, default="data/test_video.mp4")
-    parser.add_argument("--output", type=str, default="deliverables/qualcomm_experiments/rtmpose_eval_coco_full_data_demo.mp4")
+    parser.add_argument("--output", type=str, default="deliverables/qualcomm_experiments/nanodet_rtmpose_apache2_demo.mp4")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--conf", type=float, default=0.30)
     parser.add_argument("--no_postprocessing", action="store_true", help="Disable temporal filtering")

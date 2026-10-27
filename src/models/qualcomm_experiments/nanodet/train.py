@@ -63,7 +63,7 @@ class ModelEMA:
         self.module.load_state_dict(self.backup)
 
 
-def evaluate_val_metrics(model, val_loader, device, conf_thresh=0.20):
+def evaluate_val_metrics(model, val_loader, device, num_classes=1, conf_thresh=0.20):
     model.eval()
     tp_50, fp_50, fn_50 = 0, 0, 0
     tp_75, fp_75, fn_75 = 0, 0, 0
@@ -76,6 +76,7 @@ def evaluate_val_metrics(model, val_loader, device, conf_thresh=0.20):
         for batch in val_loader:
             imgs = batch["images"].to(device)
             gt_boxes_list = batch["boxes"]
+            gt_labels_list = batch["labels"]
 
             out = model(imgs, export_mode=False)
             boxes = out["boxes"]
@@ -86,6 +87,7 @@ def evaluate_val_metrics(model, val_loader, device, conf_thresh=0.20):
             for b in range(B):
                 preds = nms_postprocess(boxes[b], scores[b], conf_thresh=conf_thresh, iou_thresh=0.45)
                 gt_boxes = gt_boxes_list[b].to(device)
+                gt_labels = gt_labels_list[b].to(device)
 
                 num_gt = gt_boxes.shape[0]
                 num_pred = len(preds)
@@ -123,9 +125,11 @@ def evaluate_val_metrics(model, val_loader, device, conf_thresh=0.20):
                 matched_50 = set()
                 for p_idx in range(num_pred):
                     best_iou, best_gt = iou_mat[p_idx].max(dim=-1)
-                    if best_iou.item() >= 0.50 and best_gt.item() not in matched_50:
+                    gt_id = best_gt.item()
+                    cls_match = (num_classes == 1 or preds[p_idx]["class_id"] == int(gt_labels[gt_id].item()))
+                    if best_iou.item() >= 0.50 and gt_id not in matched_50 and cls_match:
                         tp_50 += 1
-                        matched_50.add(best_gt.item())
+                        matched_50.add(gt_id)
                         ious_collected.append(best_iou.item())
                     else:
                         fp_50 += 1
@@ -135,9 +139,11 @@ def evaluate_val_metrics(model, val_loader, device, conf_thresh=0.20):
                 matched_75 = set()
                 for p_idx in range(num_pred):
                     best_iou, best_gt = iou_mat[p_idx].max(dim=-1)
-                    if best_iou.item() >= 0.75 and best_gt.item() not in matched_75:
+                    gt_id = best_gt.item()
+                    cls_match = (num_classes == 1 or preds[p_idx]["class_id"] == int(gt_labels[gt_id].item()))
+                    if best_iou.item() >= 0.75 and gt_id not in matched_75 and cls_match:
                         tp_75 += 1
-                        matched_75.add(best_gt.item())
+                        matched_75.add(gt_id)
                     else:
                         fp_75 += 1
                 fn_75 += (num_gt - len(matched_75))
@@ -193,6 +199,7 @@ def train_nanodet(
         img_size=img_size,
         num_classes=num_classes,
         augment=True,
+        allow_flip=(num_classes == 1),
         include_negatives=True
     )
     val_dataset = NanoDetFootDataset(
@@ -200,6 +207,7 @@ def train_nanodet(
         img_size=img_size,
         num_classes=num_classes,
         augment=False,
+        allow_flip=False,
         include_negatives=True
     )
 
@@ -318,7 +326,7 @@ def train_nanodet(
 
         if epoch % 2 == 0 or epoch == epochs:
             ema.apply_shadow()
-            metrics = evaluate_val_metrics(model, val_loader, device)
+            metrics = evaluate_val_metrics(model, val_loader, device, num_classes=num_classes)
             ema.restore()
 
             f1_50 = metrics["f1_50"]
