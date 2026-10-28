@@ -13,6 +13,7 @@ import random
 import sys
 import time
 from pathlib import Path
+from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -181,7 +182,14 @@ def train_nanodet(
     amp: bool = True,
     pretrained: bool = True,
     ckpt_path: str = DEFAULT_CKPT_PATH,
-    resume: str = None
+    resume: str = None,
+    reg_max: int = 16,
+    strides: List[int] = [8, 16, 32],
+    neck_type: str = "rep_pan",
+    act_type: str = "relu",
+    assigner: str = "tal",
+    loss_bbox_type: str = "ciou",
+    neg_penalty_weight: float = 1.5
 ):
     device = torch.device(device_name)
     out_path = Path(output_dir)
@@ -231,9 +239,11 @@ def train_nanodet(
     )
 
     print("=" * 70)
-    print("  EXPERIMENT: NanoDet-Plus Foot Detector (Apache-2.0) Training")
+    print("  EXPERIMENT: NanoDet-Plus Stage A Foot Detector (Hardware-Optimized)")
     print(f"  Dataset:         {data_dir} ({len(train_dataset)} train, {len(val_dataset)} val)")
-    print(f"  Backbone:        ShuffleNetV2 1.0x (Pretrained COCO: {pretrained})")
+    print(f"  Backbone:        ShuffleNetV2 1.0x (Pretrained: {pretrained}, Act: {act_type.upper()})")
+    print(f"  Neck:            {neck_type.upper()} | Strides: {strides} | BBox Loss: {loss_bbox_type.upper()}")
+    print(f"  Assigner:        {assigner.upper()} | Neg Penalty: {neg_penalty_weight}x | reg_max: {reg_max}")
     print(f"  Device:          {device} (AMP: {amp})")
     print(f"  Epochs:          {epochs} | Batch: {batch_size} | LR: {lr:.6f} | Classes: {num_classes}")
     print(f"  Resolution:      {img_size}x{img_size}")
@@ -242,11 +252,23 @@ def train_nanodet(
     model = NanoDetPlus(
         num_classes=num_classes,
         input_size=(img_size, img_size),
+        reg_max=reg_max,
+        strides=strides,
+        neck_type=neck_type,
+        act_type=act_type,
         pretrained=pretrained and (resume is None),
         ckpt_path=ckpt_path
     ).to(device)
 
-    criterion = NanoDetPlusLoss(num_classes=num_classes, reg_max=7).to(device)
+    criterion = NanoDetPlusLoss(
+        num_classes=num_classes,
+        reg_max=reg_max,
+        strides=strides,
+        loss_bbox_type=loss_bbox_type,
+        assigner=assigner,
+        neg_penalty_weight=neg_penalty_weight
+    ).to(device)
+
 
     # Differential learning rate to preserve pretrained features
     bb_params = [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad]
@@ -373,18 +395,26 @@ def train_nanodet(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="data/merged_v4_1_v4_2_v5_raw_13kp_with_negative3")
-    parser.add_argument("--output", type=str, default="checkpoints/nanodet_foot")
-    parser.add_argument("--epochs", type=int, default=80)
+    parser.add_argument("--output", type=str, default="checkpoints/nanodet_stage_a_improved")
+    parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--num_classes", type=int, default=1)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--img_size", type=int, default=320)
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--img_size", type=int, default=256)
+    parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--amp", action="store_true", default=True)
     parser.add_argument("--ckpt", type=str, default=DEFAULT_CKPT_PATH)
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--reg_max", type=int, default=16)
+    parser.add_argument("--neck", type=str, default="rep_pan", choices=["rep_pan", "ghost_pan"])
+    parser.add_argument("--act", type=str, default="relu", choices=["relu", "leaky", "relu6"])
+    parser.add_argument("--assigner", type=str, default="tal", choices=["tal", "center"])
+    parser.add_argument("--loss_bbox", type=str, default="ciou", choices=["ciou", "giou"])
+    parser.add_argument("--neg_penalty", type=float, default=1.5)
     args = parser.parse_args()
+
+    strides = [8, 16, 32] if args.neck == "rep_pan" else [8, 16, 32, 64]
 
     train_nanodet(
         data_dir=args.data,
@@ -398,5 +428,13 @@ if __name__ == "__main__":
         workers=args.workers,
         amp=args.amp,
         ckpt_path=args.ckpt,
-        resume=args.resume
+        resume=args.resume,
+        reg_max=args.reg_max,
+        strides=strides,
+        neck_type=args.neck,
+        act_type=args.act,
+        assigner=args.assigner,
+        loss_bbox_type=args.loss_bbox,
+        neg_penalty_weight=args.neg_penalty
     )
+

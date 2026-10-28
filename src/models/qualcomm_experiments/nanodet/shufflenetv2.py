@@ -3,6 +3,8 @@ nanodet/shufflenetv2.py
 ───────────────────────
 ShuffleNetV2 1.0x Backbone for NanoDet-Plus (Apache-2.0 / BSD-3-Clause).
 Extracts multi-scale features at strides 8 (stage2), 16 (stage3), and 32 (stage4).
+Supports pure ReLU (native torchvision ImageNet weights, zero INT8 NPU penalty)
+as well as legacy LeakyReLU(0.1) for backward compatibility with official COCO checkpoints.
 """
 
 from typing import List, Tuple
@@ -12,7 +14,7 @@ from torchvision.models import shufflenet_v2_x1_0, ShuffleNet_V2_X1_0_Weights
 
 
 def _relu_to_leaky(mod: nn.Module):
-    """Recursively replaces all nn.ReLU with nn.LeakyReLU(0.1, inplace=True) to match official NanoDet-Plus."""
+    """Recursively replaces all nn.ReLU with nn.LeakyReLU(0.1, inplace=True)."""
     for name, child in mod.named_children():
         if isinstance(child, nn.ReLU):
             setattr(mod, name, nn.LeakyReLU(0.1, inplace=True))
@@ -22,18 +24,20 @@ def _relu_to_leaky(mod: nn.Module):
 
 class ShuffleNetV2Backbone(nn.Module):
     """
-    ShuffleNetV2 1.0x multi-scale feature extractor matching official NanoDet-Plus.
+    ShuffleNetV2 1.0x multi-scale feature extractor.
     Feature Channels:
       - Stage 2: 116 channels (stride 8)
       - Stage 3: 232 channels (stride 16)
       - Stage 4: 464 channels (stride 32)
-    Uses LeakyReLU(0.1) activations across all stages per official NanoDet specifications.
+    Uses native ReLU by default (100% matched to torchvision ImageNet pretrained weights
+    and optimal for Qualcomm Hexagon NPU / WASM SIMD INT8 quantization).
     """
-    def __init__(self, pretrained: bool = True):
+    def __init__(self, pretrained: bool = True, activation: str = "relu"):
         super().__init__()
         weights = ShuffleNet_V2_X1_0_Weights.DEFAULT if pretrained else None
         m = shufflenet_v2_x1_0(weights=weights)
-        _relu_to_leaky(m)
+        if activation == "leaky":
+            _relu_to_leaky(m)
 
         self.conv1 = m.conv1
         self.maxpool = m.maxpool
@@ -52,4 +56,5 @@ class ShuffleNetV2Backbone(nn.Module):
         c4 = self.stage4(c3)  # [B, 464, H/32, W/32]
 
         return [c2, c3, c4]
+
 

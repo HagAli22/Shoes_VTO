@@ -15,32 +15,46 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def get_activation(act_type: str = "relu"):
+    """Returns requested activation function module."""
+    if act_type == "relu":
+        return nn.ReLU(inplace=True)
+    elif act_type == "leaky":
+        return nn.LeakyReLU(0.1, inplace=True)
+    elif act_type == "relu6":
+        return nn.ReLU6(inplace=True)
+    elif act_type == "silu":
+        return nn.SiLU(inplace=True)
+    return nn.ReLU(inplace=True)
+
+
 class ConvModule(nn.Module):
-    """1x1 Conv + BatchNorm2d + LeakyReLU(0.1)."""
-    def __init__(self, in_ch: int, out_ch: int, k: int = 1, s: int = 1, p: int = 0):
+    """1x1 Conv + BatchNorm2d + Activation."""
+    def __init__(self, in_ch: int, out_ch: int, k: int = 1, s: int = 1, p: int = 0, act_type: str = "relu"):
         super().__init__()
         self.conv = nn.Conv2d(in_ch, out_ch, k, s, p, bias=False)
         self.bn = nn.BatchNorm2d(out_ch)
-        self.act = nn.LeakyReLU(0.1, inplace=True)
+        self.act = get_activation(act_type)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.act(self.bn(self.conv(x)))
 
 
 class DepthwiseSeparableConv(nn.Module):
-    """Depthwise 5x5 Conv + BN + Pointwise 1x1 Conv + BN + LeakyReLU(0.1)."""
-    def __init__(self, in_ch: int, out_ch: int, k: int = 5, s: int = 1, p: int = 2):
+    """Depthwise Conv (3x3 or 5x5) + BN + Pointwise 1x1 Conv + BN + Activation."""
+    def __init__(self, in_ch: int, out_ch: int, k: int = 3, s: int = 1, p: int = 1, act_type: str = "relu"):
         super().__init__()
         self.depthwise = nn.Conv2d(in_ch, in_ch, k, s, p, groups=in_ch, bias=False)
         self.dwnorm = nn.BatchNorm2d(in_ch)
         self.pointwise = nn.Conv2d(in_ch, out_ch, 1, 1, 0, bias=False)
         self.pwnorm = nn.BatchNorm2d(out_ch)
-        self.act = nn.LeakyReLU(0.1, inplace=True)
+        self.act = get_activation(act_type)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.act(self.dwnorm(self.depthwise(x)))
         x = self.act(self.pwnorm(self.pointwise(x)))
         return x
+
 
 
 class GhostModule(nn.Module):
@@ -166,3 +180,69 @@ class GhostPAN(nn.Module):
         p5 = self.extra_lvl_in_conv[0](c4) + self.extra_lvl_out_conv[0](n4)
 
         return [n2, n3, n4, p5]
+
+
+class RepPAN(nn.Module):
+    """
+    Hardware-Optimized Rep-PAN Feature Pyramid Network for Stage A Foot Detection.
+    Features:
+      - Native 3x3 Depthwise Separable Convolutions (Winograd friendly)
+      - Contiguous residual summation (zero channel concatenation memory bloat)
+      - Pure ReLU / ReLU6 activations (zero-overhead INT8 quantization)
+      - Configurable for 3 pyramid levels [strides 8, 16, 32] or 4 levels [8, 16, 32, 64]
+    """
+    def __init__(
+        self,
+        in_channels: List[int] = [116, 232, 464],
+        out_channels: int = 96,
+        num_levels: int = 3,
+        act_type: str = "relu"
+    ):
+        super().__init__()
+        self.num_levels = num_levels
+        self.act_type = act_type
+
+        # 1x1 Conv input projections
+        self.reduce_layers = nn.ModuleList([
+            ConvModule(ch, out_channels, k=1, s=1, p=0, act_type=act_type) for ch in in_channels
+        ])
+
+        # Top-down fusion with 3x3 Depthwise-Separable Convolutions
+        self.top_down_conv3 = DepthwiseSeparableConv(out_channels, out_channels, k=3, s=1, p=1, act_type=act_type)
+        self.top_down_conv2 = DepthwiseSeparableConv(out_channels, out_channels, k=3, s=1, p=1, act_type=act_type)
+
+        # Bottom-up downsamples (stride 2) & fusion blocks
+        self.downsample2 = DepthwiseSeparableConv(out_channels, out_channels, k=3, s=2, p=1, act_type=act_type)
+        self.bottom_up_conv3 = DepthwiseSeparableConv(out_channels, out_channels, k=3, s=1, p=1, act_type=act_type)
+
+        self.downsample3 = DepthwiseSeparableConv(out_channels, out_channels, k=3, s=2, p=1, act_type=act_type)
+        self.bottom_up_conv4 = DepthwiseSeparableConv(out_channels, out_channels, k=3, s=1, p=1, act_type=act_type)
+
+        if num_levels == 4:
+            self.extra_lvl_down = DepthwiseSeparableConv(out_channels, out_channels, k=3, s=2, p=1, act_type=act_type)
+
+    def forward(self, feats: List[torch.Tensor]) -> List[torch.Tensor]:
+        c2, c3, c4 = [r(f) for r, f in zip(self.reduce_layers, feats)]
+
+        # Top-down pathway:
+        p4 = c4
+        p4_up = F.interpolate(p4, scale_factor=2, mode="nearest")
+        p3 = self.top_down_conv3(p4_up + c3)
+
+        p3_up = F.interpolate(p3, scale_factor=2, mode="nearest")
+        p2 = self.top_down_conv2(p3_up + c2)
+
+        # Bottom-up pathway:
+        n2 = p2
+        n2_down = self.downsample2(n2)
+        n3 = self.bottom_up_conv3(n2_down + p3)
+
+        n3_down = self.downsample3(n3)
+        n4 = self.bottom_up_conv4(n3_down + p4)
+
+        if self.num_levels == 4:
+            p5 = self.extra_lvl_down(n4)
+            return [n2, n3, n4, p5]
+
+        return [n2, n3, n4]
+

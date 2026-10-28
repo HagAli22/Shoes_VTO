@@ -52,42 +52,58 @@ class Integral(nn.Module):
 
 class NanoDetPlusHead(nn.Module):
     """
-    Official NanoDet-Plus Head.
+    Official NanoDet-Plus Head & Hardware-Optimized Stage A Head.
     Features:
-      - 4 scales: strides [8, 16, 32, 64]
-      - cls_convs: 4 levels x 2 stacked DepthwiseSeparableConv (k=5, 96 ch)
-      - gfl_cls: 4 levels of 1x1 conv predicting (num_classes + 32) channels
-      - distribution_project: Integral(reg_max=7)
+      - Multi-scale support (e.g. strides [8, 16, 32] or [8, 16, 32, 64])
+      - Stacked DepthwiseSeparableConv towers (k=3 or k=5)
+      - Pure ReLU or LeakyReLU activations
+      - Unified GFL classification + DFL bounding box distribution heads
+      - Configurable reg_max (16 for high-precision reach, 7 for legacy checkpoints)
     """
     def __init__(
         self,
         num_classes: int = 1,
         in_channels: int = 96,
         stacked_convs: int = 2,
-        reg_max: int = 7,
-        strides: List[int] = [8, 16, 32, 64]
+        reg_max: int = 16,
+        strides: List[int] = [8, 16, 32],
+        act_type: str = "relu",
+        kernel_size: int = 3
     ):
         super().__init__()
         self.num_classes = num_classes
         self.in_channels = in_channels
         self.reg_max = reg_max
         self.strides = strides
+        self.act_type = act_type
+        self.kernel_size = kernel_size
 
         self.distribution_project = Integral(reg_max=reg_max)
 
         self.cls_convs = nn.ModuleList()
         self.gfl_cls = nn.ModuleList()
+        pad = kernel_size // 2
 
         for _ in strides:
             convs = nn.ModuleList()
             for _ in range(stacked_convs):
-                convs.append(DepthwiseSeparableConv(in_channels, in_channels, k=5, s=1, p=2))
+                convs.append(
+                    DepthwiseSeparableConv(
+                        in_channels,
+                        in_channels,
+                        k=kernel_size,
+                        s=1,
+                        p=pad,
+                        act_type=act_type
+                    )
+                )
             self.cls_convs.append(convs)
             self.gfl_cls.append(
                 nn.Conv2d(in_channels, num_classes + 4 * (reg_max + 1), kernel_size=1, stride=1, padding=0)
             )
 
         self._init_weights()
+
 
     def _init_weights(self):
         prior_prob = 0.01

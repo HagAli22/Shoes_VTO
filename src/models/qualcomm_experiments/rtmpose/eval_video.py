@@ -296,11 +296,31 @@ def run_video_evaluation(
     is_nanodet = ("nanodet" in detector_weights.lower())
     if is_nanodet:
         det_ckpt = torch.load(detector_weights, map_location=device, weights_only=False)
-        nanodet = NanoDetPlus(num_classes=1).to(device)
         model_weights = det_ckpt.get("ema_state", det_ckpt.get("model_state", det_ckpt.get("model", det_ckpt)))
+
+        # Automatically adapt to improved RepPAN or legacy GhostPAN checkpoint configuration
+        has_extra_lvl = any("extra_lvl" in k for k in model_weights.keys())
+        has_gfl_68 = any(k.endswith("gfl_cls.0.weight") and v.shape[0] == 69 for k, v in model_weights.items())
+        reg_max = 16 if has_gfl_68 else 7
+        strides = [8, 16, 32, 64] if has_extra_lvl else [8, 16, 32]
+        neck_type = "ghost_pan" if has_extra_lvl else "rep_pan"
+        act_type = "leaky" if has_extra_lvl else "relu"
+        kernel_size = 5 if has_extra_lvl else 3
+
+        nanodet = NanoDetPlus(
+            num_classes=1,
+            input_size=(256, 256),
+            reg_max=reg_max,
+            strides=strides,
+            neck_type=neck_type,
+            act_type=act_type,
+            kernel_size=kernel_size,
+            pretrained=False
+        ).to(device)
         nanodet.load_state_dict(model_weights)
         nanodet.eval()
-        print("[+] Loaded NanoDet-Plus Foot Detector (Apache-2.0, 1.17M params) successfully.")
+        print(f"[+] Loaded NanoDet Stage A Foot Detector (Neck: {neck_type}, Strides: {strides}, reg_max: {reg_max}) successfully.")
+
     else:
         from ultralytics import YOLO
         detector = YOLO(detector_weights)

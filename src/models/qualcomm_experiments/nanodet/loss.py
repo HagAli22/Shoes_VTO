@@ -1,19 +1,91 @@
 """
 nanodet/loss.py
 ───────────────
-Loss formulation for NanoDet-Plus (Apache-2.0):
-  - Generalized / Quality Focal Loss for classification
-  - GIoU Loss for bounding box geometry
-  - Distribution Focal Loss (DFL) for sub-pixel boundary distributions
-  - Fast Center-Sampling Label Assigner across 4 feature strides [8, 16, 32, 64]
+Hardware-Optimized Loss formulation for Stage A Foot Detector (Apache-2.0):
+  - Generalized / Quality Focal Loss for classification with Hard Negative Mining
+  - Complete IoU (CIoU) Loss accounting for overlap, center distance & aspect ratio
+  - Distribution Focal Loss (DFL) with expanded reg_max=16 to prevent box truncation
+  - Task-Aligned Assigner (TAL) & Adaptive Center Sampling across strides [8, 16, 32]
 """
 
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from src.models.qualcomm_experiments.nanodet.head import Integral
+
+
+def bbox_iou(box1: torch.Tensor, box2: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
+    """Standard pairwise or elementwise IoU."""
+    x1_1, y1_1, x2_1, y2_1 = box1.unbind(-1)
+    x1_2, y1_2, x2_2, y2_2 = box2.unbind(-1)
+
+    inter_x1 = torch.max(x1_1, x1_2)
+    inter_y1 = torch.max(y1_1, y1_2)
+    inter_x2 = torch.min(x2_1, x2_2)
+    inter_y2 = torch.min(y2_1, y2_2)
+    inter_w = (inter_x2 - inter_x1).clamp(min=0.0)
+    inter_h = (inter_y2 - inter_y1).clamp(min=0.0)
+    inter_area = inter_w * inter_h
+
+    area1 = (x2_1 - x1_1).clamp(min=0.0) * (y2_1 - y1_1).clamp(min=0.0)
+    area2 = (x2_2 - x1_2).clamp(min=0.0) * (y2_2 - y1_2).clamp(min=0.0)
+    union_area = area1 + area2 - inter_area + eps
+    return inter_area / union_area
+
+
+def bbox_ciou(box1: torch.Tensor, box2: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
+    """
+    Complete IoU (CIoU) Loss.
+    Penalizes overlap, normalized center distance, and aspect ratio discrepancy.
+    Essential for elongated foot shapes (2.5:1 ratio).
+    """
+    x1_1, y1_1, x2_1, y2_1 = box1.unbind(-1)
+    x1_2, y1_2, x2_2, y2_2 = box2.unbind(-1)
+
+    w1 = (x2_1 - x1_1).clamp(min=eps)
+    h1 = (y2_1 - y1_1).clamp(min=eps)
+    w2 = (x2_2 - x1_2).clamp(min=eps)
+    h2 = (y2_2 - y1_2).clamp(min=eps)
+
+    inter_x1 = torch.max(x1_1, x1_2)
+    inter_y1 = torch.max(y1_1, y1_2)
+    inter_x2 = torch.min(x2_1, x2_2)
+    inter_y2 = torch.min(y2_1, y2_2)
+    inter_w = (inter_x2 - inter_x1).clamp(min=0.0)
+    inter_h = (inter_y2 - inter_y1).clamp(min=0.0)
+    inter_area = inter_w * inter_h
+
+    union_area = w1 * h1 + w2 * h2 - inter_area + eps
+    iou = inter_area / union_area
+
+    # Smallest enclosing box
+    enclose_x1 = torch.min(x1_1, x1_2)
+    enclose_y1 = torch.min(y1_1, y1_2)
+    enclose_x2 = torch.max(x2_1, x2_2)
+    enclose_y2 = torch.max(y2_1, y2_2)
+    enclose_w = (enclose_x2 - enclose_x1).clamp(min=0.0)
+    enclose_h = (enclose_y2 - enclose_y1).clamp(min=0.0)
+    c2 = enclose_w ** 2 + enclose_h ** 2 + eps
+
+    # Center distance squared
+    cx1 = (x1_1 + x2_1) / 2.0
+    cy1 = (y1_1 + y2_1) / 2.0
+    cx2 = (x1_2 + x2_2) / 2.0
+    cy2 = (y1_2 + y2_2) / 2.0
+    rho2 = (cx1 - cx2) ** 2 + (cy1 - cy2) ** 2
+
+    # Aspect ratio consistency term
+    arctan_gt = torch.atan(w2 / h2)
+    arctan_pred = torch.atan(w1 / h1)
+    v = (4.0 / (math.pi ** 2)) * (arctan_gt - arctan_pred) ** 2
+    with torch.no_grad():
+        alpha = v / (1.0 - iou + v).clamp(min=eps)
+
+    ciou = iou - (rho2 / c2 + alpha * v)
+    return ciou
 
 
 def bbox_giou(box1: torch.Tensor, box2: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
@@ -65,7 +137,7 @@ def sigmoid_focal(
 def distribution_focal_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
-    reg_max: int = 7
+    reg_max: int = 16
 ) -> torch.Tensor:
     target = target.clamp(min=0.0, max=float(reg_max))
     left = target.long()
@@ -83,18 +155,25 @@ def distribution_focal_loss(
 
 class NanoDetPlusLoss(nn.Module):
     """
-    Composite Loss for NanoDet-Plus across 4 scales (strides 8, 16, 32, 64):
-      L_total = loss_cls + loss_giou * 2.0 + loss_dfl * 0.25
+    Composite Loss for Stage A NanoDet-Plus Foot Detector:
+      L_total = loss_cls + loss_bbox * bbox_weight + loss_dfl * dfl_weight
+    Features:
+      - CIoU loss option (aspect-ratio consistency)
+      - Task-Aligned Assigner (TAL) option
+      - Dedicated Hard Negative Background Penalization
     """
     def __init__(
         self,
         num_classes: int = 1,
-        reg_max: int = 7,
-        strides: List[int] = [8, 16, 32, 64],
-        center_radius: float = 1.5,
+        reg_max: int = 16,
+        strides: List[int] = [8, 16, 32],
+        center_radius: float = 2.0,
         loss_cls_weight: float = 1.0,
-        loss_giou_weight: float = 2.0,
-        loss_dfl_weight: float = 0.25
+        loss_bbox_weight: float = 2.0,
+        loss_dfl_weight: float = 0.25,
+        loss_bbox_type: str = "ciou",
+        assigner: str = "tal",
+        neg_penalty_weight: float = 1.5
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -102,8 +181,11 @@ class NanoDetPlusLoss(nn.Module):
         self.strides = strides
         self.center_radius = center_radius
         self.loss_cls_weight = loss_cls_weight
-        self.loss_giou_weight = loss_giou_weight
+        self.loss_bbox_weight = loss_bbox_weight
         self.loss_dfl_weight = loss_dfl_weight
+        self.loss_bbox_type = loss_bbox_type
+        self.assigner = assigner
+        self.neg_penalty_weight = neg_penalty_weight
         self.integral = Integral(reg_max=reg_max)
 
     def forward(
@@ -166,11 +248,7 @@ class NanoDetPlusLoss(nn.Module):
             anchor_cy = flat_anchors[:, 1].unsqueeze(1)
             stride_v = flat_strides.unsqueeze(1)
 
-            dx = (anchor_cx - gt_cx.unsqueeze(0)).abs()
-            dy = (anchor_cy - gt_cy.unsqueeze(0)).abs()
-            max_dist = self.center_radius * stride_v
-
-            in_center = (dx <= max_dist) & (dy <= max_dist)
+            # In-box candidate condition
             in_box = (
                 (anchor_cx >= b_boxes[:, 0].unsqueeze(0)) &
                 (anchor_cx <= b_boxes[:, 2].unsqueeze(0)) &
@@ -178,25 +256,82 @@ class NanoDetPlusLoss(nn.Module):
                 (anchor_cy <= b_boxes[:, 3].unsqueeze(0))
             )
 
-            # Scale-aware multi-scale assignment:
-            # Prevents small strides (stride 8, reg_max*8=56px) from being assigned to giant boxes
+            # Center distance condition with adaptive margin
+            dx = (anchor_cx - gt_cx.unsqueeze(0)).abs()
+            dy = (anchor_cy - gt_cy.unsqueeze(0)).abs()
+            max_dist = self.center_radius * stride_v
+            in_center = (dx <= max_dist) & (dy <= max_dist)
+
+            # Reach check: reg_max * stride covers maximum dimension
             box_max_dim = torch.max(b_boxes[:, 2] - b_boxes[:, 0], b_boxes[:, 3] - b_boxes[:, 1]).unsqueeze(0)
             max_reach = (self.reg_max + 1) * stride_v * 1.5
             scale_valid = (box_max_dim <= max_reach)
-            candidate_mask = in_center & in_box & scale_valid
 
-            areas = (b_boxes[:, 2] - b_boxes[:, 0]) * (b_boxes[:, 3] - b_boxes[:, 1])
-            candidate_areas = torch.where(candidate_mask, areas.unsqueeze(0), torch.tensor(1e9, device=device))
-            min_area, best_gt_idx = candidate_areas.min(dim=-1)
-            is_pos = min_area < 1e8
+            candidate_mask = (in_center | in_box) & scale_valid
 
-            pos_indices = torch.nonzero(is_pos).squeeze(-1)
+            if self.assigner == "tal":
+                # Task-Aligned Assigner: t = score^alpha * IoU^beta
+                with torch.no_grad():
+                    # Decode predicted boxes for candidate anchors
+                    pred_dist_b = self.integral(flat_reg[b]) * flat_strides.unsqueeze(-1)
+                    px1 = flat_anchors[:, 0] - pred_dist_b[:, 0]
+                    py1 = flat_anchors[:, 1] - pred_dist_b[:, 1]
+                    px2 = flat_anchors[:, 0] + pred_dist_b[:, 2]
+                    py2 = flat_anchors[:, 1] + pred_dist_b[:, 3]
+                    p_boxes = torch.stack([px1, py1, px2, py2], dim=-1)
+
+                    scores_b = flat_cls[b].sigmoid()  # [N_anchors, num_classes]
+
+                    align_matrix = torch.zeros((len(flat_anchors), num_gt), device=device)
+                    iou_matrix = torch.zeros((len(flat_anchors), num_gt), device=device)
+
+                    for g in range(num_gt):
+                        cands = candidate_mask[:, g]
+                        if not cands.any():
+                            # Fallback to nearest center
+                            cands = in_box[:, g] | in_center[:, g]
+                            if not cands.any():
+                                continue
+
+                        cand_idx = torch.nonzero(cands).squeeze(-1)
+                        gt_b_expand = b_boxes[g:g+1].expand(len(cand_idx), 4)
+                        ious = bbox_iou(p_boxes[cand_idx], gt_b_expand)
+                        iou_matrix[cand_idx, g] = ious
+
+                        cls_id = int(b_labels[g].item()) if self.num_classes > 1 else 0
+                        cls_id = min(cls_id, self.num_classes - 1)
+                        s = scores_b[cand_idx, cls_id]
+                        t = (s.clamp(min=1e-6) ** 0.5) * (ious.clamp(min=1e-6) ** 6.0)
+                        align_matrix[cand_idx, g] = t
+
+                    # Top-K candidates per GT
+                    topk = min(9, len(flat_anchors))
+                    pos_mask = torch.zeros((len(flat_anchors),), dtype=torch.bool, device=device)
+                    best_gt_idx = torch.zeros((len(flat_anchors),), dtype=torch.long, device=device)
+
+                    for g in range(num_gt):
+                        vals, indices = align_matrix[:, g].topk(topk)
+                        valid_top = vals > 0
+                        chosen = indices[valid_top]
+                        if len(chosen) > 0:
+                            pos_mask[chosen] = True
+                            best_gt_idx[chosen] = g
+
+                pos_indices = torch.nonzero(pos_mask).squeeze(-1)
+            else:
+                # Fast center sampling
+                areas = (b_boxes[:, 2] - b_boxes[:, 0]) * (b_boxes[:, 3] - b_boxes[:, 1])
+                candidate_areas = torch.where(candidate_mask, areas.unsqueeze(0), torch.tensor(1e9, device=device))
+                min_area, best_gt = candidate_areas.min(dim=-1)
+                is_pos = min_area < 1e8
+                pos_indices = torch.nonzero(is_pos).squeeze(-1)
+                best_gt_idx = best_gt
+
             if len(pos_indices) == 0:
                 continue
 
             matched_gt = best_gt_idx[pos_indices]
             pos_labels = b_labels[matched_gt]
-            # Clamp class label if num_classes == 1
             if self.num_classes == 1:
                 pos_labels = torch.zeros_like(pos_labels)
 
@@ -208,17 +343,24 @@ class NanoDetPlusLoss(nn.Module):
             pos_strides.append(flat_strides[pos_indices])
 
         num_pos = sum(p.shape[0] for p in pos_reg_preds) if pos_reg_preds else 0
-        # Sigmoid Focal Loss normalized by total positive anchors (matching official Quality Focal Loss recipe)
-        loss_cls = sigmoid_focal(flat_cls, cls_targets, gamma=2.0, alpha=0.25) / max(num_pos, 1)
 
+        # Dedicated background negative penalization
         if num_pos == 0:
+            # Negative image / negative batch: penalize all false positive activations
+            neg_loss = sigmoid_focal(flat_cls, cls_targets, gamma=2.0, alpha=0.25)
+            loss_cls = (neg_loss / max(1, flat_cls.shape[0] * flat_cls.shape[1])) * 50.0 * self.neg_penalty_weight
             zero_loss = torch.tensor(0.0, device=device, requires_grad=True)
             return {
                 "total_loss": loss_cls,
                 "loss_cls": loss_cls,
+                "loss_bbox": zero_loss,
                 "loss_giou": zero_loss,
                 "loss_dfl": zero_loss
             }
+
+
+        # Sigmoid Focal Loss normalized by positive anchors
+        loss_cls = sigmoid_focal(flat_cls, cls_targets, gamma=2.0, alpha=0.25) / max(num_pos, 1)
 
         all_pos_reg = torch.cat(pos_reg_preds, dim=0)
         all_pos_gt = torch.cat(pos_gt_boxes, dim=0)
@@ -232,8 +374,12 @@ class NanoDetPlusLoss(nn.Module):
         pred_y2 = all_pos_anchors[:, 1] + pred_dist[:, 3]
         pred_boxes = torch.stack([pred_x1, pred_y1, pred_x2, pred_y2], dim=-1)
 
-        giou = bbox_giou(pred_boxes, all_pos_gt)
-        loss_giou = (1.0 - giou).mean()
+        if self.loss_bbox_type == "ciou":
+            ciou = bbox_ciou(pred_boxes, all_pos_gt)
+            loss_bbox = (1.0 - ciou).mean()
+        else:
+            giou = bbox_giou(pred_boxes, all_pos_gt)
+            loss_bbox = (1.0 - giou).mean()
 
         gt_l = (all_pos_anchors[:, 0] - all_pos_gt[:, 0]) / all_pos_strides
         gt_t = (all_pos_anchors[:, 1] - all_pos_gt[:, 1]) / all_pos_strides
@@ -247,13 +393,15 @@ class NanoDetPlusLoss(nn.Module):
 
         total_loss = (
             self.loss_cls_weight * loss_cls +
-            self.loss_giou_weight * loss_giou +
+            self.loss_bbox_weight * loss_bbox +
             self.loss_dfl_weight * loss_dfl
         )
 
         return {
             "total_loss": total_loss,
             "loss_cls": loss_cls,
-            "loss_giou": loss_giou,
+            "loss_bbox": loss_bbox,
+            "loss_giou": loss_bbox,
             "loss_dfl": loss_dfl
         }
+

@@ -16,7 +16,7 @@ import torch.nn as nn
 import torchvision.ops as ops
 
 from src.models.qualcomm_experiments.nanodet.shufflenetv2 import ShuffleNetV2Backbone
-from src.models.qualcomm_experiments.nanodet.ghost_pan import GhostPAN
+from src.models.qualcomm_experiments.nanodet.ghost_pan import GhostPAN, RepPAN
 from src.models.qualcomm_experiments.nanodet.head import NanoDetPlusHead
 
 OFFICIAL_COCO_CKPT_URL = "https://github.com/RangiLyu/nanodet/releases/download/v1.0.0-alpha-1/nanodet-plus-m_320_checkpoint.ckpt"
@@ -138,10 +138,10 @@ def load_official_nanodet_weights(
 
 class NanoDetPlus(nn.Module):
     """
-    Official NanoDet-Plus Foot Detector (Apache-2.0).
-    Backbone: ShuffleNetV2 1.0x
-    Neck: Ghost-PAN (4 levels: strides 8, 16, 32, 64; 96 channels)
-    Head: NanoDetPlusHead with DFL bounding box expectation
+    NanoDet-Plus & Hardware-Optimized Stage A Foot Detector (Apache-2.0).
+    Backbone: ShuffleNetV2 1.0x with native ReLU
+    Neck: Rep-PAN (3x3 DWConv + residual addition) or Ghost-PAN
+    Head: NanoDetPlusHead with configurable reg_max & strides
     Input: Standardized BGR image in [0, 1] of shape [B, 3, 256, 256]
     """
     def __init__(
@@ -150,9 +150,12 @@ class NanoDetPlus(nn.Module):
         input_size: Tuple[int, int] = (256, 256),
         out_channels: int = 96,
         stacked_convs: int = 2,
-        reg_max: int = 7,
-        strides: List[int] = [8, 16, 32, 64],
-        pretrained: bool = True,
+        reg_max: int = 16,
+        strides: List[int] = [8, 16, 32],
+        neck_type: str = "rep_pan",
+        act_type: str = "relu",
+        kernel_size: int = 3,
+        pretrained: bool = False,
         ckpt_path: str = DEFAULT_CKPT_PATH
     ):
         super().__init__()
@@ -160,23 +163,39 @@ class NanoDetPlus(nn.Module):
         self.input_size = input_size
         self.strides = strides
         self.reg_max = reg_max
+        self.neck_type = neck_type
+        self.act_type = act_type
 
-        self.backbone = ShuffleNetV2Backbone()
-        self.fpn = GhostPAN(in_channels=self.backbone.out_channels, out_channels=out_channels)
+        # Backbone uses native ImageNet pretrained weights (pure ReLU)
+        self.backbone = ShuffleNetV2Backbone(pretrained=pretrained, activation=act_type)
+
+        if neck_type == "rep_pan":
+            self.fpn = RepPAN(
+                in_channels=self.backbone.out_channels,
+                out_channels=out_channels,
+                num_levels=len(strides),
+                act_type=act_type
+            )
+        else:
+            self.fpn = GhostPAN(in_channels=self.backbone.out_channels, out_channels=out_channels)
+
         self.head = NanoDetPlusHead(
             num_classes=num_classes,
             in_channels=out_channels,
             stacked_convs=stacked_convs,
             reg_max=reg_max,
-            strides=strides
+            strides=strides,
+            act_type=act_type,
+            kernel_size=kernel_size
         )
 
         # In-model normalization buffers matching official NanoDet (BGR format)
         self.register_buffer("mean", torch.tensor([103.53, 116.28, 123.675]).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor([57.375, 57.12, 58.395]).view(1, 3, 1, 1))
 
-        if pretrained:
+        if pretrained and Path(ckpt_path).exists() and reg_max == 7 and neck_type == "ghost_pan":
             load_official_nanodet_weights(self, ckpt_path=ckpt_path)
+
 
     @property
     def neck(self):
