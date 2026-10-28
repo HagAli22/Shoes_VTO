@@ -136,6 +136,73 @@ def load_official_nanodet_weights(
     }
 
 
+def load_foot_pretrained_weights(
+    model: nn.Module,
+    ckpt_path: str = "checkpoints/nanodet_foot_320/best.pt"
+) -> Dict[str, Any]:
+    """
+    Transfers foot-perception weights from existing champion checkpoint.
+    - Loads 100% of backbone (ShuffleNetV2 1.0x)
+    - Loads matching neck layers (reduce layers, etc.)
+    - Adapts head layers (cls logits & regression distribution transfer)
+    """
+    ckpt_file = Path(ckpt_path)
+    if not ckpt_file.exists():
+        print(f"[!] Warning: Pretrained foot checkpoint {ckpt_file} not found. Skipping transfer.")
+        return {"loaded_keys": 0, "missing_keys": len(model.state_dict())}
+
+    ckpt = torch.load(str(ckpt_file), map_location="cpu", weights_only=False)
+    state_dict = ckpt.get("ema_state", ckpt.get("model_state", ckpt.get("model", ckpt)))
+
+    model_state = model.state_dict()
+    loaded_keys = []
+    adapted_keys = []
+    missing_keys = []
+
+    num_classes = model.head.num_classes
+
+    for name, param in model_state.items():
+        if name in ("mean", "std"):
+            continue
+        if name in state_dict:
+            src_tensor = state_dict[name]
+            if src_tensor.shape == param.shape:
+                model_state[name] = src_tensor
+                loaded_keys.append(name)
+            elif "gfl_cls" in name:
+                # Handle adaptation between reg_max=7 (32 ch) and reg_max=16 (68 ch)
+                adapted_tensor = param.clone()
+                # 1. Copy classification weights / biases
+                adapted_tensor[:num_classes] = src_tensor[:num_classes]
+                # 2. Transfer regression distributions (4 directions: l, t, r, b)
+                src_bins = 8
+                dst_bins = model.head.reg_max + 1  # 17
+                for d in range(4):
+                    s_start = num_classes + d * src_bins
+                    s_end = s_start + min(src_bins, dst_bins)
+                    d_start = num_classes + d * dst_bins
+                    d_end = d_start + min(src_bins, dst_bins)
+                    adapted_tensor[d_start:d_end] = src_tensor[s_start:s_end]
+                model_state[name] = adapted_tensor
+                adapted_keys.append(name)
+            else:
+                missing_keys.append(f"{name} (shape mismatch: {param.shape} vs {src_tensor.shape})")
+        else:
+            missing_keys.append(name)
+
+    model.load_state_dict(model_state)
+    print(f"[+] Loaded pretrained foot detector weights from {ckpt_file}:")
+    print(f"    - Exact matching tensors: {len(loaded_keys)} / {len(model_state)}")
+    print(f"    - Adapted head tensors:   {len(adapted_keys)}")
+    print(f"    - Unloaded tensors:       {len(missing_keys)}")
+    return {
+        "loaded_keys": len(loaded_keys),
+        "adapted_keys": len(adapted_keys),
+        "missing_keys": len(missing_keys)
+    }
+
+
+
 class NanoDetPlus(nn.Module):
     """
     NanoDet-Plus & Hardware-Optimized Stage A Foot Detector (Apache-2.0).

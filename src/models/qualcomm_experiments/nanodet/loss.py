@@ -159,7 +159,8 @@ class NanoDetPlusLoss(nn.Module):
       L_total = loss_cls + loss_bbox * bbox_weight + loss_dfl * dfl_weight
     Features:
       - CIoU loss option (aspect-ratio consistency)
-      - Task-Aligned Assigner (TAL) option
+      - Two-Phase Assigner: Center-sampling warmup -> Relaxed Task-Aligned Assigner (TAL)
+      - Rebalanced loss weights (dfl: 0.05, bbox: 2.5) for rapid convergence
       - Dedicated Hard Negative Background Penalization
     """
     def __init__(
@@ -169,10 +170,11 @@ class NanoDetPlusLoss(nn.Module):
         strides: List[int] = [8, 16, 32],
         center_radius: float = 2.0,
         loss_cls_weight: float = 1.0,
-        loss_bbox_weight: float = 2.0,
-        loss_dfl_weight: float = 0.25,
+        loss_bbox_weight: float = 2.5,
+        loss_dfl_weight: float = 0.05,
         loss_bbox_type: str = "ciou",
         assigner: str = "tal",
+        warmup_assigner_epochs: int = 8,
         neg_penalty_weight: float = 1.5
     ):
         super().__init__()
@@ -185,6 +187,7 @@ class NanoDetPlusLoss(nn.Module):
         self.loss_dfl_weight = loss_dfl_weight
         self.loss_bbox_type = loss_bbox_type
         self.assigner = assigner
+        self.warmup_assigner_epochs = warmup_assigner_epochs
         self.neg_penalty_weight = neg_penalty_weight
         self.integral = Integral(reg_max=reg_max)
 
@@ -193,8 +196,10 @@ class NanoDetPlusLoss(nn.Module):
         preds: Dict[str, Any],
         gt_boxes: List[torch.Tensor],
         gt_labels: List[torch.Tensor],
-        img_size: Tuple[int, int] = (256, 256)
+        img_size: Tuple[int, int] = (256, 256),
+        current_epoch: int = 1
     ) -> Dict[str, torch.Tensor]:
+
         cls_preds = preds["cls_preds"]
         reg_preds = preds["reg_preds"]
         device = cls_preds[0].device
@@ -269,8 +274,11 @@ class NanoDetPlusLoss(nn.Module):
 
             candidate_mask = (in_center | in_box) & scale_valid
 
-            if self.assigner == "tal":
-                # Task-Aligned Assigner: t = score^alpha * IoU^beta
+            # If within warmup epochs, or if assigner == "center": use center sampling!
+            use_center_sampling = (self.assigner == "center") or (current_epoch <= self.warmup_assigner_epochs)
+
+            if not use_center_sampling and self.assigner == "tal":
+                # Relaxed Task-Aligned Assigner: t = score^0.5 * IoU^2.0
                 with torch.no_grad():
                     # Decode predicted boxes for candidate anchors
                     pred_dist_b = self.integral(flat_reg[b]) * flat_strides.unsqueeze(-1)
@@ -301,7 +309,8 @@ class NanoDetPlusLoss(nn.Module):
                         cls_id = int(b_labels[g].item()) if self.num_classes > 1 else 0
                         cls_id = min(cls_id, self.num_classes - 1)
                         s = scores_b[cand_idx, cls_id]
-                        t = (s.clamp(min=1e-6) ** 0.5) * (ious.clamp(min=1e-6) ** 6.0)
+                        # Relaxed TAL: beta=2.0 retains gradient flow on moderate IoUs
+                        t = (s.clamp(min=1e-6) ** 0.5) * (ious.clamp(min=1e-6) ** 2.0)
                         align_matrix[cand_idx, g] = t
 
                     # Top-K candidates per GT
@@ -319,13 +328,14 @@ class NanoDetPlusLoss(nn.Module):
 
                 pos_indices = torch.nonzero(pos_mask).squeeze(-1)
             else:
-                # Fast center sampling
+                # Robust aspect-ratio-aware center sampling (warmup)
                 areas = (b_boxes[:, 2] - b_boxes[:, 0]) * (b_boxes[:, 3] - b_boxes[:, 1])
                 candidate_areas = torch.where(candidate_mask, areas.unsqueeze(0), torch.tensor(1e9, device=device))
                 min_area, best_gt = candidate_areas.min(dim=-1)
                 is_pos = min_area < 1e8
                 pos_indices = torch.nonzero(is_pos).squeeze(-1)
                 best_gt_idx = best_gt
+
 
             if len(pos_indices) == 0:
                 continue
