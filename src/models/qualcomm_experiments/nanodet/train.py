@@ -7,11 +7,13 @@ regression transfer, and adapts classification heads for the unified 'foot' clas
 """
 
 import argparse
+import io
 import math
 import os
 import random
 import sys
 import time
+import zipfile
 from pathlib import Path
 import numpy as np
 import torch
@@ -273,27 +275,70 @@ def train_nanodet(
     best_f1 = 0.0
     start_epoch = 1
 
-    if resume and Path(resume).exists():
-        print(f"[*] Loading weights from: {resume}")
-        ckpt = torch.load(resume, map_location=device, weights_only=False)
-        state_to_load = ckpt.get("ema_state", ckpt.get("model_state", ckpt))
-        model.load_state_dict(state_to_load)
-        if "ema_state" in ckpt:
-            ema.shadow = {k: v.clone().detach() for k, v in ckpt["ema_state"].items()}
-        
-        # If resuming an unfinished run with same total epochs, restore optimizer & epoch.
-        # Otherwise, if epoch in ckpt >= epochs, treat as fine-tuning with fresh schedule.
-        ckpt_epoch = ckpt.get("epoch", 0)
-        if ckpt_epoch < epochs and "optimizer_state" in ckpt:
-            optimizer.load_state_dict(ckpt["optimizer_state"])
-            scheduler.load_state_dict(ckpt["scheduler_state"])
-            start_epoch = ckpt_epoch + 1
-            best_f1 = ckpt.get("f1_75", ckpt.get("f1", 0.0))
-            print(f"[+] Resumed training from epoch {start_epoch} (Best F1: {best_f1:.2f}%)")
+    if resume:
+        resume_p = Path(resume)
+        if not resume_p.exists():
+            print(f"[!] Warning: Checkpoint path does not exist: {resume}")
+            print(f"[*] Starting training from official COCO pretrained weights.")
         else:
-            print(f"[+] Fine-tuning initialized from checkpoint! Running fresh schedule for {epochs} epochs at lr={lr:.6f}.")
-            start_epoch = 1
-            best_f1 = ckpt.get("f1_75", ckpt.get("f1", 0.0))
+            file_size = resume_p.stat().st_size
+            print(f"[*] Inspecting checkpoint: {resume} ({file_size / (1024*1024):.2f} MB, {file_size} bytes)")
+
+            if file_size < 1000:
+                try:
+                    with open(resume_p, "r", encoding="utf-8", errors="ignore") as f_diag:
+                        snippet = f_diag.read(300)
+                    print(f"[!] WARNING: Checkpoint file is suspiciously small ({file_size} bytes)!\nFile Preview:\n{snippet}")
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"Checkpoint file '{resume}' is invalid or truncated ({file_size} bytes). "
+                    "If using Kaggle/Colab, please check that the file was downloaded completely."
+                )
+
+            ckpt = None
+            if zipfile.is_zipfile(resume_p):
+                try:
+                    with zipfile.ZipFile(resume_p, "r") as zf:
+                        names = zf.namelist()
+                        embedded = [n for n in names if n.endswith((".pt", ".pth"))]
+                        if embedded:
+                            print(f"[*] Detected outer ZIP archive containing nested checkpoint: {embedded[0]}")
+                            with zf.open(embedded[0]) as zf_file:
+                                data = io.BytesIO(zf_file.read())
+                                ckpt = torch.load(data, map_location=device, weights_only=False)
+                except Exception as z_err:
+                    print(f"[!] Zip inspection notice: {z_err}")
+
+            if ckpt is None:
+                try:
+                    ckpt = torch.load(resume_p, map_location=device, weights_only=False)
+                except Exception as load_err:
+                    with open(resume_p, "rb") as f_raw:
+                        hdr = f_raw.read(64)
+                    print(f"[!] torch.load failed on '{resume}': {load_err}")
+                    print(f"    Raw header bytes: {hdr}")
+                    raise RuntimeError(
+                        f"Failed to load checkpoint '{resume}' ({file_size} bytes): {load_err}\n"
+                        f"The file appears to be corrupted or not a valid PyTorch checkpoint archive."
+                    ) from load_err
+
+            state_to_load = ckpt.get("ema_state", ckpt.get("model_state", ckpt))
+            model.load_state_dict(state_to_load)
+            if "ema_state" in ckpt:
+                ema.shadow = {k: v.clone().detach() for k, v in ckpt["ema_state"].items()}
+
+            ckpt_epoch = ckpt.get("epoch", 0)
+            if ckpt_epoch < epochs and "optimizer_state" in ckpt:
+                optimizer.load_state_dict(ckpt["optimizer_state"])
+                scheduler.load_state_dict(ckpt["scheduler_state"])
+                start_epoch = ckpt_epoch + 1
+                best_f1 = ckpt.get("f1_75", ckpt.get("f1", 0.0))
+                print(f"[+] Resumed training from epoch {start_epoch} (Best F1: {best_f1:.2f}%)")
+            else:
+                print(f"[+] Fine-tuning initialized from checkpoint! Running fresh schedule for {epochs} epochs at lr={lr:.6f}.")
+                start_epoch = 1
+                best_f1 = ckpt.get("f1_75", ckpt.get("f1", 0.0))
 
     for epoch in range(start_epoch, epochs + 1):
         model.train()

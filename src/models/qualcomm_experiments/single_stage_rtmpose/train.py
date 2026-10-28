@@ -7,11 +7,13 @@ Warm-starts backbone from official COCO pretrained weights.
 """
 
 import argparse
+import io
 import math
 import os
 import random
 import sys
 import time
+import zipfile
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -315,31 +317,79 @@ def train_single_stage_rtmpose(
     best_score = 0.0
     start_epoch = 1
 
-    if resume and Path(resume).exists():
-        print(f"[*] Loading weights from checkpoint: {resume}")
-        ckpt = torch.load(resume, map_location=device, weights_only=False)
-        state_to_load = ckpt.get("ema_state", ckpt.get("model_state", ckpt))
-        missing, unexpected = model.load_state_dict(state_to_load, strict=False)
-        print(f"[+] Loaded weights successfully (missing keys: {len(missing)}, unexpected: {len(unexpected)})")
-        if "ema_state" in ckpt:
-            for k, v in ckpt["ema_state"].items():
-                if k in ema.shadow and ema.shadow[k].shape == v.shape:
-                    ema.shadow[k] = v.clone().detach()
-
-        ckpt_epoch = ckpt.get("epoch", 0)
-        if ckpt_epoch < epochs and "optimizer_state" in ckpt:
-            try:
-                optimizer.load_state_dict(ckpt["optimizer_state"])
-                scheduler.load_state_dict(ckpt["scheduler_state"])
-                start_epoch = ckpt_epoch + 1
-                best_score = float(ckpt.get("f1_50", 0.0)) * 0.4 + float(ckpt.get("pck_02", 0.0)) * 0.6
-                print(f"[+] Resumed training from epoch {start_epoch} (Best composite score: {best_score:.2f})")
-            except Exception as e:
-                print(f"[!] Optimizer state mismatch ({e}), starting fine-tuning with fresh optimizer at lr={lr:.6f}.")
+    if resume:
+        resume_p = Path(resume)
+        if not resume_p.exists():
+            print(f"[!] Warning: Checkpoint path does not exist: {resume}")
+            print(f"[*] Proceeding with official COCO pretrained backbone & SimCC head weights.")
         else:
-            print(f"[+] Fine-tuning initialized from checkpoint! Running fresh schedule for {epochs} epochs at lr={lr:.6f}.")
-            start_epoch = 1
-            best_score = float(ckpt.get("f1_50", 0.0)) * 0.4 + float(ckpt.get("pck_02", 0.0)) * 0.6
+            file_size = resume_p.stat().st_size
+            print(f"[*] Inspecting checkpoint: {resume} ({file_size / (1024*1024):.2f} MB, {file_size} bytes)")
+
+            # Check for corrupted / empty / text file
+            if file_size < 1000:
+                try:
+                    with open(resume_p, "r", encoding="utf-8", errors="ignore") as f_diag:
+                        snippet = f_diag.read(300)
+                    print(f"[!] WARNING: Checkpoint file is suspiciously small ({file_size} bytes)!\nFile Preview:\n{snippet}")
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"Checkpoint file '{resume}' is invalid or truncated ({file_size} bytes). "
+                    "If using Kaggle/Colab, please check that the file was downloaded completely and not a 0-byte file or text pointer."
+                )
+
+            # Check if this is an outer ZIP archive containing a nested .pt/.pth checkpoint
+            ckpt = None
+            if zipfile.is_zipfile(resume_p):
+                try:
+                    with zipfile.ZipFile(resume_p, "r") as zf:
+                        names = zf.namelist()
+                        embedded = [n for n in names if n.endswith((".pt", ".pth"))]
+                        if embedded:
+                            print(f"[*] Detected outer ZIP archive containing nested checkpoint: {embedded[0]}")
+                            with zf.open(embedded[0]) as zf_file:
+                                data = io.BytesIO(zf_file.read())
+                                ckpt = torch.load(data, map_location=device, weights_only=False)
+                except Exception as z_err:
+                    print(f"[!] Zip inspection notice: {z_err}")
+
+            if ckpt is None:
+                try:
+                    ckpt = torch.load(resume_p, map_location=device, weights_only=False)
+                except Exception as load_err:
+                    with open(resume_p, "rb") as f_raw:
+                        hdr = f_raw.read(64)
+                    print(f"[!] torch.load failed on '{resume}': {load_err}")
+                    print(f"    Raw header bytes: {hdr}")
+                    raise RuntimeError(
+                        f"Failed to load checkpoint '{resume}' ({file_size} bytes): {load_err}\n"
+                        f"The file appears to be corrupted or not a valid PyTorch checkpoint archive.\n"
+                        f"Please verify the file on Kaggle by running: !ls -lh {resume}"
+                    ) from load_err
+
+            state_to_load = ckpt.get("ema_state", ckpt.get("model_state", ckpt))
+            missing, unexpected = model.load_state_dict(state_to_load, strict=False)
+            print(f"[+] Loaded weights successfully (missing keys: {len(missing)}, unexpected: {len(unexpected)})")
+            if "ema_state" in ckpt:
+                for k, v in ckpt["ema_state"].items():
+                    if k in ema.shadow and ema.shadow[k].shape == v.shape:
+                        ema.shadow[k] = v.clone().detach()
+
+            ckpt_epoch = ckpt.get("epoch", 0)
+            if ckpt_epoch < epochs and "optimizer_state" in ckpt:
+                try:
+                    optimizer.load_state_dict(ckpt["optimizer_state"])
+                    scheduler.load_state_dict(ckpt["scheduler_state"])
+                    start_epoch = ckpt_epoch + 1
+                    best_score = float(ckpt.get("f1_50", 0.0)) * 0.4 + float(ckpt.get("pck_02", 0.0)) * 0.6
+                    print(f"[+] Resumed training from epoch {start_epoch} (Best composite score: {best_score:.2f})")
+                except Exception as e:
+                    print(f"[!] Optimizer state mismatch ({e}), starting fine-tuning with fresh optimizer at lr={lr:.6f}.")
+            else:
+                print(f"[+] Fine-tuning initialized from checkpoint! Running fresh schedule for {epochs} epochs at lr={lr:.6f}.")
+                start_epoch = 1
+                best_score = float(ckpt.get("f1_50", 0.0)) * 0.4 + float(ckpt.get("pck_02", 0.0)) * 0.6
 
     for epoch in range(start_epoch, epochs + 1):
         t_start = time.time()
