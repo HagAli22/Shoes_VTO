@@ -73,6 +73,7 @@ def evaluate_val_metrics(model, val_loader, device, num_classes=1, conf_thresh=0
     model.eval()
     tp_50, fp_50, fn_50 = 0, 0, 0
     tp_75, fp_75, fn_75 = 0, 0, 0
+    tp_75_35, fp_75_35, fn_75_35 = 0, 0, 0
     ious_collected = []
     clean_negatives = 0
     total_negatives = 0
@@ -98,6 +99,10 @@ def evaluate_val_metrics(model, val_loader, device, num_classes=1, conf_thresh=0
                 num_gt = gt_boxes.shape[0]
                 num_pred = len(preds)
 
+                # Predictions at operational threshold (conf=0.35)
+                preds_35 = [p for p in preds if p["score"] >= 0.35]
+                num_pred_35 = len(preds_35)
+
                 if num_gt == 0:
                     total_negatives += 1
                     if num_pred == 0:
@@ -105,11 +110,14 @@ def evaluate_val_metrics(model, val_loader, device, num_classes=1, conf_thresh=0
                     else:
                         fp_50 += num_pred
                         fp_75 += num_pred
+                    if num_pred_35 > 0:
+                        fp_75_35 += num_pred_35
                     continue
 
                 if num_pred == 0:
                     fn_50 += num_gt
                     fn_75 += num_gt
+                    fn_75_35 += num_gt
                     continue
 
                 pred_t = torch.tensor([p["bbox"] for p in preds], device=device, dtype=torch.float32)
@@ -127,7 +135,7 @@ def evaluate_val_metrics(model, val_loader, device, num_classes=1, conf_thresh=0
                 union_area = pred_area.unsqueeze(1) + gt_area.unsqueeze(0) - inter_area
                 iou_mat = inter_area / union_area.clamp(min=1e-7)
 
-                # IoU 0.50
+                # IoU 0.50 (conf=0.20)
                 matched_50 = set()
                 for p_idx in range(num_pred):
                     best_iou, best_gt = iou_mat[p_idx].max(dim=-1)
@@ -141,7 +149,7 @@ def evaluate_val_metrics(model, val_loader, device, num_classes=1, conf_thresh=0
                         fp_50 += 1
                 fn_50 += (num_gt - len(matched_50))
 
-                # IoU 0.75
+                # IoU 0.75 (conf=0.20)
                 matched_75 = set()
                 for p_idx in range(num_pred):
                     best_iou, best_gt = iou_mat[p_idx].max(dim=-1)
@@ -154,6 +162,24 @@ def evaluate_val_metrics(model, val_loader, device, num_classes=1, conf_thresh=0
                         fp_75 += 1
                 fn_75 += (num_gt - len(matched_75))
 
+                # IoU 0.75 at operational conf=0.35
+                if num_pred_35 == 0:
+                    fn_75_35 += num_gt
+                else:
+                    matched_75_35 = set()
+                    for p_idx in range(num_pred):
+                        if preds[p_idx]["score"] < 0.35:
+                            continue
+                        best_iou, best_gt = iou_mat[p_idx].max(dim=-1)
+                        gt_id = best_gt.item()
+                        cls_match = (num_classes == 1 or preds[p_idx]["class_id"] == int(gt_labels[gt_id].item()))
+                        if best_iou.item() >= 0.75 and gt_id not in matched_75_35 and cls_match:
+                            tp_75_35 += 1
+                            matched_75_35.add(gt_id)
+                        else:
+                            fp_75_35 += 1
+                    fn_75_35 += (num_gt - len(matched_75_35))
+
     p50 = tp_50 / max(1, tp_50 + fp_50)
     r50 = tp_50 / max(1, tp_50 + fn_50)
     f1_50 = 2 * (p50 * r50) / max(1e-6, p50 + r50)
@@ -162,12 +188,17 @@ def evaluate_val_metrics(model, val_loader, device, num_classes=1, conf_thresh=0
     r75 = tp_75 / max(1, tp_75 + fn_75)
     f1_75 = 2 * (p75 * r75) / max(1e-6, p75 + r75)
 
+    p75_35 = tp_75_35 / max(1, tp_75_35 + fp_75_35)
+    r75_35 = tp_75_35 / max(1, tp_75_35 + fn_75_35)
+    f1_75_c35 = 2 * (p75_35 * r75_35) / max(1e-6, p75_35 + r75_35)
+
     mean_iou = float(np.mean(ious_collected)) if ious_collected else 0.0
     neg_prec = (clean_negatives / max(1, total_negatives)) * 100.0
 
     return {
         "f1_50": f1_50 * 100.0,
         "f1_75": f1_75 * 100.0,
+        "f1_75_c35": f1_75_c35 * 100.0,
         "mean_iou": mean_iou * 100.0,
         "neg_prec": neg_prec,
         "max_conf": max_score_seen * 100.0
@@ -188,14 +219,15 @@ def train_nanodet(
     pretrained: bool = True,
     ckpt_path: str = DEFAULT_CKPT_PATH,
     resume: str = None,
+    finetune: str = None,
     reg_max: int = 16,
     strides: List[int] = [8, 16, 32],
     neck_type: str = "rep_pan",
     act_type: str = "relu",
     assigner: str = "tal",
     loss_bbox_type: str = "ciou",
-    loss_bbox_weight: float = 2.5,
-    loss_dfl_weight: float = 0.05,
+    loss_bbox_weight: float = 3.0,
+    loss_dfl_weight: float = 0.15,
     warmup_assigner_epochs: int = 8,
     neg_penalty_weight: float = 1.5,
     foot_ckpt: str = "checkpoints/nanodet_foot_320/best.pt"
@@ -204,6 +236,13 @@ def train_nanodet(
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     set_seed(42)
+
+    log_file = out_path / "trainlog.md"
+
+    def log_print(msg: str):
+        print(msg, flush=True)
+        with open(log_file, "a", encoding="utf-8") as f_log:
+            f_log.write(msg + "\n")
 
     data_path = Path(data_dir)
     train_images = data_path / "train" / "images"
@@ -247,16 +286,23 @@ def train_nanodet(
         collate_fn=collate_fn_nanodet
     )
 
-    print("=" * 70)
-    print("  EXPERIMENT: NanoDet-Plus Stage A Foot Detector (Hardware-Optimized)")
-    print(f"  Dataset:         {data_dir} ({len(train_dataset)} train, {len(val_dataset)} val)")
-    print(f"  Backbone:        ShuffleNetV2 1.0x (Pretrained: {pretrained}, Act: {act_type.upper()})")
-    print(f"  Neck:            {neck_type.upper()} | Strides: {strides} | BBox Loss: {loss_bbox_type.upper()}")
-    print(f"  Assigner:        {assigner.upper()} (Warmup: {warmup_assigner_epochs} ep) | Loss Weights (Box: {loss_bbox_weight}, DFL: {loss_dfl_weight})")
-    print(f"  Device:          {device} (AMP: {amp})")
-    print(f"  Epochs:          {epochs} | Batch: {batch_size} | LR: {lr:.6f} | Classes: {num_classes}")
-    print(f"  Resolution:      {img_size}x{img_size}")
-    print("=" * 70)
+    is_finetune = bool(finetune and Path(finetune).exists())
+    if is_finetune:
+        warmup_assigner_epochs = min(warmup_assigner_epochs, 1)
+
+    log_print("=" * 70)
+    mode_str = "Fine-Tuning Continuation" if is_finetune else "Initial Training"
+    log_print(f"  EXPERIMENT: NanoDet-Plus Stage A Foot Detector ({mode_str})")
+    log_print(f"  Dataset:         {data_dir} ({len(train_dataset)} train, {len(val_dataset)} val)")
+    log_print(f"  Backbone:        ShuffleNetV2 1.0x (Pretrained: {pretrained and not is_finetune}, Act: {act_type.upper()})")
+    log_print(f"  Neck:            {neck_type.upper()} | Strides: {strides} | BBox Loss: {loss_bbox_type.upper()}")
+    log_print(f"  Assigner:        {assigner.upper()} (Warmup: {warmup_assigner_epochs} ep) | Loss Weights (Box: {loss_bbox_weight}, DFL: {loss_dfl_weight})")
+    log_print(f"  Device:          {device} (AMP: {amp})")
+    log_print(f"  Epochs:          {epochs} | Batch: {batch_size} | LR: {lr:.6f} | Classes: {num_classes}")
+    log_print(f"  Resolution:      {img_size}x{img_size}")
+    if is_finetune:
+        log_print(f"  Fine-Tuning From:{finetune}")
+    log_print("=" * 70)
 
     model = NanoDetPlus(
         num_classes=num_classes,
@@ -265,12 +311,19 @@ def train_nanodet(
         strides=strides,
         neck_type=neck_type,
         act_type=act_type,
-        pretrained=pretrained and (resume is None),
+        pretrained=pretrained and (resume is None) and not is_finetune,
         ckpt_path=ckpt_path
     ).to(device)
 
-    # Warm-start foot-perception features from existing champion checkpoint if available
-    if pretrained and (resume is None) and foot_ckpt and Path(foot_ckpt).exists():
+    if is_finetune:
+        log_print(f"[*] Loading fine-tuning checkpoint: {finetune}")
+        ckpt_ft = torch.load(finetune, map_location=device, weights_only=False)
+        state = ckpt_ft.get("ema_state", ckpt_ft.get("model_state", ckpt_ft))
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        log_print(f"[+] Loaded weights successfully (missing={len(missing)}, unexpected={len(unexpected)})")
+        baseline_f1 = ckpt_ft.get("f1_75", 0.0)
+        log_print(f"[*] Continuation baseline best F1@0.75: {baseline_f1:.2f}%")
+    elif pretrained and (resume is None) and foot_ckpt and Path(foot_ckpt).exists():
         load_foot_pretrained_weights(model, ckpt_path=foot_ckpt)
 
     criterion = NanoDetPlusLoss(
@@ -285,8 +338,6 @@ def train_nanodet(
         neg_penalty_weight=neg_penalty_weight
     ).to(device)
 
-
-
     # Differential learning rate to preserve pretrained features
     bb_params = [p for n, p in model.named_parameters() if "backbone" in n and p.requires_grad]
     neck_params = [p for n, p in model.named_parameters() if "fpn" in n and p.requires_grad]
@@ -298,7 +349,8 @@ def train_nanodet(
         {"params": head_params, "lr": lr}
     ], weight_decay=1e-4)
 
-    warmup_epochs = 5
+    warmup_epochs = 3 if is_finetune else 5
+
     def lr_lambda(epoch_idx):
         if epoch_idx < warmup_epochs:
             return float(epoch_idx + 1) / float(max(1, warmup_epochs))
@@ -313,7 +365,7 @@ def train_nanodet(
     start_epoch = 1
 
     if resume and Path(resume).exists():
-        print(f"[*] Resuming from: {resume}")
+        log_print(f"[*] Resuming from: {resume}")
         ckpt = torch.load(resume, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model_state"])
         if "ema_state" in ckpt:
@@ -322,7 +374,7 @@ def train_nanodet(
         scheduler.load_state_dict(ckpt["scheduler_state"])
         start_epoch = ckpt["epoch"] + 1
         best_f1 = ckpt.get("f1_75", ckpt.get("f1", 0.0))
-        print(f"[+] Resumed training from epoch {start_epoch} (Best F1: {best_f1:.2f}%)")
+        log_print(f"[+] Resumed training from epoch {start_epoch} (Best F1: {best_f1:.2f}%)")
 
     for epoch in range(start_epoch, epochs + 1):
         model.train()
@@ -342,7 +394,6 @@ def train_nanodet(
                 preds = model(imgs)
                 losses = criterion(preds, boxes, labels, img_size=(img_size, img_size), current_epoch=epoch)
                 loss = losses["total_loss"]
-
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -371,15 +422,15 @@ def train_nanodet(
 
             f1_50 = metrics["f1_50"]
             f1_75 = metrics["f1_75"]
+            f1_75_c35 = metrics.get("f1_75_c35", f1_75)
             m_iou = metrics["mean_iou"]
             neg_p = metrics["neg_prec"]
             m_conf = metrics["max_conf"]
 
-            print(
+            log_print(
                 f"Epoch [{epoch:02d}/{epochs:02d}] ({dt:.1f}s) | "
                 f"Loss: {train_loss:.4f} (Cls: {train_cls:.3f}, GIoU: {train_giou:.3f}, DFL: {train_dfl:.3f}) | "
-                f"F1@0.50: {f1_50:.1f}% | F1@0.75: {f1_75:.1f}% | mIoU: {m_iou:.1f}% | MaxConf: {m_conf:.1f}% | NegPrec: {neg_p:.1f}%",
-                flush=True
+                f"F1@0.50: {f1_50:.1f}% | F1@0.75: {f1_75:.1f}% (c35: {f1_75_c35:.1f}%) | mIoU: {m_iou:.1f}% | MaxConf: {m_conf:.1f}% | NegPrec: {neg_p:.1f}%"
             )
 
             ckpt = {
@@ -390,6 +441,7 @@ def train_nanodet(
                 "scheduler_state": scheduler.state_dict(),
                 "f1_50": f1_50,
                 "f1_75": f1_75,
+                "f1_75_c35": f1_75_c35,
                 "mean_iou": m_iou,
                 "neg_prec": neg_p
             }
@@ -398,16 +450,15 @@ def train_nanodet(
             if f1_75 > best_f1:
                 best_f1 = f1_75
                 torch.save(ckpt, out_path / "best.pt")
-                print(f"  [*] New best detector checkpoint saved! (F1@0.75: {f1_75:.2f}%, mIoU: {m_iou:.2f}%)", flush=True)
+                log_print(f"  [*] New best detector checkpoint saved! (F1@0.75: {f1_75:.2f}%, c35: {f1_75_c35:.2f}%, mIoU: {m_iou:.2f}%)")
         else:
-            print(
+            log_print(
                 f"Epoch [{epoch:02d}/{epochs:02d}] ({dt:.1f}s) | "
-                f"Loss: {train_loss:.4f} (Cls: {train_cls:.3f}, GIoU: {train_giou:.3f}, DFL: {train_dfl:.3f})",
-                flush=True
+                f"Loss: {train_loss:.4f} (Cls: {train_cls:.3f}, GIoU: {train_giou:.3f}, DFL: {train_dfl:.3f})"
             )
 
-    print("\n[OK] NanoDet-Plus training finished.")
-    print(f"Best Checkpoint: {out_path / 'best.pt'} (Best F1@0.75: {best_f1:.2f}%)")
+    log_print("\n[OK] NanoDet-Plus training finished.")
+    log_print(f"Best Checkpoint: {out_path / 'best.pt'} (Best F1@0.75: {best_f1:.2f}%)")
 
 
 if __name__ == "__main__":
@@ -424,13 +475,14 @@ if __name__ == "__main__":
     parser.add_argument("--amp", action="store_true", default=True)
     parser.add_argument("--ckpt", type=str, default=DEFAULT_CKPT_PATH)
     parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--finetune", type=str, default=None, help="Warm restart fine-tuning from existing detector checkpoint")
     parser.add_argument("--reg_max", type=int, default=16)
     parser.add_argument("--neck", type=str, default="rep_pan", choices=["rep_pan", "ghost_pan"])
     parser.add_argument("--act", type=str, default="relu", choices=["relu", "leaky", "relu6"])
     parser.add_argument("--assigner", type=str, default="tal", choices=["tal", "center"])
     parser.add_argument("--loss_bbox", type=str, default="ciou", choices=["ciou", "giou"])
-    parser.add_argument("--loss_bbox_weight", type=float, default=2.5)
-    parser.add_argument("--loss_dfl_weight", type=float, default=0.05)
+    parser.add_argument("--loss_bbox_weight", type=float, default=3.0)
+    parser.add_argument("--loss_dfl_weight", type=float, default=0.15)
     parser.add_argument("--warmup_assigner_epochs", type=int, default=8)
     parser.add_argument("--neg_penalty", type=float, default=1.5)
     parser.add_argument("--foot_ckpt", type=str, default="checkpoints/nanodet_foot_320/best.pt")
@@ -451,6 +503,7 @@ if __name__ == "__main__":
         amp=args.amp,
         ckpt_path=args.ckpt,
         resume=args.resume,
+        finetune=args.finetune,
         reg_max=args.reg_max,
         strides=strides,
         neck_type=args.neck,

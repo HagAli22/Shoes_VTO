@@ -173,6 +173,34 @@ class TestNanoDetSuite(unittest.TestCase):
         self.assertIsNotNone(model.head.gfl_cls[0].weight.grad)
         self.assertGreater(model.head.gfl_cls[0].weight.grad.norm().item(), 0.0)
 
+    def test_finetune_checkpoint_loading(self):
+        ckpt_path = Path("checkpoints/nanodet_stage_a_improved2/best.pt")
+        if not ckpt_path.exists():
+            return
+
+        model = NanoDetPlus(
+            num_classes=1,
+            input_size=(256, 256),
+            reg_max=16,
+            strides=[8, 16, 32],
+            neck_type="rep_pan",
+            act_type="relu",
+            pretrained=False
+        )
+
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        state = ckpt.get("ema_state", ckpt.get("model_state", ckpt))
+        missing, unexpected = model.load_state_dict(state, strict=True)
+        self.assertEqual(len(missing), 0)
+        self.assertEqual(len(unexpected), 0)
+
+        # Forward pass verification
+        model.eval()
+        inp = torch.randn(1, 3, 256, 256)
+        out = model(inp)
+        self.assertEqual(out["boxes"].shape, (1, 1344, 4))
+        self.assertEqual(out["scores"].shape, (1, 1344, 1))
+
 
 
 if __name__ == "__main__":

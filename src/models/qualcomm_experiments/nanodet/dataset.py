@@ -113,31 +113,90 @@ class NanoDetFootDataset(Dataset):
         h0, w0 = img.shape[:2]
         boxes, labels = self._parse_yolo_labels(self.labels_dir / f"{img_path.stem}.txt", w0, h0)
 
-        scale = min(self.img_size / w0, self.img_size / h0)
-        nw = int(round(w0 * scale))
-        nh = int(round(h0 * scale))
+        base_scale = min(self.img_size / w0, self.img_size / h0)
+
+        if self.augment:
+            # Scale jitter: 0.85x to 1.15x
+            scale_jitter = random.uniform(0.85, 1.15)
+            scale = base_scale * scale_jitter
+            nw = max(16, int(round(w0 * scale)))
+            nh = max(16, int(round(h0 * scale)))
+
+            # Translation jitter: +/- 8% of canvas size
+            max_shift = int(round(0.08 * self.img_size))
+            tx = random.randint(-max_shift, max_shift)
+            ty = random.randint(-max_shift, max_shift)
+            pad_x = (self.img_size - nw) // 2 + tx
+            pad_y = (self.img_size - nh) // 2 + ty
+        else:
+            scale = base_scale
+            nw = int(round(w0 * scale))
+            nh = int(round(h0 * scale))
+            pad_x = (self.img_size - nw) // 2
+            pad_y = (self.img_size - nh) // 2
 
         resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
         canvas = np.full((self.img_size, self.img_size, 3), 114, dtype=np.uint8)
-        pad_x = (self.img_size - nw) // 2
-        pad_y = (self.img_size - nh) // 2
-        canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
+
+        # Robust bounded blit
+        dst_x1 = max(0, pad_x)
+        dst_y1 = max(0, pad_y)
+        dst_x2 = min(self.img_size, pad_x + nw)
+        dst_y2 = min(self.img_size, pad_y + nh)
+
+        src_x1 = max(0, -pad_x)
+        src_y1 = max(0, -pad_y)
+        src_x2 = src_x1 + (dst_x2 - dst_x1)
+        src_y2 = src_y1 + (dst_y2 - dst_y1)
+
+        if dst_x2 > dst_x1 and dst_y2 > dst_y1 and src_x2 > src_x1 and src_y2 > src_y1:
+            canvas[dst_y1:dst_y2, dst_x1:dst_x2] = resized[src_y1:src_y2, src_x1:src_x2]
 
         if len(boxes) > 0:
             boxes[:, [0, 2]] = boxes[:, [0, 2]] * scale + pad_x
             boxes[:, [1, 3]] = boxes[:, [1, 3]] * scale + pad_y
 
+            # Clamp boxes to canvas boundary
+            boxes[:, 0] = np.clip(boxes[:, 0], 0.0, float(self.img_size))
+            boxes[:, 1] = np.clip(boxes[:, 1], 0.0, float(self.img_size))
+            boxes[:, 2] = np.clip(boxes[:, 2], 0.0, float(self.img_size))
+            boxes[:, 3] = np.clip(boxes[:, 3], 0.0, float(self.img_size))
+
+            # Discard any box that was shifted completely outside or degenerated
+            valid = (boxes[:, 2] - boxes[:, 0] >= 4.0) & (boxes[:, 3] - boxes[:, 1] >= 4.0)
+            boxes = boxes[valid]
+            labels = labels[valid]
+
         if self.augment:
-            if random.random() < 0.5:
+            # HSV color jitter (50% prob)
+            if random.random() < 0.50:
+                hsv = cv2.cvtColor(canvas, cv2.COLOR_BGR2HSV).astype(np.float32)
+                h_delta = random.uniform(-15.0, 15.0)
+                hsv[:, :, 0] = (hsv[:, :, 0] + h_delta) % 180.0
+                s_scale = random.uniform(0.65, 1.35)
+                hsv[:, :, 1] = np.clip(hsv[:, :, 1] * s_scale, 0.0, 255.0)
+                v_scale = random.uniform(0.70, 1.30)
+                hsv[:, :, 2] = np.clip(hsv[:, :, 2] * v_scale, 0.0, 255.0)
+                canvas = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+            elif random.random() < 0.50:
                 alpha = random.uniform(0.8, 1.2)
                 beta = random.uniform(-20, 20)
                 canvas = cv2.convertScaleAbs(canvas, alpha=alpha, beta=beta)
 
+            # Random Cutout (20% prob)
+            if random.random() < 0.20:
+                pw = random.randint(int(0.08 * self.img_size), int(0.20 * self.img_size))
+                ph = random.randint(int(0.08 * self.img_size), int(0.20 * self.img_size))
+                px = random.randint(0, max(0, self.img_size - pw))
+                py = random.randint(0, max(0, self.img_size - ph))
+                canvas[py:py + ph, px:px + pw] = 114
+
+            # Horizontal flip
             if self.allow_flip and random.random() < 0.5:
                 canvas = cv2.flip(canvas, 1)
                 if len(boxes) > 0:
-                    x1 = self.img_size - 1 - boxes[:, 2]
-                    x2 = self.img_size - 1 - boxes[:, 0]
+                    x1 = self.img_size - 1.0 - boxes[:, 2]
+                    x2 = self.img_size - 1.0 - boxes[:, 0]
                     boxes[:, 0] = x1
                     boxes[:, 2] = x2
                     if self.num_classes > 1:
