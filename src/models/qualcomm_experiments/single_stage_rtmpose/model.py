@@ -223,43 +223,47 @@ class SingleStageRTMPose(nn.Module):
                     if len(final_keep) >= max_det:
                         break
 
-                kept_boxes = cand_boxes[final_keep]
-                kept_scores = cand_scores[final_keep]
-                kept_cls = cand_cls[final_keep]
-                kept_probs = cand_probs[final_keep]
+                if len(final_keep) > 0:
+                    keep_idx_t = torch.as_tensor(final_keep, dtype=torch.long, device=cand_boxes.device)
+                    kept_boxes = cand_boxes[keep_idx_t]
+                    kept_scores = cand_scores[keep_idx_t]
+                    kept_cls = cand_cls[keep_idx_t]
+                    kept_probs = cand_probs[keep_idx_t]
 
-                # RoI-Align on surviving detected boxes with 20% Context Expansion
-                K = len(final_keep)
-                pad_kept_boxes = expand_boxes(kept_boxes, pad_ratio=0.20, img_size=(img_w, img_h))
-                b_idx_col = torch.zeros((K, 1), dtype=torch.float32, device=device)
-                rois_b = torch.cat([b_idx_col, pad_kept_boxes], dim=1)
+                    # RoI-Align on surviving detected boxes with 20% Context Expansion
+                    K = len(final_keep)
+                    pad_kept_boxes = expand_boxes(kept_boxes, pad_ratio=0.20, img_size=(img_w, img_h))
+                    b_idx_col = torch.zeros((K, 1), dtype=torch.float32, device=device)
+                    rois_b = torch.cat([b_idx_col, pad_kept_boxes], dim=1)
 
-                simcc_out = self.roi_head.forward_rois(p2[b:b+1], rois_b)
-                kpts_b = self.roi_head.decode_continuous_expectation(
-                    simcc_out["simcc_x"],
-                    simcc_out["simcc_y"],
-                    simcc_out["vis_logits"],
-                    rois_b
-                )  # [K, 13, 3]
+                    simcc_out = self.roi_head.forward_rois(p2[b:b+1], rois_b)
+                    kpts_b = self.roi_head.decode_continuous_expectation(
+                        simcc_out["simcc_x"],
+                        simcc_out["simcc_y"],
+                        simcc_out["vis_logits"],
+                        rois_b
+                    )  # [K, 13, 3]
 
-                # Convert boxes to cxcywh for [45, K] contract
-                cx = (kept_boxes[:, 0] + kept_boxes[:, 2]) / 2.0
-                cy = (kept_boxes[:, 1] + kept_boxes[:, 3]) / 2.0
-                bw = (kept_boxes[:, 2] - kept_boxes[:, 0]).clamp(min=1.0)
-                bh = (kept_boxes[:, 3] - kept_boxes[:, 1]).clamp(min=1.0)
-                b_cxcywh = torch.stack([cx, cy, bw, bh], dim=-1)  # [K, 4]
+                    # Convert boxes to cxcywh for [45, K] contract
+                    cx = (kept_boxes[:, 0] + kept_boxes[:, 2]) / 2.0
+                    cy = (kept_boxes[:, 1] + kept_boxes[:, 3]) / 2.0
+                    bw = (kept_boxes[:, 2] - kept_boxes[:, 0]).clamp(min=1.0)
+                    bh = (kept_boxes[:, 3] - kept_boxes[:, 1]).clamp(min=1.0)
+                    b_cxcywh = torch.stack([cx, cy, bw, bh], dim=-1)  # [K, 4]
 
-                kpts_flat = kpts_b.view(K, self.kpt_channels)  # [K, 39]
+                    kpts_flat = kpts_b.view(K, self.kpt_channels)  # [K, 39]
 
-                # [K, 45]: [box (4), cls_prob (2), kpts (39)]
-                k_det_tensor = torch.cat([b_cxcywh, kept_probs, kpts_flat], dim=-1)
+                    # [K, 45]: [box (4), cls_prob (2), kpts (39)]
+                    k_det_tensor = torch.cat([b_cxcywh, kept_probs, kpts_flat], dim=-1)
 
-                # Pad to max_det if needed for uniform tensor shape
-                if K < max_det:
-                    pad = torch.zeros((max_det - K, 45), dtype=torch.float32, device=device)
-                    b_det_tensor = torch.cat([k_det_tensor, pad], dim=0)
+                    # Pad to max_det if needed for uniform tensor shape
+                    if K < max_det:
+                        pad = torch.zeros((max_det - K, 45), dtype=torch.float32, device=device)
+                        b_det_tensor = torch.cat([k_det_tensor, pad], dim=0)
+                    else:
+                        b_det_tensor = k_det_tensor[:max_det]
                 else:
-                    b_det_tensor = k_det_tensor[:max_det]
+                    b_det_tensor = torch.zeros((max_det, 45), dtype=torch.float32, device=device)
             else:
                 b_det_tensor = torch.zeros((max_det, 45), dtype=torch.float32, device=device)
 
