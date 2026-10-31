@@ -1,4 +1,4 @@
-// demo.js - Shoes VTO Stage-A Mobile Benchmark (WASM Only)
+// demo.js - Shoes VTO Qualcomm Two-Stage vs Single-Stage YOLO Mobile Benchmark (WASM Only)
 
 (function () {
   'use strict';
@@ -13,7 +13,7 @@
     console.log('[ORT Web] Configured wasmPaths to:', wasmDir);
   }
 
-  // ── Keypoint Schema & Connections ──────────────────────────────────────────
+  // ── Keypoint Schema & Connections (13 Keypoints) ────────────────────────────
   const KEYPOINT_NAMES = [
     "toe_ground",        // 0
     "heel_back",         // 1
@@ -50,19 +50,71 @@
 
   // ── Colors ──────────────────────────────────────────────────────────────────
   const COLOR_LEFT = {
-    bbox: '#22c55e',      // Bright Green
-    skeleton: '#16a34a',
-    kptVis: '#4ade80',
-    kptOcc: '#86efac',
+    bbox: '#00bfff',      // Sky Blue / Cyan (matches eval_video.py BGR (255, 191, 0))
+    skeleton: '#0099e6',
+    kptVis: '#ffff00',    // Yellow
+    kptOcc: '#b3b300',
     label: 'Left Foot'
   };
 
   const COLOR_RIGHT = {
-    bbox: '#38bdf8',      // Bright Cyan/Blue
-    skeleton: '#0284c7',
-    kptVis: '#67e8f9',
-    kptOcc: '#a5f3fc',
+    bbox: '#ff8c00',      // Orange (matches eval_video.py BGR (0, 140, 255))
+    skeleton: '#32cd32',  // Lime Green
+    kptVis: '#00ff00',    // Bright Green
+    kptOcc: '#009900',
     label: 'Right Foot'
+  };
+
+  // ── Model Configurations ────────────────────────────────────────────────────
+  const MODEL_CONFIGS = {
+    // --- Two-Stage Qualcomm Experiments (Apache-2.0, improved5) ---
+    'twostage_int8_fp16': {
+      type: 'twostage',
+      name: 'NanoDet(INT8) + RTMPose(FP16)',
+      pill: 'ND-INT8 + RTM (v5)',
+      sizeMb: '8.92 MB',
+      detPath: 'models/nanodet-improved5-int8.onnx',
+      detPrecision: 'float32',
+      posePath: 'models/rtmpose-13kp-hand-improved5-fp16.onnx',
+      posePrecision: 'float16'
+    },
+    'twostage_fp32_fp16': {
+      type: 'twostage',
+      name: 'NanoDet(FP32) + RTMPose(FP16)',
+      pill: 'ND-FP32 + RTM (v5)',
+      sizeMb: '11.64 MB',
+      detPath: 'models/nanodet-improved5-fp32.onnx',
+      detPrecision: 'float32',
+      posePath: 'models/rtmpose-13kp-hand-improved5-fp16.onnx',
+      posePrecision: 'float16'
+    },
+    'twostage_fp16_fp16': {
+      type: 'twostage',
+      name: 'NanoDet(FP16) + RTMPose(FP16)',
+      pill: 'ND-FP16 + RTM (v5)',
+      sizeMb: '9.66 MB',
+      detPath: 'models/nanodet-improved5-fp16.onnx',
+      detPrecision: 'float16',
+      posePath: 'models/rtmpose-13kp-hand-improved5-fp16.onnx',
+      posePrecision: 'float16'
+    },
+    // --- Single-Stage YOLO Baselines (AGPLv3) ---
+    'yolo_int8': {
+      type: 'yolo',
+      name: 'YOLOv8n (INT8)',
+      pill: 'YOLO-INT8',
+      sizeMb: '3.46 MB',
+      path: 'models/stage-a-256-13kp-int8.onnx',
+      precision: 'float32'
+    },
+    'yolo_fp16': {
+      type: 'yolo',
+      name: 'YOLOv8n (FP16)',
+      pill: 'YOLO-FP16',
+      sizeMb: '6.53 MB',
+      path: 'models/stage-a-256-13kp-fp16.onnx',
+      precision: 'float16'
+    }
   };
 
   // ── One-Euro Filter Implementation ──────────────────────────────────────────
@@ -138,22 +190,35 @@
 
   // ── State Management ────────────────────────────────────────────────────────
   const state = {
-    currentModel: 'int8', // 'int8' or 'fp16'
-    currentSource: 'video', // 'video' or 'camera'
+    activeModelKey: 'twostage_int8_fp16',
+    activeModelConfig: MODEL_CONFIGS['twostage_int8_fp16'],
+    currentSource: 'video',
     filterEnabled: true,
-    facingMode: 'environment', // 'environment' or 'user'
+    facingMode: 'environment',
     isPlaying: false,
-    session: null,
-    sessionInputName: null,
-    sessionInputType: null,
-    loadStartTime: null,
-    loadDuration: null,
+    isLoadingModel: false,
+
+    // Sessions for Two-Stage
+    detSession: null,
+    detInputName: null,
+    poseSession: null,
+    poseInputName: null,
+
+    // Session for Single-Stage YOLO
+    yoloSession: null,
+    yoloInputName: null,
+
     modelError: null,
+    loadDuration: null,
+
     smoothers: {
       0: new KeypointSmoother(13), // Left
       1: new KeypointSmoother(13)  // Right
     },
+
     // Telemetry rolling window
+    stageATimes: [],
+    stageBTimes: [],
     inferTimes: [],
     prePostTimes: [],
     e2eTimes: [],
@@ -167,7 +232,8 @@
   const video = document.getElementById('inputVideo');
   const canvas = document.getElementById('renderCanvas');
   const ctx = canvas.getContext('2d');
-  const modelButtons = document.querySelectorAll('#modelControl button');
+
+  const allModelButtons = document.querySelectorAll('.segmented-control button[data-model]');
   const sourceButtons = document.querySelectorAll('#sourceControl button');
   const filterToggle = document.getElementById('filterToggle');
   const playPauseBtn = document.getElementById('playPauseBtn');
@@ -183,17 +249,23 @@
   const hudProc = document.getElementById('hudProc');
   const hudE2E = document.getElementById('hudE2E');
   const hudLoadTime = document.getElementById('hudLoadTime');
+  const hudStageSplit = document.getElementById('hudStageSplit');
   const hudDetections = document.getElementById('hudDetections');
   const overlayModelPill = document.getElementById('overlayModelPill');
   const overlayFpsPill = document.getElementById('overlayFpsPill');
 
-  // ── Offscreen Preprocessing Canvas ──────────────────────────────────────────
+  // ── Offscreen Preprocessing & Cropping Canvases ──────────────────────────────
   const offscreenCanvas = document.createElement('canvas');
   offscreenCanvas.width = 256;
   offscreenCanvas.height = 256;
   const offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 
-  // ── Helper: Float32 to Float16 (Uint16) converter ───────────────────────────
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width = 256;
+  cropCanvas.height = 256;
+  const cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true });
+
+  // ── Float16 Conversion Utilities ────────────────────────────────────────────
   function float32ToFloat16(val) {
     const floatView = new Float32Array(1);
     const int32View = new Int32Array(floatView.buffer);
@@ -218,6 +290,31 @@
     return bits;
   }
 
+  function float16ToFloat32(h) {
+    const s = (h >> 15) & 0x0001;
+    const e = (h >> 10) & 0x001f;
+    const f = h & 0x03ff;
+    if (e === 0) {
+      return (s ? -1 : 1) * Math.pow(2, -14) * (f / 1024);
+    } else if (e === 31) {
+      return f ? NaN : ((s ? -1 : 1) * Infinity);
+    }
+    return (s ? -1 : 1) * Math.pow(2, e - 15) * (1 + f / 1024);
+  }
+
+  function getFloatValue(array, index) {
+    if (array instanceof Float32Array || array instanceof Float64Array) {
+      return array[index];
+    }
+    if (typeof Float16Array !== 'undefined' && array instanceof Float16Array) {
+      return array[index];
+    }
+    if (array instanceof Uint16Array) {
+      return float16ToFloat32(array[index]);
+    }
+    return Number(array[index]);
+  }
+
   // ── Diagnostic Banner Helper ────────────────────────────────────────────────
   function showBanner(type, message) {
     banner.className = `banner ${type}`;
@@ -229,17 +326,28 @@
     banner.style.display = 'none';
   }
 
-  // ── Model Loader ────────────────────────────────────────────────────────────
+  // ── Session Creation Helper (Strict WASM) ───────────────────────────────────
+  async function createWasmSession(modelPath) {
+    const sessionOptions = {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all'
+    };
+    return await ort.InferenceSession.create(modelPath, sessionOptions);
+  }
+
+  // ── Model Loader (Atomic Commit to Avoid Precision Race Conditions) ───────
   async function loadModel(modelKey) {
-    state.currentModel = modelKey;
+    const config = MODEL_CONFIGS[modelKey];
+    if (!config) {
+      console.error('Unknown model key:', modelKey);
+      return;
+    }
+
+    state.isLoadingModel = true;
     state.modelError = null;
-    overlayModelPill.textContent = `${modelKey.toUpperCase()} WASM`;
+    overlayModelPill.textContent = `${config.pill} WASM`;
 
-    const modelPath = modelKey === 'int8'
-      ? 'models/stage-a-256-13kp-int8.onnx'
-      : 'models/stage-a-256-13kp-fp16.onnx';
-
-    showBanner('info', `Loading ${modelKey.toUpperCase()} model (${modelPath}) via WASM backend...`);
+    showBanner('info', `Loading ${config.name} (${config.sizeMb}) via WASM backend...`);
 
     const t0 = performance.now();
     try {
@@ -247,65 +355,135 @@
         throw new Error('ONNX Runtime Web library failed to load.');
       }
 
-      const sessionOptions = {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all'
-      };
+      if (config.type === 'twostage') {
+        // 1. Create Stage A Detector session into local variable
+        showBanner('info', `[1/2] Loading Stage A Detector: ${config.detPath}...`);
+        const newDetSession = await createWasmSession(config.detPath);
+        const newDetInputName = newDetSession.inputNames[0];
 
-      state.session = await ort.InferenceSession.create(modelPath, sessionOptions);
-      state.sessionInputName = state.session.inputNames[0];
-      
-      // Determine input tensor type
-      // ORT Web exposes input metadata
-      const inputMeta = state.session.inputs ? state.session.inputs[0] : null;
-      state.sessionInputType = inputMeta ? inputMeta.type : (modelKey === 'fp16' ? 'float16' : 'float32');
+        // 2. Warm up new detector session with its matching input precision
+        const isDetFp16 = config.detPrecision === 'float16';
+        const detWarmupTensor = createDummyTensor(isDetFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
+        await newDetSession.run({ [newDetInputName]: detWarmupTensor });
 
+        // 3. Load or reuse Stage B RTMPose (shared 7.48 MB model)
+        let newPoseSession = state.poseSession;
+        let newPoseInputName = state.poseInputName;
+        if (!newPoseSession) {
+          showBanner('info', `[2/2] Loading Stage B RTMPose-13KP: ${config.posePath}...`);
+          newPoseSession = await createWasmSession(config.posePath);
+          newPoseInputName = newPoseSession.inputNames[0];
+
+          const poseWarmupTensor = createDummyTensor('float16', [1, 3, 256, 256]);
+          await newPoseSession.run({ [newPoseInputName]: poseWarmupTensor });
+        }
+
+        // 4. ATOMIC COMMIT: Swap sessions and configuration simultaneously
+        state.yoloSession = null;
+        state.yoloInputName = null;
+        state.detSession = newDetSession;
+        state.detInputName = newDetInputName;
+        state.poseSession = newPoseSession;
+        state.poseInputName = newPoseInputName;
+        state.activeModelKey = modelKey;
+        state.activeModelConfig = config;
+
+      } else {
+        // Single-Stage YOLO
+        showBanner('info', `Loading Single-Stage YOLO: ${config.path}...`);
+        const newYoloSession = await createWasmSession(config.path);
+        const newYoloInputName = newYoloSession.inputNames[0];
+
+        const isFp16 = config.precision === 'float16';
+        const yoloWarmupTensor = createDummyTensor(isFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
+        await newYoloSession.run({ [newYoloInputName]: yoloWarmupTensor });
+
+        // ATOMIC COMMIT
+        state.detSession = null;
+        state.detInputName = null;
+        state.poseSession = null;
+        state.poseInputName = null;
+        state.yoloSession = newYoloSession;
+        state.yoloInputName = newYoloInputName;
+        state.activeModelKey = modelKey;
+        state.activeModelConfig = config;
+      }
+
+      state.isLoadingModel = false;
       const dt = (performance.now() - t0).toFixed(0);
       state.loadDuration = dt;
       hudLoadTime.textContent = `${dt} ms`;
 
-      showBanner('info', `✓ ${modelKey.toUpperCase()} loaded successfully in ${dt} ms. Execution Provider: WASM (Single-Threaded).`);
+      showBanner('info', `✓ ${config.name} loaded in ${dt} ms. Execution Provider: WASM (CPU Only).`);
       setTimeout(() => {
         if (!state.modelError) hideBanner();
       }, 4000);
 
-      // Warm up model with a dummy tensor
-      await warmUpModel();
-
     } catch (err) {
-      console.error('Session creation failed:', err);
+      console.error('Model load failure:', err);
+      state.isLoadingModel = false;
       state.modelError = err.message || String(err);
-      state.session = null;
-      showBanner('error', `❌ ${modelKey.toUpperCase()} WASM Error: ${state.modelError}\n(ONNX Runtime Web WASM does not support this model precision or operator set)`);
+      showBanner('error', `❌ Model Load Error: ${state.modelError}`);
     }
   }
 
-  async function warmUpModel() {
-    if (!state.session) return;
-    try {
-      const isFp16 = state.currentModel === 'fp16';
-      let dummyTensor;
-      if (isFp16) {
-        const totalElements = 1 * 3 * 256 * 256;
-        const f16Data = (typeof Float16Array !== 'undefined')
-          ? new Float16Array(totalElements)
-          : new Uint16Array(totalElements);
-        dummyTensor = new ort.Tensor('float16', f16Data, [1, 3, 256, 256]);
-      } else {
-        const f32 = new Float32Array(1 * 3 * 256 * 256);
-        dummyTensor = new ort.Tensor('float32', f32, [1, 3, 256, 256]);
-      }
-      await state.session.run({ [state.sessionInputName]: dummyTensor });
-      console.log('Warmup inference completed successfully.');
-    } catch (err) {
-      console.warn('Warmup error (operator or precision incompatibility):', err);
-      state.modelError = err.message || String(err);
-      showBanner('error', `❌ ${state.currentModel.toUpperCase()} WASM Warm-up Failed: ${state.modelError}`);
+  // ── Warmup Helpers ──────────────────────────────────────────────────────────
+  async function warmUpTwoStage(config) {
+    const isDetFp16 = config.detPrecision === 'float16';
+    const detTensor = createDummyTensor(isDetFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
+    await state.detSession.run({ [state.detInputName]: detTensor });
+
+    const poseTensor = createDummyTensor('float16', [1, 3, 256, 256]);
+    await state.poseSession.run({ [state.poseInputName]: poseTensor });
+    console.log('[TwoStage] Warmup inference completed.');
+  }
+
+  async function warmUpYolo(config) {
+    const isFp16 = config.precision === 'float16';
+    const tensor = createDummyTensor(isFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
+    await state.yoloSession.run({ [state.yoloInputName]: tensor });
+    console.log('[YOLO] Warmup inference completed.');
+  }
+
+  function createDummyTensor(type, dims) {
+    const totalElements = dims.reduce((a, b) => a * b, 1);
+    if (type === 'float16') {
+      const f16Data = (typeof Float16Array !== 'undefined')
+        ? new Float16Array(totalElements)
+        : new Uint16Array(totalElements);
+      return new ort.Tensor('float16', f16Data, dims);
+    } else {
+      const f32 = new Float32Array(totalElements);
+      return new ort.Tensor('float32', f32, dims);
     }
   }
 
-  // ── Input Preprocessing (Letterbox 256x256 with fill 114) ───────────────────
-  function preprocessFrame(sourceElement) {
+  // ── Frame Preprocessing ─────────────────────────────────────────────────────
+  // NanoDet Stage A Direct Stretch Resize (Exact Parity with eval_video.py & generate_quantized_videos.py)
+  function preprocessNanoDetDirect(sourceElement, precision = 'float32') {
+    const srcW = sourceElement.videoWidth || sourceElement.width;
+    const srcH = sourceElement.videoHeight || sourceElement.height;
+    if (!srcW || !srcH) return null;
+
+    const targetSize = 256;
+    // Direct stretch resize without padding (matching cv2.resize(frame, (256, 256)))
+    offscreenCtx.drawImage(sourceElement, 0, 0, srcW, srcH, 0, 0, targetSize, targetSize);
+
+    const tensor = makeTensorFromCanvas(offscreenCtx, targetSize, targetSize, precision);
+    const scaleX = srcW / targetSize;
+    const scaleY = srcH / targetSize;
+
+    return {
+      tensor,
+      scaleX,
+      scaleY,
+      srcW,
+      srcH
+    };
+  }
+
+  // Single-Stage YOLO Letterbox with 114 Gray Padding
+  function preprocessYoloLetterbox(sourceElement, precision = 'float32') {
     const srcW = sourceElement.videoWidth || sourceElement.width;
     const srcH = sourceElement.videoHeight || sourceElement.height;
     if (!srcW || !srcH) return null;
@@ -317,26 +495,30 @@
     const padX = (targetSize - nw) / 2;
     const padY = (targetSize - nh) / 2;
 
-    // Fill offscreen canvas with 114
     offscreenCtx.fillStyle = 'rgb(114, 114, 114)';
     offscreenCtx.fillRect(0, 0, targetSize, targetSize);
-
-    // Draw source video centered
     offscreenCtx.drawImage(sourceElement, 0, 0, srcW, srcH, padX, padY, nw, nh);
 
-    const imgData = offscreenCtx.getImageData(0, 0, targetSize, targetSize).data;
-    const isFp16 = state.currentModel === 'fp16';
+    const tensor = makeTensorFromCanvas(offscreenCtx, targetSize, targetSize, precision);
+    return {
+      tensor,
+      ratio,
+      padX,
+      padY,
+      srcW,
+      srcH
+    };
+  }
 
-    const numPixels = targetSize * targetSize;
-    let tensorData;
-    let tensorType;
+  function makeTensorFromCanvas(context, w, h, precision = 'float32') {
+    const imgData = context.getImageData(0, 0, w, h).data;
+    const numPixels = w * h;
+    const rOffset = 0;
+    const gOffset = numPixels;
+    const bOffset = numPixels * 2;
 
-    if (isFp16) {
-      tensorType = 'float16';
-      const rOffset = 0;
-      const gOffset = numPixels;
-      const bOffset = numPixels * 2;
-
+    if (precision === 'float16') {
+      let tensorData;
       if (typeof Float16Array !== 'undefined') {
         tensorData = new Float16Array(3 * numPixels);
         for (let i = 0; i < numPixels; i++) {
@@ -354,37 +536,20 @@
           tensorData[bOffset + i] = float32ToFloat16(imgData[srcIdx + 2] / 255.0);
         }
       }
+      return new ort.Tensor('float16', tensorData, [1, 3, h, w]);
     } else {
-      tensorType = 'float32';
-      tensorData = new Float32Array(3 * numPixels);
-      const rOffset = 0;
-      const gOffset = numPixels;
-      const bOffset = numPixels * 2;
-
+      const tensorData = new Float32Array(3 * numPixels);
       for (let i = 0; i < numPixels; i++) {
         const srcIdx = i * 4;
         tensorData[rOffset + i] = imgData[srcIdx] / 255.0;
         tensorData[gOffset + i] = imgData[srcIdx + 1] / 255.0;
         tensorData[bOffset + i] = imgData[srcIdx + 2] / 255.0;
       }
+      return new ort.Tensor('float32', tensorData, [1, 3, h, w]);
     }
-
-    const inputTensor = new ort.Tensor(tensorType, tensorData, [1, 3, targetSize, targetSize]);
-    return {
-      tensor: inputTensor,
-      ratio,
-      padX,
-      padY,
-      srcW,
-      srcH
-    };
   }
 
-  // ── Postprocessing: Decode Output [1, 45, 1344] ─────────────────────────────
-  function sigmoid(v) {
-    return 1.0 / (1.0 + Math.exp(-v));
-  }
-
+  // ── Geometry & NMS Utilities ────────────────────────────────────────────────
   function computeIoU(b1, b2) {
     const x1 = Math.max(b1[0], b2[0]);
     const y1 = Math.max(b1[1], b2[1]);
@@ -415,13 +580,216 @@
     return keep;
   }
 
+  // ── NanoDet Stage A Decoder ─────────────────────────────────────────────────
+  // boxes [1, 1344, 4] (float32), scores [1, 1344, 1] (float32 or float16)
+  function decodeNanoDet(boxesTensor, scoresTensor, prepMeta, confThresh = 0.35, nmsThresh = 0.45) {
+    const numAnchors = 1344;
+    const boxesData = boxesTensor.data;
+    const scoresData = scoresTensor.data;
+
+    const candidates = [];
+
+    for (let a = 0; a < numAnchors; a++) {
+      const score = getFloatValue(scoresData, a);
+      if (score >= confThresh) {
+        const x1 = getFloatValue(boxesData, a * 4 + 0);
+        const y1 = getFloatValue(boxesData, a * 4 + 1);
+        const x2 = getFloatValue(boxesData, a * 4 + 2);
+        const y2 = getFloatValue(boxesData, a * 4 + 3);
+
+        // Map from direct stretch 256x256 to original source coords (exact parity with eval_video.py)
+        const origX1 = Math.max(0, Math.min(prepMeta.srcW, x1 * prepMeta.scaleX));
+        const origY1 = Math.max(0, Math.min(prepMeta.srcH, y1 * prepMeta.scaleY));
+        const origX2 = Math.max(0, Math.min(prepMeta.srcW, x2 * prepMeta.scaleX));
+        const origY2 = Math.max(0, Math.min(prepMeta.srcH, y2 * prepMeta.scaleY));
+
+        candidates.push({
+          boxPx: [x1, y1, x2, y2],
+          origBox: [origX1, origY1, origX2, origY2],
+          score: score
+        });
+      }
+    }
+
+    if (candidates.length === 0) return [];
+
+    const keepIndices = nms(candidates.map(c => c.boxPx), candidates.map(c => c.score), nmsThresh);
+    let detections = keepIndices.map(i => candidates[i]);
+
+    // Limit to top 2 detected feet
+    if (detections.length > 2) {
+      detections.sort((a, b) => b.score - a.score);
+      detections = detections.slice(0, 2);
+    }
+
+    return detections;
+  }
+
+  // ── Stage B Crop Geometry & Extraction (1.25x Square Crop) ───────────────────
+  function computeCropBox(cx, cy, bw, bh, cropPadding = 0.25) {
+    const bwSafe = Math.max(1.0, bw);
+    const bhSafe = Math.max(1.0, bh);
+    const ar = Math.max(bwSafe / bhSafe, bhSafe / bwSafe);
+    const extraMargin = ar > 1.3 ? 0.15 : 0.05;
+    const size = Math.max(bwSafe, bhSafe) * (1.0 + cropPadding + extraMargin);
+    return { cx, cy, size };
+  }
+
+  function extractCropTensor(sourceElement, cx, cy, size, precision = 'float16') {
+    const srcW = sourceElement.videoWidth || sourceElement.width;
+    const srcH = sourceElement.videoHeight || sourceElement.height;
+
+    const cropX1 = cx - size / 2.0;
+    const cropY1 = cy - size / 2.0;
+    const cropX2 = cx + size / 2.0;
+    const cropY2 = cy + size / 2.0;
+
+    const sx = Math.max(0, cropX1);
+    const sy = Math.max(0, cropY1);
+    const sx2 = Math.min(srcW, cropX2);
+    const sy2 = Math.min(srcH, cropY2);
+    const sw = Math.max(0, sx2 - sx);
+    const sh = Math.max(0, sy2 - sy);
+
+    const scale = 256.0 / size;
+    const dx = (sx - cropX1) * scale;
+    const dy = (sy - cropY1) * scale;
+    const dw = sw * scale;
+    const dh = sh * scale;
+
+    cropCtx.fillStyle = 'rgb(114, 114, 114)';
+    cropCtx.fillRect(0, 0, 256, 256);
+
+    if (sw > 0 && sh > 0) {
+      cropCtx.drawImage(sourceElement, sx, sy, sw, sh, dx, dy, dw, dh);
+    }
+
+    return makeTensorFromCanvas(cropCtx, 256, 256, precision);
+  }
+
+  // ── SimCC Sub-pixel Continuous Expectation Decoder ───────────────────────────
+  function decodeSimccAxis(logitsData, offset, length = 512, ratio = 2.0, win = 12) {
+    let maxVal = -Infinity;
+    for (let i = 0; i < length; i++) {
+      const val = getFloatValue(logitsData, offset + i);
+      if (val > maxVal) maxVal = val;
+    }
+
+    let sumExp = 0;
+    const probs = new Float32Array(length);
+    let peakIdx = 0;
+    let peakProb = -1;
+
+    for (let i = 0; i < length; i++) {
+      const p = Math.exp(getFloatValue(logitsData, offset + i) - maxVal);
+      probs[i] = p;
+      sumExp += p;
+    }
+
+    for (let i = 0; i < length; i++) {
+      probs[i] /= sumExp;
+      if (probs[i] > peakProb) {
+        peakProb = probs[i];
+        peakIdx = i;
+      }
+    }
+
+    const startIdx = Math.max(0, peakIdx - win);
+    const endIdx = Math.min(length - 1, peakIdx + win);
+    let mass = 0;
+    let weightedSum = 0;
+
+    for (let i = startIdx; i <= endIdx; i++) {
+      const p = probs[i];
+      mass += p;
+      weightedSum += p * i;
+    }
+
+    const coord = mass > 1e-8 ? (weightedSum / mass) / ratio : (peakIdx / ratio);
+    return { coord, mass };
+  }
+
+  function decodeRtmPoseOutputs(outputs, cx, cy, size) {
+    const simccXData = outputs['simcc_x'].data;
+    const simccYData = outputs['simcc_y'].data;
+    const visData = outputs['vis'] ? outputs['vis'].data : null;
+    const handData = outputs['hand'] ? outputs['hand'].data : null;
+
+    const keypoints = [];
+    let sumConf = 0;
+    let validKptsCount = 0;
+
+    for (let k = 0; k < 13; k++) {
+      const resX = decodeSimccAxis(simccXData, k * 512, 512, 2.0, 12);
+      const resY = decodeSimccAxis(simccYData, k * 512, 512, 2.0, 12);
+
+      const kptScore = Math.sqrt(Math.max(0, resX.mass * resY.mass));
+      const vis = visData ? getFloatValue(visData, k) : 1.0;
+      const conf = kptScore * vis;
+
+      // Project back from crop space [0..256] to original source frame
+      const kptOrigX = cx + (resX.coord - 128.0) * (size / 256.0);
+      const kptOrigY = cy + (resY.coord - 128.0) * (size / 256.0);
+
+      keypoints.push({
+        index: k,
+        name: KEYPOINT_NAMES[k],
+        x: kptOrigX,
+        y: kptOrigY,
+        visibility: conf
+      });
+
+      sumConf += conf;
+      if (conf >= 0.20) validKptsCount++;
+    }
+
+    const meanConf = sumConf / 13.0;
+    const handProb = handData ? getFloatValue(handData, 0) : 0.5;
+
+    return {
+      keypoints,
+      meanConf,
+      validKptsCount,
+      handProb
+    };
+  }
+
+  // ── Deterministic Geometric Chirality ───────────────────────────────────────
+  function determineGeometricChirality13kp(keypoints) {
+    const toe = keypoints[10];       // toe_tip
+    const ballLat = keypoints[4];    // ball_lateral
+    const ballMed = keypoints[3];    // ball_medial
+
+    let heel;
+    if (keypoints[2].visibility > 0.20) {
+      heel = keypoints[2];
+    } else if (keypoints[1].visibility > 0.20) {
+      heel = keypoints[1];
+    } else {
+      heel = {
+        x: 0.5 * (keypoints[8].x + keypoints[9].x),
+        y: 0.5 * (keypoints[8].y + keypoints[9].y)
+      };
+    }
+
+    const vAxisX = toe.x - heel.x;
+    const vAxisY = toe.y - heel.y;
+
+    const crossLat = vAxisX * (ballLat.y - heel.y) - vAxisY * (ballLat.x - heel.x);
+    const crossMed = vAxisX * (ballMed.y - heel.y) - vAxisY * (ballMed.x - heel.x);
+
+    const diff = crossLat - crossMed;
+    return diff < 0 ? 0 : 1; // 0 = Left Foot, 1 = Right Foot
+  }
+
+  // ── Single-Stage YOLO Decoder ───────────────────────────────────────────────
+  function sigmoid(v) {
+    return 1.0 / (1.0 + Math.exp(-v));
+  }
+
   function decodeYoloPose(rawOutput, prepMeta, confThresh = 0.25, nmsThresh = 0.45) {
-    // rawOutput shape is [1, 45, 1344]
-    // In flat array: index [c * 1344 + a]
-    const numChannels = 45;
     const numAnchors = 1344;
     const data = rawOutput.data;
-
     const candidates = [];
 
     for (let a = 0; a < numAnchors; a++) {
@@ -473,11 +841,7 @@
 
     if (candidates.length === 0) return [];
 
-    // NMS
-    const boxes = candidates.map(c => c.boxPx);
-    const scores = candidates.map(c => c.score);
-    const keepIndices = nms(boxes, scores, nmsThresh);
-
+    const keepIndices = nms(candidates.map(c => c.boxPx), candidates.map(c => c.score), nmsThresh);
     let detections = keepIndices.map(idx => candidates[idx]);
 
     // Physical Foot Deduplication (IoU > 0.60)
@@ -500,34 +864,6 @@
     return detections;
   }
 
-  // ── Deterministic Geometric Chirality ───────────────────────────────────────
-  function determineGeometricChirality13kp(keypoints) {
-    const toe = keypoints[10];       // toe_tip
-    const ballLat = keypoints[4];    // ball_lateral
-    const ballMed = keypoints[3];    // ball_medial
-
-    let heel;
-    if (keypoints[2].visibility > 0.20) {
-      heel = keypoints[2];
-    } else if (keypoints[1].visibility > 0.20) {
-      heel = keypoints[1];
-    } else {
-      heel = {
-        x: 0.5 * (keypoints[8].x + keypoints[9].x),
-        y: 0.5 * (keypoints[8].y + keypoints[9].y)
-      };
-    }
-
-    const vAxisX = toe.x - heel.x;
-    const vAxisY = toe.y - heel.y;
-
-    const crossLat = vAxisX * (ballLat.y - heel.y) - vAxisY * (ballLat.x - heel.x);
-    const crossMed = vAxisX * (ballMed.y - heel.y) - vAxisY * (ballMed.x - heel.x);
-
-    const diff = crossLat - crossMed;
-    return diff < 0 ? 0 : 1; // 0 = Left Foot, 1 = Right Foot
-  }
-
   // ── Render Visualization ────────────────────────────────────────────────────
   function renderDetections(sourceElement, detections) {
     const srcW = sourceElement.videoWidth || sourceElement.width;
@@ -542,6 +878,9 @@
     ctx.clearRect(0, 0, srcW, srcH);
     ctx.drawImage(sourceElement, 0, 0, srcW, srcH);
 
+    // Scale-proportional rendering for crisp display on both mobile and 1080p/4K video
+    const scaleFactor = Math.max(1, srcW / 640);
+
     for (const det of detections) {
       const clsId = det.classId;
       const cfg = clsId === 0 ? COLOR_LEFT : COLOR_RIGHT;
@@ -550,21 +889,23 @@
 
       // 1. Bounding box
       ctx.strokeStyle = cfg.bbox;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = Math.round(3 * scaleFactor);
       ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
 
       // Badge
       ctx.fillStyle = cfg.bbox;
       const badgeText = `${cfg.label} ${(det.score * 100).toFixed(0)}%`;
-      ctx.font = 'bold 16px sans-serif';
+      const fontSize = Math.round(14 * scaleFactor);
+      const badgeHeight = Math.round(24 * scaleFactor);
+      ctx.font = `bold ${fontSize}px sans-serif`;
       const textWidth = ctx.measureText(badgeText).width;
-      ctx.fillRect(b[0], Math.max(0, b[1] - 24), textWidth + 12, 24);
+      ctx.fillRect(b[0], Math.max(0, b[1] - badgeHeight), textWidth + 12 * scaleFactor, badgeHeight);
       ctx.fillStyle = '#0f172a';
-      ctx.fillText(badgeText, b[0] + 6, Math.max(18, b[1] - 6));
+      ctx.fillText(badgeText, b[0] + 6 * scaleFactor, Math.max(fontSize + 4, b[1] - 6 * scaleFactor));
 
       // 2. Skeleton
       ctx.strokeStyle = cfg.skeleton;
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth = Math.round(2.5 * scaleFactor);
       for (const [i1, i2] of SKELETON_PAIRS) {
         const p1 = kpts[i1];
         const p2 = kpts[i2];
@@ -577,22 +918,21 @@
       }
 
       // 3. Keypoints
+      const ptRadius = Math.round(4.5 * scaleFactor);
       for (const kp of kpts) {
         if (kp.visibility < 0.15) continue;
         ctx.beginPath();
         if (kp.visibility >= 0.35) {
-          // Solid dot
           ctx.fillStyle = cfg.kptVis;
-          ctx.arc(kp.x, kp.y, 5, 0, Math.PI * 2);
+          ctx.arc(kp.x, kp.y, ptRadius, 0, Math.PI * 2);
           ctx.fill();
           ctx.strokeStyle = '#000';
-          ctx.lineWidth = 1;
+          ctx.lineWidth = Math.max(1, Math.round(1 * scaleFactor));
           ctx.stroke();
         } else {
-          // Hollow ring for occluded
           ctx.strokeStyle = cfg.kptOcc;
-          ctx.lineWidth = 2;
-          ctx.arc(kp.x, kp.y, 4, 0, Math.PI * 2);
+          ctx.lineWidth = Math.max(1.5, Math.round(2 * scaleFactor));
+          ctx.arc(kp.x, kp.y, Math.round(3.5 * scaleFactor), 0, Math.PI * 2);
           ctx.stroke();
         }
       }
@@ -613,50 +953,173 @@
       return;
     }
 
-    if (state.session && !state.modelError) {
+    // Guard: Do not execute inference while a new model session is loading
+    if (state.isLoadingModel) {
+      renderDetections(sourceElement, []);
+      if (state.isPlaying) {
+        animFrameId = requestAnimationFrame(processFrame);
+      }
+      return;
+    }
+
+    const cfg = state.activeModelConfig;
+
+    if (!state.modelError && cfg) {
       try {
-        // Step 1: Preprocess
-        const tPre0 = performance.now();
-        const prep = preprocessFrame(sourceElement);
-        const tPre = performance.now() - tPre0;
+        if (cfg.type === 'twostage' && state.detSession && state.poseSession) {
+          // ── Two-Stage Qualcomm Pipeline ──
+          const tPre0 = performance.now();
+          const prep = preprocessNanoDetDirect(sourceElement, cfg.detPrecision);
+          const tPre = performance.now() - tPre0;
 
-        if (prep) {
-          // Step 2: Model Inference
-          const tInfer0 = performance.now();
-          const outputs = await state.session.run({ [state.sessionInputName]: prep.tensor });
-          const tInfer = performance.now() - tInfer0;
+          if (prep) {
+            // Stage A: NanoDet Foot Detector
+            const tDet0 = performance.now();
+            const detOutputs = await state.detSession.run({ [state.detInputName]: prep.tensor });
+            const tDet = performance.now() - tDet0;
 
-          // Step 3: Postprocess & Chirality & Smoothing
-          const tPost0 = performance.now();
-          const rawOutput = outputs[state.session.outputNames[0]];
-          let dets = decodeYoloPose(rawOutput, prep, 0.25, 0.45);
+            const tPostDet0 = performance.now();
+            const boxesOut = detOutputs['boxes'];
+            const scoresOut = detOutputs['scores'];
+            // conf_thresh = 0.40 matching eval_video.py
+            const rawDetections = decodeNanoDet(boxesOut, scoresOut, prep, 0.40, 0.45);
+            let tPostDet = performance.now() - tPostDet0;
 
-          const nowSec = performance.now() / 1000.0;
-          for (const det of dets) {
-            det.classId = determineGeometricChirality13kp(det.keypoints);
-            if (state.filterEnabled) {
-              det.keypoints = state.smoothers[det.classId].smooth(det.keypoints, nowSec);
+            // Stage B: RTMPose on each candidate crop & Anatomical Clutter Gate
+            const validCandidates = [];
+            let totalPoseInfer = 0;
+
+            for (const det of rawDetections) {
+              const b = det.origBox;
+              const bw = b[2] - b[0];
+              const bh = b[3] - b[1];
+              const cx = (b[0] + b[2]) / 2.0;
+              const cy = (b[1] + b[3]) / 2.0;
+
+              const cropBox = computeCropBox(cx, cy, bw, bh, 0.25);
+              const cropTensor = extractCropTensor(sourceElement, cropBox.cx, cropBox.cy, cropBox.size, cfg.posePrecision);
+
+              const tPose0 = performance.now();
+              const poseOutputs = await state.poseSession.run({ [state.poseInputName]: cropTensor });
+              totalPoseInfer += (performance.now() - tPose0);
+
+              const poseResult = decodeRtmPoseOutputs(poseOutputs, cropBox.cx, cropBox.cy, cropBox.size);
+
+              // ── Anatomical Clutter Gate ──
+              // Completely rejects carpet leaves, floor patterns, shadows
+              if (poseResult.meanConf < 0.20 || poseResult.validKptsCount < 3) {
+                continue;
+              }
+
+              validCandidates.push({
+                origBox: det.origBox,
+                score: det.score,
+                keypoints: poseResult.keypoints,
+                handProb: poseResult.handProb, // <0.50: Left, >=0.50: Right
+                meanConf: poseResult.meanConf,
+                validKptsCount: poseResult.validKptsCount,
+                jointScore: det.score * (0.5 + 0.5 * poseResult.meanConf),
+                cx: cx,
+                cy: cy
+              });
             }
+
+            // Step C: Dual-Foot Chirality Partitioning (Exact Parity with eval_video.py)
+            let leftCands = validCandidates.filter(c => c.handProb < 0.50);
+            let rightCands = validCandidates.filter(c => c.handProb >= 0.50);
+
+            // Horizontal disambiguation fallback if both candidates fell into the same chirality bucket
+            if (leftCands.length >= 2 && rightCands.length === 0) {
+              leftCands.sort((a, b) => a.cx - b.cx);
+              if (Math.abs(leftCands[1].cx - leftCands[0].cx) > 60) {
+                rightCands.push(leftCands.pop());
+              }
+            } else if (rightCands.length >= 2 && leftCands.length === 0) {
+              rightCands.sort((a, b) => a.cx - b.cx);
+              if (Math.abs(rightCands[1].cx - rightCands[0].cx) > 60) {
+                leftCands.push(rightCands.shift());
+              }
+            }
+
+            const bestLeft = leftCands.length > 0
+              ? leftCands.reduce((prev, curr) => (curr.jointScore > prev.jointScore ? curr : prev))
+              : null;
+            const bestRight = rightCands.length > 0
+              ? rightCands.reduce((prev, curr) => (curr.jointScore > prev.jointScore ? curr : prev))
+              : null;
+
+            const finalDetections = [];
+            if (bestLeft) {
+              finalDetections.push({
+                origBox: bestLeft.origBox,
+                score: bestLeft.score,
+                classId: 0, // Left Foot (Sky Blue)
+                keypoints: bestLeft.keypoints
+              });
+            }
+            if (bestRight) {
+              finalDetections.push({
+                origBox: bestRight.origBox,
+                score: bestRight.score,
+                classId: 1, // Right Foot (Orange)
+                keypoints: bestRight.keypoints
+              });
+            }
+
+            // One-Euro Temporal Smoothing
+            const nowSec = performance.now() / 1000.0;
+            for (const det of finalDetections) {
+              if (state.filterEnabled) {
+                det.keypoints = state.smoothers[det.classId].smooth(det.keypoints, nowSec);
+              }
+            }
+
+            renderDetections(sourceElement, finalDetections);
+
+            const e2e = performance.now() - frameStart;
+            const totalInfer = tDet + totalPoseInfer;
+            const totalProc = e2e - totalInfer;
+
+            updateTelemetry(totalInfer, totalProc, e2e, finalDetections.length, tDet, totalPoseInfer);
           }
-          const tPost = performance.now() - tPost0;
 
-          // Step 4: Render
-          renderDetections(sourceElement, dets);
+        } else if (cfg.type === 'yolo' && state.yoloSession) {
+          // ── Single-Stage YOLO Pipeline ──
+          const tPre0 = performance.now();
+          const prep = preprocessYoloLetterbox(sourceElement, cfg.precision);
+          const tPre = performance.now() - tPre0;
 
-          const e2e = performance.now() - frameStart;
+          if (prep) {
+            const tInfer0 = performance.now();
+            const outputs = await state.yoloSession.run({ [state.yoloInputName]: prep.tensor });
+            const tInfer = performance.now() - tInfer0;
 
-          // Telemetry updates
-          updateTelemetry(tInfer, tPre + tPost, e2e, dets.length);
+            const tPost0 = performance.now();
+            const rawOutput = outputs[state.yoloSession.outputNames[0]];
+            let dets = decodeYoloPose(rawOutput, prep, 0.25, 0.45);
+
+            const nowSec = performance.now() / 1000.0;
+            for (const det of dets) {
+              det.classId = determineGeometricChirality13kp(det.keypoints);
+              if (state.filterEnabled) {
+                det.keypoints = state.smoothers[det.classId].smooth(det.keypoints, nowSec);
+              }
+            }
+            const tPost = performance.now() - tPost0;
+
+            renderDetections(sourceElement, dets);
+
+            const e2e = performance.now() - frameStart;
+            updateTelemetry(tInfer, tPre + tPost, e2e, dets.length, tInfer, 0);
+          }
         }
       } catch (err) {
         console.error('Frame inference error:', err);
         state.modelError = err.message || String(err);
         showBanner('error', `❌ Runtime WASM Failure: ${state.modelError}`);
-        // Render raw video frame without detections
         renderDetections(sourceElement, []);
       }
     } else {
-      // No session or model error: just show video feed
       renderDetections(sourceElement, []);
     }
 
@@ -666,28 +1129,33 @@
   }
 
   // ── Telemetry Helper ────────────────────────────────────────────────────────
-  function updateTelemetry(inferMs, procMs, e2eMs, detCount) {
+  function updateTelemetry(inferMs, procMs, e2eMs, detCount, stageAMs = 0, stageBMs = 0) {
     const now = performance.now();
     const delta = now - state.lastFrameTime;
     state.lastFrameTime = now;
     const curFps = delta > 0 ? 1000.0 / delta : 0;
 
-    // Rolling windows of 30 frames
     state.inferTimes.push(inferMs);
     state.prePostTimes.push(procMs);
     state.e2eTimes.push(e2eMs);
+    state.stageATimes.push(stageAMs);
+    state.stageBTimes.push(stageBMs);
+
     if (state.inferTimes.length > 30) {
       state.inferTimes.shift();
       state.prePostTimes.shift();
       state.e2eTimes.shift();
+      state.stageATimes.shift();
+      state.stageBTimes.shift();
     }
 
-    // Stats calculations
     const sortedInfer = [...state.inferTimes].sort((a, b) => a - b);
     const medianInfer = sortedInfer[Math.floor(sortedInfer.length / 2)];
     const p95Infer = sortedInfer[Math.floor(sortedInfer.length * 0.95)];
     const avgProc = state.prePostTimes.reduce((a, b) => a + b, 0) / state.prePostTimes.length;
     const avgE2E = state.e2eTimes.reduce((a, b) => a + b, 0) / state.e2eTimes.length;
+    const avgStageA = state.stageATimes.reduce((a, b) => a + b, 0) / state.stageATimes.length;
+    const avgStageB = state.stageBTimes.reduce((a, b) => a + b, 0) / state.stageBTimes.length;
 
     hudFps.textContent = curFps.toFixed(1);
     overlayFpsPill.textContent = `${curFps.toFixed(1)} FPS`;
@@ -697,6 +1165,14 @@
     hudProc.textContent = avgProc.toFixed(1);
     hudE2E.textContent = avgE2E.toFixed(1);
     hudDetections.textContent = detCount;
+
+    if (hudStageSplit) {
+      if (state.activeModelConfig && state.activeModelConfig.type === 'twostage') {
+        hudStageSplit.textContent = `${avgStageA.toFixed(1)}ms / ${avgStageB.toFixed(1)}ms`;
+      } else {
+        hudStageSplit.textContent = `N/A (Single)`;
+      }
+    }
   }
 
   // ── Camera and Video Source Handlers ────────────────────────────────────────
@@ -751,7 +1227,6 @@
     } catch (err) {
       console.error('Camera access error:', err);
       showBanner('error', `Camera Error: ${err.name} - ${err.message}. Check camera permissions.`);
-      // Revert to video
       sourceButtons.forEach(btn => {
         btn.classList.toggle('active', btn.dataset.source === 'video');
       });
@@ -773,16 +1248,18 @@
   }
 
   // ── Event Listeners ─────────────────────────────────────────────────────────
-  modelButtons.forEach(btn => {
+  allModelButtons.forEach(btn => {
     btn.addEventListener('click', async () => {
       if (btn.classList.contains('active')) return;
-      modelButtons.forEach(b => b.classList.remove('active'));
+      allModelButtons.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
 
       const modelKey = btn.dataset.model;
       state.inferTimes = [];
       state.prePostTimes = [];
       state.e2eTimes = [];
+      state.stageATimes = [];
+      state.stageBTimes = [];
       state.smoothers[0].reset();
       state.smoothers[1].reset();
 
@@ -845,11 +1322,10 @@
 
   // ── Initial Start ───────────────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', async () => {
-    // 1. Load default model (INT8)
-    await loadModel('int8');
+    // 1. Load default model (twostage_int8_fp16)
+    await loadModel('twostage_int8_fp16');
     // 2. Start video
     await startVideoSource();
   });
 
 })();
-

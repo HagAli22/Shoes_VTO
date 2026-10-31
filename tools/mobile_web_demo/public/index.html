@@ -13,8 +13,8 @@
 <body>
   <div class="container">
     <header>
-      <h1>Shoes VTO - Stage-A Benchmark <span class="badge-wasm">WASM Only</span></h1>
-      <p>Client-side in-browser inference (INT8 vs FP16)</p>
+      <h1>Shoes VTO - Qualcomm vs YOLO Benchmark <span class="badge-wasm">WASM Only</span></h1>
+      <p>Client-side in-browser inference (Two-Stage Qualcomm Apache-2.0 vs Single-Stage YOLO)</p>
     </header>
 
     <!-- Diagnostic Alerts / Status -->
@@ -23,10 +23,37 @@
     <!-- Controls Card -->
     <div class="card">
       <div class="control-group">
-        <label class="control-label">Active Model</label>
-        <div class="segmented-control" id="modelControl">
-          <button type="button" class="active" data-model="int8">INT8 (Quantized 3.46 MB)</button>
-          <button type="button" data-model="fp16">FP16 (Half 6.53 MB)</button>
+        <div class="control-header-row">
+          <label class="control-label">Two-Stage Qualcomm (Apache-2.0)</label>
+          <span class="arch-badge">Qualcomm Pipeline</span>
+        </div>
+        <div class="segmented-control model-control-grid" id="twoStageControl">
+          <button type="button" class="active" data-model="twostage_int8_fp16">
+            <span class="btn-title">Exp 1: NanoDet(INT8) + RTMPose(FP16)</span>
+            <span class="btn-sub">Combined 8.92 MB (1.44 MB + 7.48 MB)</span>
+          </button>
+          <button type="button" data-model="twostage_fp32_fp16">
+            <span class="btn-title">Exp 2: NanoDet(FP32) + RTMPose(FP16)</span>
+            <span class="btn-sub">Combined 11.64 MB (4.16 MB + 7.48 MB)</span>
+          </button>
+          <button type="button" data-model="twostage_fp16_fp16">
+            <span class="btn-title">Exp 3: NanoDet(FP16) + RTMPose(FP16)</span>
+            <span class="btn-sub">Combined 9.66 MB (2.18 MB + 7.48 MB)</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <label class="control-label">Single-Stage Baselines (YOLOv8 AGPLv3)</label>
+        <div class="segmented-control" id="yoloControl">
+          <button type="button" data-model="yolo_int8">
+            <span class="btn-title">YOLOv8n (INT8)</span>
+            <span class="btn-sub">3.46 MB</span>
+          </button>
+          <button type="button" data-model="yolo_fp16">
+            <span class="btn-title">YOLOv8n (FP16)</span>
+            <span class="btn-sub">6.53 MB</span>
+          </button>
         </div>
       </div>
 
@@ -103,6 +130,7 @@
 
       <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.75rem; color:var(--text-muted);">
         <span>Load/Init Time: <strong id="hudLoadTime" style="color:var(--text-main);">--</strong></span>
+        <span>Stage A / B: <strong id="hudStageSplit" style="color:var(--text-main);">--</strong></span>
         <span>Detections: <strong id="hudDetections" style="color:var(--text-main);">0</strong></span>
       </div>
 

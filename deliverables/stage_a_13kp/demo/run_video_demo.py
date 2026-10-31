@@ -248,23 +248,35 @@ def deduplicate_physical_feet(detections, iou_threshold=0.60):
 
 class FootPoseDetector13KP:
     """Wrapper that supports running inference using either Ultralytics (.pt) or ONNX."""
-    def __init__(self, model_path: str, imgsz=320, conf_thresh=0.25, nms_thresh=0.45):
+    def __init__(self, model_path: str, imgsz=0, conf_thresh=0.25, nms_thresh=0.45):
         self.model_path = model_path
-        self.imgsz = imgsz
+        self.imgsz = imgsz if imgsz > 0 else 320
         self.conf_thresh = conf_thresh
         self.nms_thresh = nms_thresh
         self.is_onnx = model_path.endswith(".onnx")
 
         if self.is_onnx:
+            # Enable CUDA libraries if running under Windows PyTorch environment
+            try:
+                import torch
+                tlib = Path(torch.__file__).parent / "lib"
+                if tlib.exists() and hasattr(os, "add_dll_directory"):
+                    os.add_dll_directory(str(tlib))
+            except Exception:
+                pass
             import onnxruntime as ort
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if "CUDAExecutionProvider" in ort.get_available_providers() else ["CPUExecutionProvider"]
             self.session = ort.InferenceSession(model_path, providers=providers)
             self.input_name = self.session.get_inputs()[0].name
-            print(f"[*] Loaded ONNX model with providers: {self.session.get_providers()}")
+            # Auto-detect resolution from model input dimensions
+            inp_shape = self.session.get_inputs()[0].shape
+            if imgsz <= 0 and len(inp_shape) == 4 and isinstance(inp_shape[2], int):
+                self.imgsz = inp_shape[2]
+            print(f"[*] Loaded ONNX model with providers: {self.session.get_providers()} | Resolution: {self.imgsz}x{self.imgsz}")
         else:
             from ultralytics import YOLO
             self.model = YOLO(model_path)
-            print(f"[*] Loaded PyTorch YOLO model: {model_path}")
+            print(f"[*] Loaded PyTorch YOLO model: {model_path} | Resolution: {self.imgsz}x{self.imgsz}")
 
     def letterbox(self, img, new_shape=(320, 320), color=(114, 114, 114)):
         shape = img.shape[:2]
@@ -451,6 +463,7 @@ def run_demo(
     output_path: str,
     conf_thresh: float = 0.25,
     nms_thresh: float = 0.45,
+    imgsz: int = 0,
     max_frames: int = 0,
     show_indices: bool = False,
     show_labels: bool = False,
@@ -481,6 +494,7 @@ def run_demo(
 
     detector = FootPoseDetector13KP(
         model_path=weights_path,
+        imgsz=imgsz,
         conf_thresh=conf_thresh,
         nms_thresh=nms_thresh
     )
@@ -562,6 +576,7 @@ def main():
                         help="Rendered video output path")
     parser.add_argument("--conf", type=float, default=0.25, help="Foot confidence threshold")
     parser.add_argument("--nms", type=float, default=0.45, help="NMS IoU threshold")
+    parser.add_argument("--imgsz", type=int, default=0, help="Inference resolution (0 = auto-detect from model)")
     parser.add_argument("--max_frames", type=int, default=0, help="Max frames to process (0 = all)")
     parser.add_argument("--show_indices", action="store_true", help="Display 0..12/0..14 keypoint index numbers")
     parser.add_argument("--show_labels", action="store_true", help="Display keypoint names")
@@ -593,6 +608,7 @@ def main():
         output_path=args.output,
         conf_thresh=args.conf,
         nms_thresh=args.nms,
+        imgsz=args.imgsz,
         max_frames=args.max_frames,
         show_indices=args.show_indices,
         show_labels=args.show_labels,

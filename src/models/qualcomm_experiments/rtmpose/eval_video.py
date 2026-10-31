@@ -253,6 +253,211 @@ def draw_skeleton(frame, kpts, is_left=True):
 # 3. Main Video Evaluation Runner
 # ==============================================================================
 
+def process_video_stream(
+    video_path: Path,
+    output_path: Path,
+    nanodet,
+    rtmpose,
+    detector,
+    is_nanodet: bool,
+    device: torch.device,
+    conf_thresh: float,
+    det_img_size: int,
+    use_postprocessing: bool
+):
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        print(f"[!] Warning: Could not open video file: {video_path}. Skipping.")
+        return
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"[*] Video Specs: {width}x{height} @ {fps:.1f} FPS, {total_frames} frames.")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+
+    frame_idx = 0
+    t_start = time.time()
+    latencies = []
+
+    # Dedicated Dual-Foot Chirality Tracks: "left" -> FootTrack(ID:1), "right" -> FootTrack(ID:2)
+    tracks: Dict[str, FootTrack] = {}
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_idx += 1
+        t_current = frame_idx / fps
+        t_frame_start = time.perf_counter()
+
+        # Step A: Detect feet using Stage A detector
+        detected_feet = []
+        if is_nanodet:
+            h0, w0 = frame.shape[:2]
+            frame_resized = cv2.resize(frame, (det_img_size, det_img_size))
+            inp = torch.from_numpy(frame_resized).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
+            with torch.no_grad():
+                out = nanodet(inp)
+                preds = nms_postprocess(out["boxes"][0], out["scores"][0], conf_thresh=conf_thresh, iou_thresh=0.45)
+            sx = w0 / float(det_img_size)
+            sy = h0 / float(det_img_size)
+            for p in preds:
+                bx = p["bbox"]
+                scaled_box = np.array([bx[0] * sx, bx[1] * sy, bx[2] * sx, bx[3] * sy], dtype=np.float32)
+                detected_feet.append({
+                    "bbox": scaled_box,
+                    "class_id": p["class_id"],
+                    "score": p["score"]
+                })
+        else:
+            det_res = detector(frame, imgsz=det_img_size, conf=conf_thresh, verbose=False, device=device)[0]
+            if det_res.boxes is not None and len(det_res.boxes) > 0:
+                for b in det_res.boxes:
+                    xyxy = b.xyxy[0].cpu().numpy()
+                    cls_id = int(b.cls[0].item())
+                    score = float(b.conf[0].item())
+                    detected_feet.append({
+                        "bbox": xyxy,
+                        "class_id": cls_id,
+                        "score": score
+                    })
+
+        # Step B: Run Stage B RTMPose on each candidate & apply Anatomical Keypoint Gate
+        valid_candidates = []
+        for det in detected_feet:
+            raw_bbox = det["bbox"]
+            x1, y1, x2, y2 = raw_bbox
+            bw, bh = max(1.0, x2 - x1), max(1.0, y2 - y1)
+            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+            crop_cx, crop_cy, size = compute_crop_box(cx, cy, bw, bh, crop_padding=0.25)
+
+            M, M_inv = get_crop_affine_transform(crop_cx, crop_cy, size, out_size=256, rot=0.0)
+            crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
+            crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
+
+            with torch.no_grad():
+                preds = rtmpose(crop_t)
+                simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
+                hand_prob = float(preds["hand"].item()) if "hand" in preds else float(det["class_id"])
+
+            frame_kps = invert_keypoints(simcc_kps, M_inv)
+            kpt_confs = simcc_kps[:, 2]
+            mean_kpt_conf = float(kpt_confs.mean())
+            valid_kpts = int((kpt_confs >= 0.20).sum())
+
+            # Anatomical Clutter Gate: Carpet leaves, floor tiles, shadows have mean_conf < 0.15 and valid_kpts <= 2
+            if mean_kpt_conf < 0.20 or valid_kpts < 3:
+                continue
+
+            valid_candidates.append({
+                "bbox": raw_bbox,
+                "det_score": det["score"],
+                "kps": frame_kps,
+                "hand_prob": hand_prob,  # <0.5: Left, >=0.5: Right
+                "mean_kpt_conf": mean_kpt_conf,
+                "valid_kpts": valid_kpts,
+                "joint_score": det["score"] * (0.5 + 0.5 * mean_kpt_conf),
+                "cx": cx,
+                "cy": cy
+            })
+
+        # Step C: Dual-Foot Chirality Partitioning (At most 1 Left Foot & at most 1 Right Foot)
+        left_cands = [c for c in valid_candidates if c["hand_prob"] < 0.50]
+        right_cands = [c for c in valid_candidates if c["hand_prob"] >= 0.50]
+
+        # Horizontal disambiguation fallback if both candidates fell into the same chirality bucket
+        if len(left_cands) >= 2 and len(right_cands) == 0:
+            left_cands.sort(key=lambda c: c["cx"])
+            if abs(left_cands[1]["cx"] - left_cands[0]["cx"]) > 60:
+                right_cands.append(left_cands.pop(-1))
+        elif len(right_cands) >= 2 and len(left_cands) == 0:
+            right_cands.sort(key=lambda c: c["cx"])
+            if abs(right_cands[1]["cx"] - right_cands[0]["cx"]) > 60:
+                left_cands.append(right_cands.pop(0))
+
+        best_left = max(left_cands, key=lambda c: c["joint_score"]) if left_cands else None
+        best_right = max(right_cands, key=lambda c: c["joint_score"]) if right_cands else None
+
+        # Step D: Update Chirality-Locked Tracks
+        # Track 1: Left Foot | Track 2: Right Foot
+        active_rendered = 0
+        for side_name, best_det, track_id in [("left", best_left, 1), ("right", best_right, 2)]:
+            is_left = (side_name == "left")
+            colors = COLOR_LEFT if is_left else COLOR_RIGHT
+
+            if best_det is not None:
+                if side_name not in tracks:
+                    tracks[side_name] = FootTrack(
+                        track_id=track_id,
+                        t0=t_current,
+                        raw_bbox=best_det["bbox"],
+                        initial_hand_prob=0.0 if is_left else 1.0
+                    )
+                if use_postprocessing:
+                    s_bbox = tracks[side_name].update_box(t_current, best_det["bbox"])
+                    smooth_kps = tracks[side_name].update_keypoints(t_current, best_det["kps"], best_det["hand_prob"])
+                else:
+                    s_bbox = best_det["bbox"]
+                    smooth_kps = best_det["kps"]
+                tracks[side_name].lost_count = 0
+
+                box_x1 = int(round(s_bbox[0]))
+                box_y1 = int(round(s_bbox[1]))
+                box_x2 = int(round(s_bbox[2]))
+                box_y2 = int(round(s_bbox[3]))
+                cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), colors["bbox"], 2)
+                lbl = f"ID:{track_id} {colors['label']} (Conf: {best_det['det_score']:.2f})"
+                cv2.putText(frame, lbl, (box_x1, max(20, box_y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 2)
+                draw_skeleton(frame, smooth_kps, is_left=is_left)
+                active_rendered += 1
+            else:
+                # Extrapolate track across brief detector dropouts (up to 6 frames)
+                if side_name in tracks:
+                    tracks[side_name].lost_count += 1
+                    if use_postprocessing and tracks[side_name].lost_count <= 6 and tracks[side_name].last_kps is not None:
+                        s_bbox = tracks[side_name].smoothed_bbox
+                        box_x1 = int(round(s_bbox[0]))
+                        box_y1 = int(round(s_bbox[1]))
+                        box_x2 = int(round(s_bbox[2]))
+                        box_y2 = int(round(s_bbox[3]))
+                        cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), colors["bbox"], 1)
+                        lbl = f"ID:{track_id} {colors['label']} (Tracked)"
+                        cv2.putText(frame, lbl, (box_x1, max(20, box_y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 1)
+                        draw_skeleton(frame, tracks[side_name].last_kps, is_left=is_left)
+                        active_rendered += 1
+                    elif tracks[side_name].lost_count > 6:
+                        del tracks[side_name]
+
+        elapsed_ms = (time.perf_counter() - t_frame_start) * 1000.0
+        latencies.append(elapsed_ms)
+
+        # Draw Telemetry HUD
+        rolling_fps = 1000.0 / max(1.0, np.mean(latencies[-30:]))
+        detector_lbl = "NanoDet-Plus (Apache-2.0)" if is_nanodet else "YOLOv8 Stage-A"
+        cv2.rectangle(frame, (10, 10), (510, 95), (20, 20, 20), -1)
+        cv2.rectangle(frame, (10, 10), (510, 95), (0, 255, 255), 1)
+        cv2.putText(frame, f"SHOES VTO: {detector_lbl} + RTMPose-13KP", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1)
+        cv2.putText(frame, f"Dual-Foot VTO Gate + 1-Euro Filter + Hand EMA", (20, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 180), 1)
+        cv2.putText(frame, f"Frame: {frame_idx}/{total_frames} | Latency: {elapsed_ms:.1f}ms ({rolling_fps:.1f} FPS)", (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 0), 1)
+        cv2.putText(frame, f"Active Foot Tracks: {active_rendered} (Max: 2)", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 200, 255), 1)
+
+        writer.write(frame)
+
+        if frame_idx % 100 == 0 or frame_idx == total_frames:
+            print(f"[*] Processed {frame_idx}/{total_frames} frames ({frame_idx/total_frames*100:.1f}%) | Latency: {elapsed_ms:.1f}ms ({rolling_fps:.1f} FPS)")
+
+    cap.release()
+    writer.release()
+    total_time = time.time() - t_start
+
+    print(f"  [+] Saved: {output_path.name} ({total_time:.1f}s, {frame_idx / max(0.1, total_time):.1f} FPS, {np.mean(latencies):.1f}ms latency)")
+
+
 def run_video_evaluation(
     rtmpose_weights: str,
     detector_weights: str,
@@ -260,6 +465,7 @@ def run_video_evaluation(
     output_path: str,
     device_name: str = "cuda" if torch.cuda.is_available() else "cpu",
     conf_thresh: float = 0.30,
+    det_img_size: int = 256,
     use_postprocessing: bool = True
 ):
     if device_name == "cuda" and not torch.cuda.is_available():
@@ -269,10 +475,10 @@ def run_video_evaluation(
     print("=" * 70)
     print("  QUALCOMM RTMPOSE-13KP VIDEO EVALUATION & POST-PROCESSING")
     print(f"  RTMPose Weights:   {rtmpose_weights}")
-    print(f"  Detector Weights:  {detector_weights}")
-    print(f"  Input Video:       {video_path}")
-    print(f"  Output Video:      {output_path}")
-    print(f"  Post-Processing:   {'One-Euro Temporal Filtering + Box Tracking + Hand EMA' if use_postprocessing else 'Disabled (Raw)'}")
+    print(f"  Detector Weights:  {detector_weights} (Input Size: {det_img_size}x{det_img_size})")
+    print(f"  Input Path:        {video_path}")
+    print(f"  Output Path:       {output_path}")
+    print(f"  Post-Processing:   {'One-Euro Temporal Filtering + Dual-Foot Chirality Gate' if use_postprocessing else 'Disabled (Raw)'}")
     print(f"  Device:            {device}")
     print("=" * 70)
 
@@ -294,11 +500,12 @@ def run_video_evaluation(
 
     # 2. Load Detector
     is_nanodet = ("nanodet" in detector_weights.lower())
+    nanodet = None
+    detector = None
     if is_nanodet:
         det_ckpt = torch.load(detector_weights, map_location=device, weights_only=False)
         model_weights = det_ckpt.get("ema_state", det_ckpt.get("model_state", det_ckpt.get("model", det_ckpt)))
 
-        # Automatically adapt to improved RepPAN or legacy GhostPAN checkpoint configuration
         has_extra_lvl = any("extra_lvl" in k for k in model_weights.keys())
         has_gfl_68 = any(k.endswith("gfl_cls.0.weight") and v.shape[0] == 69 for k, v in model_weights.items())
         reg_max = 16 if has_gfl_68 else 7
@@ -309,7 +516,7 @@ def run_video_evaluation(
 
         nanodet = NanoDetPlus(
             num_classes=1,
-            input_size=(256, 256),
+            input_size=(det_img_size, det_img_size),
             reg_max=reg_max,
             strides=strides,
             neck_type=neck_type,
@@ -320,219 +527,53 @@ def run_video_evaluation(
         nanodet.load_state_dict(model_weights)
         nanodet.eval()
         print(f"[+] Loaded NanoDet Stage A Foot Detector (Neck: {neck_type}, Strides: {strides}, reg_max: {reg_max}) successfully.")
-
     else:
         from ultralytics import YOLO
         detector = YOLO(detector_weights)
         print("[+] Loaded YOLO Foot Detector successfully.")
 
-    # 3. Open Video
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise RuntimeError(f"Could not open video file: {video_path}")
-
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"[*] Video Specs: {width}x{height} @ {fps:.1f} FPS, {total_frames} frames.")
-
-    out_dir = Path(output_path).parent
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
-
-    frame_idx = 0
-    t_start = time.time()
-    latencies = []
-
-    # Active foot tracks dictionary: track_id -> FootTrack
-    tracks: Dict[int, FootTrack] = {}
-    next_track_id = 1
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_idx += 1
-        t_current = frame_idx / fps
-        t_frame_start = time.perf_counter()
-
-        # Step A: Detect feet using detector
-        detected_feet = []
-        if is_nanodet:
-            h0, w0 = frame.shape[:2]
-            det_img_size = 320
-            frame_resized = cv2.resize(frame, (det_img_size, det_img_size))
-            inp = torch.from_numpy(frame_resized).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
-            with torch.no_grad():
-                out = nanodet(inp)
-                preds = nms_postprocess(out["boxes"][0], out["scores"][0], conf_thresh=conf_thresh, iou_thresh=0.45)
-            sx = w0 / float(det_img_size)
-            sy = h0 / float(det_img_size)
-            for p in preds:
-                bx = p["bbox"]
-                scaled_box = np.array([bx[0] * sx, bx[1] * sy, bx[2] * sx, bx[3] * sy], dtype=np.float32)
-                detected_feet.append({
-                    "bbox": scaled_box,
-                    "class_id": p["class_id"],
-                    "score": p["score"]
-                })
-        else:
-            det_res = detector(frame, imgsz=256, conf=conf_thresh, verbose=False, device=device)[0]
-            if det_res.boxes is not None and len(det_res.boxes) > 0:
-                for b in det_res.boxes:
-                    xyxy = b.xyxy[0].cpu().numpy()
-                    cls_id = int(b.cls[0].item())
-                    score = float(b.conf[0].item())
-                    detected_feet.append({
-                        "bbox": xyxy,
-                        "class_id": cls_id,
-                        "score": score
-                    })
-
-        # Step B: Associate detections with existing tracks
-        # Compute IoU matrix between active tracks and detections
-        active_track_ids = list(tracks.keys())
-        matched_tracks = set()
-        matched_detections = set()
-
-        if active_track_ids and detected_feet:
-            iou_matrix = np.zeros((len(active_track_ids), len(detected_feet)), dtype=np.float32)
-            for r, tid in enumerate(active_track_ids):
-                trk_b = tracks[tid].smoothed_bbox
-                for c, det in enumerate(detected_feet):
-                    iou_matrix[r, c] = box_iou(trk_b, det["bbox"])
-
-            # Greedy match on highest IoU
-            while True:
-                max_val = iou_matrix.max()
-                if max_val < 0.25:
-                    break
-                r, c = np.unravel_index(iou_matrix.argmax(), iou_matrix.shape)
-                tid = active_track_ids[r]
-                matched_tracks.add(tid)
-                matched_detections.add(c)
-
-                # Process matched foot
-                det = detected_feet[c]
-                raw_bbox = det["bbox"]
-
-                if use_postprocessing:
-                    s_bbox = tracks[tid].update_box(t_current, raw_bbox)
-                    cx, cy, size = tracks[tid].get_crop_params(crop_padding=0.25)
-                else:
-                    s_bbox = raw_bbox
-                    x1, y1, x2, y2 = raw_bbox
-                    bw, bh = max(1.0, x2 - x1), max(1.0, y2 - y1)
-                    raw_cx, raw_cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-                    cx, cy, size = compute_crop_box(raw_cx, raw_cy, bw, bh, crop_padding=0.25)
-
-                # Affine Crop & Inference
-                M, M_inv = get_crop_affine_transform(cx, cy, size, out_size=256, rot=0.0)
-                crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
-                crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
-
-                with torch.no_grad():
-                    preds = rtmpose(crop_t)
-                    simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
-                    hand_prob = float(preds["hand"].item()) if "hand" in preds else float(det["class_id"])
-
-                frame_kps = invert_keypoints(simcc_kps, M_inv)
-
-                if use_postprocessing:
-                    smooth_kps = tracks[tid].update_keypoints(t_current, frame_kps, hand_prob)
-                    is_left = (tracks[tid].hand_prob < 0.50)
-                else:
-                    smooth_kps = frame_kps
-                    is_left = (det["class_id"] == 0)
-
-                colors = COLOR_LEFT if is_left else COLOR_RIGHT
-                # Render tight stabilized box
-                box_x1 = int(round(s_bbox[0]))
-                box_y1 = int(round(s_bbox[1]))
-                box_x2 = int(round(s_bbox[2]))
-                box_y2 = int(round(s_bbox[3]))
-                cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), colors["bbox"], 2)
-
-                lbl = f"ID:{tid} {colors['label']} (Hand: {1.0 - tracks[tid].hand_prob if is_left else tracks[tid].hand_prob:.2f})"
-                cv2.putText(frame, lbl, (box_x1, max(20, box_y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 2)
-
-                # Draw 13-KP anatomical skeleton
-                draw_skeleton(frame, smooth_kps, is_left=is_left)
-
-                iou_matrix[r, :] = -1.0
-                iou_matrix[:, c] = -1.0
-
-        # Step C: Spawn new tracks for unmatched detections
-        for c, det in enumerate(detected_feet):
-            if c in matched_detections:
-                continue
-            raw_bbox = det["bbox"]
-            tid = next_track_id
-            next_track_id += 1
-            init_hand = float(det["class_id"])
-            tracks[tid] = FootTrack(tid, t_current, raw_bbox, initial_hand_prob=init_hand)
-
-            cx, cy, size = tracks[tid].get_crop_params(crop_padding=0.25)
-            M, M_inv = get_crop_affine_transform(cx, cy, size, out_size=256, rot=0.0)
-            crop = warp_image_crop(frame, M, out_size=256, border_value=(114, 114, 114))
-            crop_t = torch.from_numpy(crop).permute(2, 0, 1).float().unsqueeze(0).to(device) / 255.0
-
-            with torch.no_grad():
-                preds = rtmpose(crop_t)
-                simcc_kps = decode_simcc(preds, simcc_split_ratio=2.0, win=12)[0]
-                hand_prob = float(preds["hand"].item()) if "hand" in preds else float(det["class_id"])
-
-            frame_kps = invert_keypoints(simcc_kps, M_inv)
-            smooth_kps = tracks[tid].update_keypoints(t_current, frame_kps, hand_prob)
-            is_left = (tracks[tid].hand_prob < 0.50)
-            colors = COLOR_LEFT if is_left else COLOR_RIGHT
-
-            box_x1 = int(round(raw_bbox[0]))
-            box_y1 = int(round(raw_bbox[1]))
-            box_x2 = int(round(raw_bbox[2]))
-            box_y2 = int(round(raw_bbox[3]))
-            cv2.rectangle(frame, (box_x1, box_y1), (box_x2, box_y2), colors["bbox"], 2)
-            lbl = f"ID:{tid} {colors['label']} (New)"
-            cv2.putText(frame, lbl, (box_x1, max(20, box_y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 2)
-            draw_skeleton(frame, smooth_kps, is_left=is_left)
-
-        # Step D: Handle lost tracks (missing frame bridge & cleanup)
-        for tid in list(tracks.keys()):
-            if tid not in matched_tracks and tid < next_track_id - len(detected_feet):
-                tracks[tid].lost_count += 1
-                if tracks[tid].lost_count > 6:
-                    del tracks[tid]
-
-        elapsed_ms = (time.perf_counter() - t_frame_start) * 1000.0
-        latencies.append(elapsed_ms)
-
-        # Draw Telemetry HUD
-        rolling_fps = 1000.0 / max(1.0, np.mean(latencies[-30:]))
-        detector_lbl = "NanoDet-Plus (Apache-2.0)" if is_nanodet else "YOLOv8 Stage-A"
-        cv2.rectangle(frame, (10, 10), (480, 95), (20, 20, 20), -1)
-        cv2.rectangle(frame, (10, 10), (480, 95), (0, 255, 255), 1)
-        cv2.putText(frame, f"SHOES VTO: {detector_lbl} + RTMPose-13KP", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1)
-        cv2.putText(frame, f"Post-Processing: 1-Euro Filter + Box Track + Hand EMA", (20, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 180), 1)
-        cv2.putText(frame, f"Frame: {frame_idx}/{total_frames} | Latency: {elapsed_ms:.1f}ms ({rolling_fps:.1f} FPS)", (20, 72), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 0), 1)
-        cv2.putText(frame, f"Active Foot Tracks: {len(tracks)}", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 200, 255), 1)
-
-        writer.write(frame)
-
-        if frame_idx % 100 == 0 or frame_idx == total_frames:
-            print(f"[*] Processed {frame_idx}/{total_frames} frames ({frame_idx/total_frames*100:.1f}%) | Latency: {elapsed_ms:.1f}ms ({rolling_fps:.1f} FPS)")
-
-    cap.release()
-    writer.release()
-    total_time = time.time() - t_start
-
-    print("\n" + "=" * 70)
-    print("  EVALUATION COMPLETE")
-    print(f"  Output saved to:    {output_path} ({Path(output_path).stat().st_size / (1024*1024):.2f} MB)")
-    print(f"  Total Time:         {total_time:.1f}s ({frame_idx / total_time:.1f} FPS)")
-    print(f"  Average Latency:    {np.mean(latencies):.2f} ms")
-    print("=" * 70)
+    v_path = Path(video_path)
+    if v_path.is_dir():
+        video_files = sorted([p for p in v_path.iterdir() if p.suffix.lower() in (".mp4", ".avi", ".mov", ".mkv")])
+        out_base = Path(output_path)
+        out_base.mkdir(parents=True, exist_ok=True)
+        print(f"[*] Processing directory with {len(video_files)} video files...\n")
+        t_total_batch = time.time()
+        for idx, vf in enumerate(video_files, 1):
+            out_file = out_base / vf.name
+            print(f"[{idx}/{len(video_files)}] Processing: {vf.name}")
+            process_video_stream(
+                video_path=vf,
+                output_path=out_file,
+                nanodet=nanodet,
+                rtmpose=rtmpose,
+                detector=detector,
+                is_nanodet=is_nanodet,
+                device=device,
+                conf_thresh=conf_thresh,
+                det_img_size=det_img_size,
+                use_postprocessing=use_postprocessing
+            )
+        elapsed_total = time.time() - t_total_batch
+        print("\n" + "=" * 70)
+        print("  BATCH EVALUATION COMPLETE")
+        print(f"  Processed {len(video_files)} videos in {elapsed_total:.1f}s")
+        print(f"  Outputs saved in: {output_path}")
+        print("=" * 70)
+    else:
+        out_file = Path(output_path)
+        process_video_stream(
+            video_path=v_path,
+            output_path=out_file,
+            nanodet=nanodet,
+            rtmpose=rtmpose,
+            detector=detector,
+            is_nanodet=is_nanodet,
+            device=device,
+            conf_thresh=conf_thresh,
+            det_img_size=det_img_size,
+            use_postprocessing=use_postprocessing
+        )
 
 
 if __name__ == "__main__":
@@ -551,8 +592,13 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, default="deliverables/qualcomm_experiments/nanodet_rtmpose_apache2_demo.mp4")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--conf", type=float, default=0.30)
+    parser.add_argument("--det_img_size", type=int, default=None, help="Resolution to feed into detector (default auto-detect 256 or 320)")
     parser.add_argument("--no_postprocessing", action="store_true", help="Disable temporal filtering")
     args = parser.parse_args()
+
+    det_size = args.det_img_size
+    if det_size is None:
+        det_size = 320 if "320" in args.detector else 256
 
     run_video_evaluation(
         rtmpose_weights=args.rtmpose,
@@ -561,5 +607,6 @@ if __name__ == "__main__":
         output_path=args.output,
         device_name=args.device,
         conf_thresh=args.conf,
+        det_img_size=det_size,
         use_postprocessing=not args.no_postprocessing
     )

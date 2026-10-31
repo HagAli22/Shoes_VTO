@@ -28,6 +28,13 @@ import argparse
 from pathlib import Path
 import numpy as np
 import cv2
+try:
+    import torch
+    _tlib = Path(torch.__file__).parent / 'lib'
+    if _tlib.exists() and hasattr(os, 'add_dll_directory'):
+        os.add_dll_directory(str(_tlib))
+except Exception:
+    pass
 
 
 # ── 15-Keypoint Anatomical Mapping (Derived) ──────────────────────────────────

@@ -292,8 +292,9 @@ class NanoDetPlus(nn.Module):
         all_boxes = []
         all_scores = []
 
-        max_w = float(self.input_size[0])
-        max_h = float(self.input_size[1])
+        # Dynamically compute bounds from lowest stride feature map (covers exact input dimension)
+        max_w = float(cls_preds[0].shape[-1] * self.strides[0])
+        max_h = float(cls_preds[0].shape[-2] * self.strides[0])
 
         for stride, cls_p, reg_p in zip(self.strides, cls_preds, reg_preds):
             _, _, h, w = cls_p.shape

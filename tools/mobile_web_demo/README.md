@@ -10,20 +10,27 @@
 This tool provides a lightweight, mobile-ready web application designed to benchmark and validate the **Shoes VTO Stage A 256 Mobile (13/15-Keypoint)** models directly inside real mobile device browsers (iOS Safari, Android Chrome).
 
 ### Core Features:
-- **Client-Side CPU WASM Inference:** Hardcoded to `executionProviders: ['wasm']` and single-threaded execution (`ort.env.wasm.numThreads = 1`). Absolutely **zero GPU** or WebGPU fallback is used.
+- **Client-Side CPU WASM Inference:** Hardcoded to executionProviders: ['wasm'] and single-threaded execution (ort.env.wasm.numThreads = 1). Absolutely **zero GPU** or WebGPU fallback is used.
 - **Model Comparison:** Live switching between:
-  - **INT8 (`stage-a-256-13kp-int8.onnx`, 3.46 MB):** Dynamically quantized, fits $\le 5$ MB download budget.
-  - **FP16 (`stage-a-256-13kp-fp16.onnx`, 6.53 MB):** Half-precision model.
+  - **Two-Stage Qualcomm (Apache-2.0, Recommended):**
+    - **Exp 1: NanoDet(INT8) + RTMPose(FP16)** (~8.92 MB combined: 1.44 MB + 7.48 MB)
+    - **Exp 2: NanoDet(FP32) + RTMPose(FP16)** (~11.64 MB combined: 4.16 MB + 7.48 MB)
+    - **Exp 3: NanoDet(FP16) + RTMPose(FP16)** (~9.66 MB combined: 2.18 MB + 7.48 MB)
+    *Note: The Stage B pose model (
+tmpose-13kp-hand-fp16.onnx) is shared across all three; browser cache avoids re-downloading.*
+  - **Single-Stage YOLO Baselines (AGPLv3):**
+    - **YOLOv8n INT8 (stage-a-256-13kp-int8.onnx, 3.46 MB)**
+    - **YOLOv8n FP16 (stage-a-256-13kp-fp16.onnx, 6.53 MB)**
 - **Dual Input Feeds:**
-  - **Sample Video:** Pre-loaded reference video (`video.mp4` / `6950859-hd_1920_1080_25fps.mp4`).
-  - **Phone Camera:** Real-time mobile camera stream (`getUserMedia`) with front/rear camera toggle.
-- **Anatomical Processing:**
-  - Letterbox resize to $256 \times 256$ with standard fill `114`.
-  - 1344-anchor decoding and Non-Maximum Suppression (NMS).
-  - Signed cross-product geometric chirality (Left Foot = Green, Right Foot = Cyan/Blue).
+  - **Sample Video:** Pre-loaded reference video (ideo.mp4).
+  - **Phone Camera:** Real-time mobile camera stream (getUserMedia) with front/rear camera toggle.
+- **Anatomical Processing & Clutter Rejection:**
+  - Stage A NanoDet foot bounding box detection with Letterbox  \times 256$ (fill 114) and DFL decode.
+  - Stage B RTMPose-13KP SimCC continuous expectation sub-pixel inference ($\pm 12$ bin local peak window mass).
+  - **Anatomical Clutter Gate** (meanConf >= 0.20 && validKpts >= 3): Completely eliminates false detections on carpet patterns, floral rugs, and floor tiles.
+  - In-Model Handedness / Signed cross-product chirality (Left Foot = Green, Right Foot = Cyan/Blue).
   - One-Euro temporal keypoint smoother (toggleable ON/OFF).
-- **Live Telemetry HUD:** Rolling 30-frame statistics for Effective FPS, Median Latency ($p_{50}$), Tail Latency ($p_{95}$), Current Latency, Pre/Postprocessing time, and End-to-End time.
-
+- **Live Telemetry HUD:** Rolling 30-frame statistics for Effective FPS, Median Latency ({50}$), Tail Latency ({95}$), Current Latency, Pre/Postprocessing time, Stage A / Stage B breakdown, and End-to-End time.
 ---
 
 ## 2. Directory Structure
