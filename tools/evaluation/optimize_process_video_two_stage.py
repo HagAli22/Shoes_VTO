@@ -2444,38 +2444,112 @@ def run_benchmarks(
     print("=" * 175)
 
 
-# ── Main Entrypoint ────────────────────────────────────────────────────────────
+# ── Production Configuration Factory & Main Entrypoint ─────────────────────────
+
+def get_production_config(precision: str = "fp32", mode: str = "offline") -> Dict[str, Any]:
+    """
+    Returns the empirically verified 'Best Optimization' configuration.
+    Features:
+      - Native FP32 ONNX graph (improved5_opset12) to avoid Pascal CC 6.1 cuDNN 1:64 fallback
+        and eliminate multimodal discrete argmax keypoint flipping.
+      - Pose-Guided Kalman ROI extrapolation (0.05ms) replacing heavy optical flow.
+      - Fixed Heartbeat 5 motion-adaptive detection (80.1% skip rate).
+      - Vectorized in-place crop buffering (0.6ms extraction).
+      - Asynchronous 3-worker threaded pipeline (Capture + GPU Infer + Async Render).
+    """
+    q_dir = Path("deliverables/qualcomm_experiments/models")
+    prec = precision.lower()
+    if prec == "fp16":
+        nanodet_path = q_dir / "nanodet_stage_a_improved5_fp16.onnx"
+        rtmpose_path = q_dir / "rtmpose_13kp_hand_improved5_fp16.onnx"
+    elif prec == "int8":
+        nanodet_path = q_dir / "nanodet_stage_a_improved5_int8.onnx"
+        rtmpose_path = q_dir / "rtmpose_13kp_hand_improved5_int8.onnx"
+    else:  # fp32 (Default - Fastest on host Desktop GPU & highest accuracy)
+        nanodet_path = q_dir / "nanodet_stage_a_improved5_opset12.onnx"
+        rtmpose_path = q_dir / "rtmpose_13kp_hand_improved5_opset12.onnx"
+
+    return {
+        "id": f"production_{prec}_{mode.lower()}",
+        "name": f"Production Shoes VTO ({prec.upper()} - {mode.capitalize()} Mode)",
+        "nanodet": str(nanodet_path),
+        "rtmpose": str(rtmpose_path),
+        "enable_candidate_filter": True,
+        "enable_batched_pose": True,
+        "enable_adaptive_det": True,
+        "adaptive_mode": "fixed_5",
+        "flow_strategy": "pose_guided",
+        "enable_vectorized_crop": True,
+        "enable_io_binding": False,
+        "async_writer": True,
+        "async_mode": mode.lower(),
+    }
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Production Shoes VTO Pipeline Optimizer & Benchmark")
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+    parser = argparse.ArgumentParser(description="Production Shoes VTO Pipeline Optimizer & Runner (60+ FPS)")
     parser.add_argument("--video", type=str, default="data/test_video.mp4", help="Input video path")
-    parser.add_argument("--output_dir", type=str, default="deliverables/qualcomm_experiments/benchmark_videos", help="Output directory")
+    parser.add_argument("--output", type=str, default=None, help="Output annotated video path")
+    parser.add_argument("--output_dir", type=str, default="deliverables/qualcomm_experiments/optimized_demo_videos", help="Output directory")
     parser.add_argument("--max_frames", type=int, default=None, help="Max frames to process (None = all)")
     parser.add_argument("--conf", type=float, default=0.40, help="Confidence threshold")
-    parser.add_argument("--run_benchmark", action="store_true", default=True, help="Run the full benchmark suite")
-    parser.add_argument("--benchmark_60fps", action="store_true", default=True, help="Run controlled 60+ FPS optimization suite")
-    parser.add_argument("--benchmark_intervals", action="store_true", help="Also sweep intervals (3, 5, 10, adaptive)")
-    parser.add_argument("--num_repeats", type=int, default=5, help="Number of benchmark repetitions after warm-up (default: 5)")
-    parser.add_argument("--async_pipeline", action="store_true", help="Run asynchronous 3-worker multi-threaded pipeline")
-    parser.add_argument("--async_mode", type=str, default="offline", choices=["offline", "live"], help="Async pipeline mode")
-    parser.add_argument("--config_id", type=str, default=None, help="Single configuration ID to run if not benchmarking")
+    parser.add_argument("--precision", type=str, default="fp32", choices=["fp32", "fp16", "int8"], help="Model precision (default: fp32)")
+    parser.add_argument("--mode", type=str, default="offline", choices=["offline", "live"], help="Async pipeline mode (offline: lossless 0%% drop; live: real-time camera dropping)")
+    parser.add_argument("--sync", action="store_true", help="Run synchronous single-threaded pipeline (Exp 5) instead of async 3-worker pipeline")
+    parser.add_argument("--benchmark", action="store_true", help="Run full 7-configuration comparative benchmark suite")
+    parser.add_argument("--benchmark_intervals", action="store_true", help="Include heartbeat interval sweep in benchmark")
+    parser.add_argument("--num_repeats", type=int, default=5, help="Number of benchmark repetitions after warm-up")
+    parser.add_argument("--config_id", type=str, default=None, help="Specific configuration ID to run if not using default")
     args = parser.parse_args()
 
     video_path = Path(args.video)
     if not video_path.exists():
-        print(f"[!] Error: {video_path} does not exist!")
-        return
+        fallback_candidates = [
+            Path("deliverables/stage_a_16kp/test_video.mp4"),
+            Path("shoes-vto-ai-v2/test_video.mp4"),
+            Path("tools/mobile_web_demo/public/video.mp4")
+        ]
+        found = False
+        for cand in fallback_candidates:
+            if cand.exists():
+                video_path = cand
+                print(f"[*] Note: '{args.video}' not found. Using repository test video: {video_path}")
+                found = True
+                break
+        if not found:
+            print(f"[!] Error: {video_path} does not exist!")
+            return
 
     output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
+    # 1. Comparative Benchmark Suite Mode (Triggered with --benchmark)
+    if args.benchmark:
+        print("[*] Running full comparative benchmark suite across 7 configurations...")
+        run_benchmarks(
+            video_path=video_path,
+            output_dir=output_dir,
+            max_frames=args.max_frames,
+            benchmark_intervals=args.benchmark_intervals,
+            benchmark_60fps=True,
+            num_repeats=args.num_repeats
+        )
+        return
+
+    # 2. Specific Legacy / Experimental Configuration ID
     if args.config_id:
-        # Run single configuration
         q_dir = Path("deliverables/qualcomm_experiments/models")
         cfg = {
             "id": args.config_id,
             "name": f"Configuration {args.config_id}",
-            "nanodet": str(q_dir / "nanodet_stage_a_improved5_opset12.onnx"),
-            "rtmpose": str(q_dir / "rtmpose_13kp_hand_improved5_opset12.onnx"),
+            "nanodet": str(q_dir / f"nanodet_stage_a_improved5_{args.precision}.onnx"),
+            "rtmpose": str(q_dir / f"rtmpose_13kp_hand_improved5_{args.precision}.onnx"),
             "enable_candidate_filter": True,
             "enable_batched_pose": True,
             "enable_adaptive_det": True,
@@ -2485,8 +2559,8 @@ def main():
             "async_writer": True,
             "filename": f"{args.config_id}.mp4"
         }
-        out_vid = output_dir / cfg["filename"]
-        print(f"[*] Running single configuration: {cfg['name']} -> {out_vid}")
+        out_vid = output_dir / cfg["filename"] if not args.output else Path(args.output)
+        print(f"[*] Running specific configuration: {cfg['name']} -> {out_vid}")
         metrics, _ = process_video_two_stage(
             cfg=cfg,
             video_path=video_path,
@@ -2496,30 +2570,68 @@ def main():
         )
         print("\n=== Single Run Metrics Summary ===")
         print(json.dumps(metrics, indent=2))
-    elif args.async_pipeline:
-        q_dir = Path("deliverables/qualcomm_experiments/models")
-        cfg = {
-            "id": f"exp_async_{args.async_mode}",
-            "name": f"Asynchronous 3-Worker Pipeline ({args.async_mode.capitalize()} Mode)",
-            "nanodet": str(q_dir / "nanodet_stage_a_improved5_fp16.onnx"),
-            "rtmpose": str(q_dir / "rtmpose_13kp_hand_improved5_fp16.onnx"),
-            "adaptive_mode": "adaptive",
-            "enable_io_binding": False,
-        }
-        out_vid = output_dir / f"exp_async_{args.async_mode}_fp16.mp4"
-        print(f"[*] Running Asynchronous 3-Worker Pipeline ({args.async_mode.upper()} mode) -> {out_vid}")
-        res = run_async_pipeline(cfg, video_path, out_vid, max_frames=args.max_frames, mode=args.async_mode)
-        print("\n=== Async Pipeline Metrics ===")
-        print(json.dumps(res, indent=2))
+        return
+
+    # 3. Default Execution: Best Production Two-Stage Pipeline (62+ Wall FPS, 75+ Proc FPS)
+    cfg = get_production_config(precision=args.precision, mode=args.mode)
+    
+    if args.output:
+        out_vid = Path(args.output)
     else:
-        run_benchmarks(
+        out_vid = output_dir / f"production_{args.precision}_{args.mode}_opt.mp4"
+
+    print("=" * 80)
+    print("  PRODUCTION SHOES VTO TWO-STAGE PIPELINE (60+ FPS BEST WAY)")
+    print("=" * 80)
+    print(f"  Target Video:     {video_path}")
+    print(f"  Output Video:     {out_vid}")
+    print(f"  Precision:        {args.precision.upper()} ({Path(cfg['rtmpose']).name})")
+    print(f"  Pipeline Mode:    {args.mode.upper()} ({'Lossless 0% Drop Queue' if args.mode == 'offline' else 'Real-time Camera Dropping'})")
+    print(f"  Architecture:     3-Worker Threaded Pipeline (Capture + GPU Infer + Async Render)")
+    print(f"  Optimizations:    Pose-Guided Kalman ROI (0.05ms) + Fixed Heartbeat 5 + In-Place Crop")
+    print("=" * 80)
+
+    if args.sync:
+        print("[*] Running in Synchronous Mode (Exp 5: In-Place Crop + CUDA Batch-2 + Async Writer)...")
+        cfg["async_writer"] = True
+        metrics, _ = process_video_two_stage(
+            cfg=cfg,
             video_path=video_path,
-            output_dir=output_dir,
+            output_path=out_vid,
             max_frames=args.max_frames,
-            benchmark_intervals=args.benchmark_intervals,
-            benchmark_60fps=args.benchmark_60fps,
-            num_repeats=args.num_repeats
+            conf_thresh=args.conf
         )
+        res = metrics
+    else:
+        print("[*] Running in Asynchronous 3-Worker Mode (Target: 60+ Wall FPS)...")
+        res = run_async_pipeline(
+            cfg=cfg,
+            video_path=video_path,
+            output_path=out_vid,
+            max_frames=args.max_frames,
+            mode=args.mode
+        )
+
+    print("\n" + "=" * 80)
+    print("  PRODUCTION PIPELINE EXECUTION SUMMARY")
+    print("=" * 80)
+    print(f"  Input Frames:           {res.get('input_frames', 0)}")
+    print(f"  Processed Frames:       {res.get('processed_frames', 0)}")
+    print(f"  Dropped Frames:         {res.get('dropped_frames', 0)} ({res.get('dropped_pct', 0.0):.1f}%)")
+    print(f"  Wall-Clock Duration:    {res.get('wall_clock_sec', 0.0):.2f}s")
+    print(f"  Wall-Clock Throughput:  {res.get('wall_clock_fps', 0.0):.2f} FPS")
+    print(f"  Processing Throughput:  {res.get('processing_fps', 0.0):.2f} FPS")
+    p50_val = res.get('proc_latency_p50', res.get('processing_latency', {}).get('p50', 0.0))
+    p95_val = res.get('proc_latency_p95', res.get('processing_latency', {}).get('p95', 0.0))
+    e2e_p95 = res.get('complete_cap_to_output_p95', res.get('complete_capture_to_output_latency', {}).get('p95', 0.0))
+    print(f"  Processing Latency P50: {p50_val:.2f} ms")
+    print(f"  Processing Latency P95: {p95_val:.2f} ms")
+    print(f"  Capture-to-Output P95:  {e2e_p95:.2f} ms")
+    print(f"  Pose Coverage:          {res.get('pose_coverage_pct', 100.0):.1f}%")
+    print(f"  Silent Pose Skips:      {res.get('silent_pose_skips', 0)}")
+    print(f"  Crop Breakdown (0/1/2): {res.get('frames_with_0_crops', 0)} / {res.get('frames_with_1_crop', 0)} / {res.get('frames_with_2_crops', 0)}")
+    print(f"  Output Video:           {out_vid}")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
