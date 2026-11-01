@@ -3,14 +3,16 @@
 (function () {
   'use strict';
 
-  // ── ONNX Runtime Web WASM Configuration ─────────────────────────────────────
-  // Explicitly WASM only, single-threaded for universal mobile browser compatibility.
-  // CRITICAL: wasmPaths must be a full URL so dynamic import() in browser does not fail with 'bare specifier' error.
+  // ── ONNX Runtime Web Multi-Threaded WASM SIMD Configuration ─────────────────
+  // Uses multi-threaded WASM with thread pooling when crossOriginIsolated / SharedArrayBuffer is available.
+  let activeWasmThreads = 1;
   if (typeof ort !== 'undefined') {
     const wasmDir = new URL('vendor/', window.location.href).href;
     ort.env.wasm.wasmPaths = wasmDir;
-    ort.env.wasm.numThreads = 1;
-    console.log('[ORT Web] Configured wasmPaths to:', wasmDir);
+    const supportsThreads = (typeof window !== 'undefined' && window.crossOriginIsolated) || (typeof SharedArrayBuffer !== 'undefined');
+    activeWasmThreads = supportsThreads ? Math.min(4, Math.max(1, (navigator.hardwareConcurrency || 4))) : 1;
+    ort.env.wasm.numThreads = activeWasmThreads;
+    console.log('[ORT Web] Configured wasmPaths to:', wasmDir, 'with active threads:', activeWasmThreads);
   }
 
   // ── Keypoint Schema & Connections (13 Keypoints) ────────────────────────────
@@ -370,37 +372,30 @@
         return { detect: true, reason: 'every_frame' };
       }
 
-      // 1. Mandatory Heartbeat Interval (default 5 frames)
+      // 1. Mandatory Fixed Heartbeat 5 clock (Guarantees true 80% Stage A bypass)
       if (this.framesSinceDet >= this.interval) {
         this.framesSinceDet = 0;
         this.lastReason = 'heartbeat_interval';
         return { detect: true, reason: 'heartbeat_interval' };
       }
 
-      // 2. Active Track Availability
-      const activeSides = [0, 1].filter(s => tracks[s] && tracks[s].lostCount === 0);
-      if (activeSides.length < 2) {
+      // 2. Initial track acquisition: runs NanoDet until at least one foot track is initialized
+      const hasAnyTrack = (tracks[0] !== null && tracks[0].lostCount < 3) ||
+                          (tracks[1] !== null && tracks[1].lostCount < 3);
+      if (!hasAnyTrack) {
         this.framesSinceDet = 0;
-        this.lastReason = 'missing_tracks';
-        return { detect: true, reason: 'missing_tracks' };
+        this.lastReason = 'initial_search';
+        return { detect: true, reason: 'initial_search' };
       }
 
-      // 3. Pose Quality & Confidence Degradation
-      for (const side of activeSides) {
-        const trk = tracks[side];
-        if (trk.meanConf < 0.25 || trk.validKpts < 3) {
-          this.framesSinceDet = 0;
-          this.lastReason = 'low_confidence';
-          return { detect: true, reason: 'low_confidence' };
-        }
-        if (trk.kalman.getSpeed() > 25.0) {
-          this.framesSinceDet = 0;
-          this.lastReason = 'fast_motion';
-          return { detect: true, reason: 'fast_motion' };
-        }
+      // 3. Recovery only when BOTH foot tracks are lost for multiple frames
+      if (tracks[0] && tracks[1] && tracks[0].lostCount >= 3 && tracks[1].lostCount >= 3 && this.framesSinceDet >= 2) {
+        this.framesSinceDet = 0;
+        this.lastReason = 'both_lost_recovery';
+        return { detect: true, reason: 'both_lost_recovery' };
       }
 
-      // All tracks stable: SKIP Stage A!
+      // Stable tracking: SKIP Stage A!
       this.skippedFrames++;
       this.lastReason = 'pose_guided_skip';
       return { detect: false, reason: 'pose_guided_skip' };
@@ -587,7 +582,7 @@
 
     state.isLoadingModel = true;
     state.modelError = null;
-    overlayModelPill.textContent = `${config.pill} WASM`;
+    overlayModelPill.textContent = `${config.pill} WASM (${activeWasmThreads}T)`;
 
     showBanner('info', `Loading ${config.name} (${config.sizeMb}) via WASM backend...`);
 
@@ -667,7 +662,7 @@
       state.loadDuration = dt;
       hudLoadTime.textContent = `${dt} ms`;
 
-      showBanner('info', `✓ ${config.name} loaded in ${dt} ms. Execution Provider: WASM (CPU Only).`);
+      showBanner('info', `✓ ${config.name} loaded in ${dt} ms. Execution Provider: WASM SIMD (${activeWasmThreads} Threads).`);
       setTimeout(() => {
         if (!state.modelError) hideBanner();
       }, 4000);
@@ -763,6 +758,8 @@
     };
   }
 
+  const INV_255 = 1.0 / 255.0;
+
   function makeTensorFromCanvas(context, w, h, precision = 'float32') {
     const imgData = context.getImageData(0, 0, w, h).data;
     const numPixels = w * h;
@@ -776,17 +773,17 @@
         tensorData = new Float16Array(3 * numPixels);
         for (let i = 0; i < numPixels; i++) {
           const srcIdx = i * 4;
-          tensorData[rOffset + i] = imgData[srcIdx] / 255.0;
-          tensorData[gOffset + i] = imgData[srcIdx + 1] / 255.0;
-          tensorData[bOffset + i] = imgData[srcIdx + 2] / 255.0;
+          tensorData[rOffset + i] = imgData[srcIdx] * INV_255;
+          tensorData[gOffset + i] = imgData[srcIdx + 1] * INV_255;
+          tensorData[bOffset + i] = imgData[srcIdx + 2] * INV_255;
         }
       } else {
         tensorData = new Uint16Array(3 * numPixels);
         for (let i = 0; i < numPixels; i++) {
           const srcIdx = i * 4;
-          tensorData[rOffset + i] = float32ToFloat16(imgData[srcIdx] / 255.0);
-          tensorData[gOffset + i] = float32ToFloat16(imgData[srcIdx + 1] / 255.0);
-          tensorData[bOffset + i] = float32ToFloat16(imgData[srcIdx + 2] / 255.0);
+          tensorData[rOffset + i] = float32ToFloat16(imgData[srcIdx] * INV_255);
+          tensorData[gOffset + i] = float32ToFloat16(imgData[srcIdx + 1] * INV_255);
+          tensorData[bOffset + i] = float32ToFloat16(imgData[srcIdx + 2] * INV_255);
         }
       }
       return new ort.Tensor('float16', tensorData, [1, 3, h, w]);
@@ -794,9 +791,9 @@
       const tensorData = new Float32Array(3 * numPixels);
       for (let i = 0; i < numPixels; i++) {
         const srcIdx = i * 4;
-        tensorData[rOffset + i] = imgData[srcIdx] / 255.0;
-        tensorData[gOffset + i] = imgData[srcIdx + 1] / 255.0;
-        tensorData[bOffset + i] = imgData[srcIdx + 2] / 255.0;
+        tensorData[rOffset + i] = imgData[srcIdx] * INV_255;
+        tensorData[gOffset + i] = imgData[srcIdx + 1] * INV_255;
+        tensorData[bOffset + i] = imgData[srcIdx + 2] * INV_255;
       }
       return new ort.Tensor('float32', tensorData, [1, 3, h, w]);
     }
@@ -981,7 +978,9 @@
     return makeTensorFromCanvas(cropCtx, 256, 256, precision);
   }
 
-  // ── SimCC Sub-pixel Continuous Expectation Decoder ───────────────────────────
+  // ── SimCC Sub-pixel Continuous Expectation Decoder (Zero-Allocation) ─────────
+  const STATIC_SIMCC_PROBS = new Float32Array(512);
+
   function decodeSimccAxis(logitsData, offset, length = 512, ratio = 2.0, win = 12) {
     let maxVal = -Infinity;
     for (let i = 0; i < length; i++) {
@@ -990,7 +989,7 @@
     }
 
     let sumExp = 0;
-    const probs = new Float32Array(length);
+    const probs = STATIC_SIMCC_PROBS;
     let peakIdx = 0;
     let peakProb = -1;
 
@@ -1000,8 +999,9 @@
       sumExp += p;
     }
 
+    const invSum = sumExp > 1e-12 ? (1.0 / sumExp) : 1.0;
     for (let i = 0; i < length; i++) {
-      probs[i] /= sumExp;
+      probs[i] *= invSum;
       if (probs[i] > peakProb) {
         peakProb = probs[i];
         peakIdx = i;
@@ -1367,8 +1367,7 @@
                 if (!state.tracks[0]) {
                   state.tracks[0] = new FootTrack(0, bestLeft.origBox, bestLeft.handProb);
                 }
-                const kptBox = computeKptBbox(bestLeft.keypoints) || bestLeft.origBox;
-                state.tracks[0].applyObservation(kptBox, bestLeft.keypoints, bestLeft.handProb);
+                state.tracks[0].applyObservation(bestLeft.origBox, bestLeft.keypoints, bestLeft.handProb);
                 finalDetections.push({
                   origBox: state.tracks[0].smoothedBbox,
                   score: bestLeft.score,
@@ -1383,8 +1382,7 @@
                 if (!state.tracks[1]) {
                   state.tracks[1] = new FootTrack(1, bestRight.origBox, bestRight.handProb);
                 }
-                const kptBox = computeKptBbox(bestRight.keypoints) || bestRight.origBox;
-                state.tracks[1].applyObservation(kptBox, bestRight.keypoints, bestRight.handProb);
+                state.tracks[1].applyObservation(bestRight.origBox, bestRight.keypoints, bestRight.handProb);
                 finalDetections.push({
                   origBox: state.tracks[1].smoothedBbox,
                   score: bestRight.score,
@@ -1420,7 +1418,13 @@
               // Anatomical Clutter Gate
               if (poseResult.meanConf >= 0.20 && poseResult.validKptsCount >= 3) {
                 const kptBox = computeKptBbox(poseResult.keypoints) || pBox;
-                trk.applyObservation(kptBox, poseResult.keypoints, poseResult.handProb);
+                const blendedBox = [
+                  0.7 * kptBox[0] + 0.3 * pBox[0],
+                  0.7 * kptBox[1] + 0.3 * pBox[1],
+                  0.7 * kptBox[2] + 0.3 * pBox[2],
+                  0.7 * kptBox[3] + 0.3 * pBox[3],
+                ];
+                trk.applyObservation(blendedBox, poseResult.keypoints, poseResult.handProb);
                 finalDetections.push({
                   origBox: trk.smoothedBbox,
                   score: poseResult.meanConf,
@@ -1563,7 +1567,7 @@
   async function startVideoSource() {
     stopCurrentStream();
     video.srcObject = null;
-    video.src = 'video.mp4';
+    video.src = 'video7.mp4';
     video.loop = true;
     flipCameraBtn.style.display = 'none';
     restartBtn.style.display = 'flex';
