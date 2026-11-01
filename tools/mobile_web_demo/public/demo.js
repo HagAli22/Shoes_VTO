@@ -149,12 +149,13 @@
     }
   };
 
-  // ── One-Euro Filter Implementation ──────────────────────────────────────────
+  // ── Rock-Solid One-Euro Filter with Micro-Motion Deadband ───────────────────
   class OneEuroFilter {
-    constructor(minCutoff = 1.2, beta = 0.008, dCutoff = 1.0) {
-      this.minCutoff = minCutoff;
-      this.beta = beta;
+    constructor(minCutoff = 0.45, beta = 0.025, dCutoff = 1.0, deadband = 0.75) {
+      this.minCutoff = minCutoff;   // Aggressive low-speed smoothing (0.45 Hz)
+      this.beta = beta;             // High-speed responsiveness without lag (0.025)
       this.dCutoff = dCutoff;
+      this.deadband = deadband;     // Subpixel noise threshold in pixels (0.75 px)
       this.xPrev = null;
       this.dxPrev = 0.0;
       this.tPrev = null;
@@ -170,11 +171,19 @@
       if (this.xPrev === null) {
         this.xPrev = x;
         this.tPrev = t;
+        this.dxPrev = 0.0;
         return x;
       }
       const dt = Math.max(t - this.tPrev, 1e-4);
       this.tPrev = t;
       const rate = 1.0 / dt;
+
+      // Micro-motion deadband: if motion is tiny subpixel jitter and velocity is near zero, freeze
+      const rawDelta = Math.abs(x - this.xPrev);
+      if (rawDelta < this.deadband && Math.abs(this.dxPrev) < 4.0) {
+        this.dxPrev = 0.6 * this.dxPrev;
+        return this.xPrev;
+      }
 
       const dx = (x - this.xPrev) * rate;
       const edx = this.dxPrev + this.alpha(rate, this.dCutoff) * (dx - this.dxPrev);
@@ -312,6 +321,31 @@
       this.lastKpsDisplay  = null;
       this.smoothedBbox = [...rawBbox];
       this.predictedBbox = [...rawBbox];
+
+      // EMA-stabilized crop window (Breaks the feedback jitter loop)
+      this.cropCx = null;
+      this.cropCy = null;
+      this.cropSize = null;
+    }
+
+    getSmoothedCrop(targetCx, targetCy, targetSize) {
+      if (this.cropCx === null) {
+        this.cropCx = targetCx;
+        this.cropCy = targetCy;
+        this.cropSize = targetSize;
+        return { cx: targetCx, cy: targetCy, size: targetSize };
+      }
+
+      // Fast-motion override: if foot moved by > 30px, snap crop window faster to prevent lag
+      const dist = Math.hypot(targetCx - this.cropCx, targetCy - this.cropCy);
+      const alphaCenter = dist > 30.0 ? 0.70 : 0.25;
+      const alphaSize   = dist > 30.0 ? 0.45 : 0.15;
+
+      this.cropCx += alphaCenter * (targetCx - this.cropCx);
+      this.cropCy += alphaCenter * (targetCy - this.cropCy);
+      this.cropSize += alphaSize * (targetSize - this.cropSize);
+
+      return { cx: this.cropCx, cy: this.cropCy, size: this.cropSize };
     }
 
     beginFramePredict() {
@@ -347,6 +381,11 @@
       this.smoothedBbox = [...this.predictedBbox];
       this.lostCount += 1;
       this.age += 1;
+      if (this.lostCount > 2) {
+        this.cropCx = null;
+        this.cropCy = null;
+        this.cropSize = null;
+      }
       if (this.lastKpsSnapshot) {
         const [vx, vy] = this.kalman.getVelocity();
         const n = this.lostCount;
@@ -1123,7 +1162,7 @@
   // ── SimCC Sub-pixel Continuous Expectation Decoder (Zero-Allocation) ─────────
   const STATIC_SIMCC_PROBS = new Float32Array(512);
 
-  function decodeSimccAxis(logitsData, offset, length = 512, ratio = 2.0, win = 12) {
+  function decodeSimccAxis(logitsData, offset, length = 512, ratio = 2.0, win = 8) {
     let maxVal = -Infinity;
     for (let i = 0; i < length; i++) {
       const val = getFloatValue(logitsData, offset + i);
@@ -1150,15 +1189,19 @@
       }
     }
 
+    // Narrow subpixel window (win=8) and filter noisy tails (<0.04*peakProb) to eliminate subpixel coordinate buzzing
     const startIdx = Math.max(0, peakIdx - win);
     const endIdx = Math.min(length - 1, peakIdx + win);
+    const probFloor = 0.04 * peakProb;
     let mass = 0;
     let weightedSum = 0;
 
     for (let i = startIdx; i <= endIdx; i++) {
       const p = probs[i];
-      mass += p;
-      weightedSum += p * i;
+      if (p >= probFloor) {
+        mass += p;
+        weightedSum += p * i;
+      }
     }
 
     const coord = mass > 1e-8 ? (weightedSum / mass) / ratio : (peakIdx / ratio);
@@ -1437,6 +1480,7 @@
           const needsDetRight = !state.heartbeatEnabled || needsDetection(state.tracks[1]);
           const runDetector   = needsDetLeft || needsDetRight || heartbeatFired;
 
+          const nowSec = performance.now() / 1000.0;
           let tDet = 0;
           let totalPoseInfer = 0;
           let finalDetections = [];
@@ -1500,15 +1544,19 @@
               for (const side of [0, 1]) {
                 const best = assignedMap[side];
                 if (best) {
+                  let stableKps = best.keypoints;
+                  if (state.filterEnabled) {
+                    stableKps = state.smoothers[side].smooth(best.keypoints, nowSec);
+                  }
                   if (!state.tracks[side]) {
                     state.tracks[side] = new FootTrack(side, best.origBox, best.handProb);
                   }
-                  state.tracks[side].applyObservation(best.origBox, best.keypoints, best.handProb);
+                  state.tracks[side].applyObservation(best.origBox, stableKps, best.handProb);
                   finalDetections.push({
                     origBox:  state.tracks[side].smoothedBbox,
                     score:    best.score,
                     classId:  side,
-                    keypoints: best.keypoints
+                    keypoints: stableKps
                   });
                 } else if (state.tracks[side]) {
                   // This side wasn't found by detector this frame → extrapolate (safe clone)
@@ -1528,7 +1576,7 @@
 
           } else {
             // ── Path 2: Pose-Guided Tracking (NanoDet Skipped) ─────────────────
-            // FIX 3: Use keypoint-derived ROI instead of pure Kalman bbox
+            // FIX 3: Use keypoint-derived ROI + EMA crop stabilization
             for (const side of [0, 1]) {
               const trk = state.tracks[side];
               if (!trk || trk.lostCount > 3) continue;
@@ -1537,7 +1585,7 @@
 
               // Blend keypoint ROI (70%) with Kalman prediction (30%) for crop center
               const kptRoi = computeRoiFromKeypoints(trk.lastKpsSnapshot, 0.35);
-              let cropBox;
+              let targetCrop;
               if (kptRoi) {
                 const kalmanCx = (pBox[0] + pBox[2]) / 2.0;
                 const kalmanCy = (pBox[1] + pBox[3]) / 2.0;
@@ -1546,14 +1594,17 @@
                 const blendCx   = 0.70 * kptRoi.cx + 0.30 * kalmanCx;
                 const blendCy   = 0.70 * kptRoi.cy + 0.30 * kalmanCy;
                 const blendSize = 0.70 * kptRoi.size + 0.30 * Math.max(kalmanW, kalmanH) * 1.25;
-                cropBox = { cx: blendCx, cy: blendCy, size: blendSize };
+                targetCrop = { cx: blendCx, cy: blendCy, size: blendSize };
               } else {
                 const bw = pBox[2] - pBox[0];
                 const bh = pBox[3] - pBox[1];
                 const cx = (pBox[0] + pBox[2]) / 2.0;
                 const cy = (pBox[1] + pBox[3]) / 2.0;
-                cropBox = computeCropBox(cx, cy, bw, bh, 0.25);
+                targetCrop = computeCropBox(cx, cy, bw, bh, 0.25);
               }
+
+              // EMA Smoothed Crop Window (Breaks feedback jitter loop)
+              const cropBox = trk.getSmoothedCrop(targetCrop.cx, targetCrop.cy, targetCrop.size);
 
               const cropTensor = extractCropTensor(sourceElement, cropBox.cx, cropBox.cy, cropBox.size, cfg.posePrecision);
 
@@ -1565,14 +1616,18 @@
 
               // Anatomical Clutter Gate
               if (poseResult.meanConf >= 0.20 && poseResult.validKptsCount >= 3) {
-                // FIX 5: Feed keypoint-derived bbox to Kalman (consistent with detection path)
-                const kptBox = computeKptBbox(poseResult.keypoints) || pBox;
-                trk.applyObservation(kptBox, poseResult.keypoints, poseResult.handProb);
+                let stableKps = poseResult.keypoints;
+                if (state.filterEnabled) {
+                  stableKps = state.smoothers[side].smooth(poseResult.keypoints, nowSec);
+                }
+                // Feed keypoint-derived bbox to Kalman (consistent with detection path)
+                const kptBox = computeKptBbox(stableKps) || pBox;
+                trk.applyObservation(kptBox, stableKps, poseResult.handProb);
                 finalDetections.push({
                   origBox:  trk.smoothedBbox,
                   score:    poseResult.meanConf,
                   classId:  side,
-                  keypoints: poseResult.keypoints
+                  keypoints: stableKps
                 });
               } else {
                 // Pose unreliable this frame → safe clone extrapolation (FIX 1)
@@ -1592,14 +1647,6 @@
 
           // Tick the heartbeat clock (FIX 6)
           state.adaptiveDetector.tick(runDetector);
-
-          // One-Euro Temporal Smoothing
-          const nowSec = performance.now() / 1000.0;
-          for (const det of finalDetections) {
-            if (state.filterEnabled) {
-              det.keypoints = state.smoothers[det.classId].smooth(det.keypoints, nowSec);
-            }
-          }
 
           renderDetections(sourceElement, finalDetections);
 
