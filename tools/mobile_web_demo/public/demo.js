@@ -566,14 +566,17 @@
     // Sessions for Two-Stage
     detSession: null,
     detInputName: null,
+    detBackend: 'wasm',
     loadedDetPath: null,
     poseSession: null,
     poseInputName: null,
+    poseBackend: 'wasm',
     loadedPosePath: null,
 
     // Session for Single-Stage YOLO
     yoloSession: null,
     yoloInputName: null,
+    yoloBackend: 'wasm',
 
     modelError: null,
     loadDuration: null,
@@ -702,13 +705,54 @@
     banner.style.display = 'none';
   }
 
-  // ── Session Creation Helper (Strict WASM) ───────────────────────────────────
-  async function createWasmSession(modelPath) {
-    const sessionOptions = {
+  // ── Tensor Creation Helpers ─────────────────────────────────────────────────
+  function createDummyTensor(type, dims) {
+    const totalElements = dims.reduce((a, b) => a * b, 1);
+    if (type === 'float16') {
+      const f16Data = (typeof Float16Array !== 'undefined')
+        ? new Float16Array(totalElements)
+        : new Uint16Array(totalElements);
+      return new ort.Tensor('float16', f16Data, dims);
+    } else {
+      const f32 = new Float32Array(totalElements);
+      return new ort.Tensor('float32', f32, dims);
+    }
+  }
+
+  // ── Session Creation Helper (WebGPU for FP16 with WASM Fallback; WASM for FP32/INT8) ──
+  async function createSessionForModel(modelPath, precision) {
+    const isFp16 = (precision === 'float16');
+
+    // Requirement: ONLY use WebGPU for FP16 if available; for FP32/INT8, strictly use WASM.
+    if (isFp16 && typeof navigator !== 'undefined' && navigator.gpu) {
+      try {
+        console.log(`[ORT] Attempting WebGPU EP for FP16 model: ${modelPath}`);
+        const session = await ort.InferenceSession.create(modelPath, {
+          executionProviders: ['webgpu'],
+          graphOptimizationLevel: 'all'
+        });
+
+        // Test warmup run to verify WGSL shader compilation and pipeline creation
+        const warmupTensor = createDummyTensor('float16', [1, 3, 256, 256]);
+        await session.run({ [session.inputNames[0]]: warmupTensor });
+
+        console.log(`[ORT] [PASS] Successfully initialized WebGPU for ${modelPath}`);
+        return { session, backend: 'webgpu' };
+      } catch (webgpuErr) {
+        console.warn(`[ORT] WebGPU failed for ${modelPath} (shader-f16 or device limitation). Falling back to WASM:`, webgpuErr);
+      }
+    }
+
+    // WASM Backend (strictly used for FP32, INT8, and as graceful fallback for FP16)
+    console.log(`[ORT] Using WASM EP (threads: ${activeWasmThreads}) for model: ${modelPath}`);
+    const session = await ort.InferenceSession.create(modelPath, {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all'
-    };
-    return await ort.InferenceSession.create(modelPath, sessionOptions);
+    });
+    const warmupTensor = createDummyTensor(isFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
+    await session.run({ [session.inputNames[0]]: warmupTensor });
+
+    return { session, backend: 'wasm' };
   }
 
   // ── Model Loader (Atomic Commit to Avoid Precision Race Conditions) ───────
@@ -721,9 +765,9 @@
 
     state.isLoadingModel = true;
     state.modelError = null;
-    overlayModelPill.textContent = `${config.pill} WASM (${activeWasmThreads}T)`;
+    overlayModelPill.textContent = `Loading ${config.pill}...`;
 
-    showBanner('info', `Loading ${config.name} (${config.sizeMb}) via WASM backend...`);
+    showBanner('info', `Loading ${config.name} (${config.sizeMb})...`);
 
     const t0 = performance.now();
     try {
@@ -735,28 +779,26 @@
         // 1. Create or reuse Stage A Detector session
         let newDetSession = state.detSession;
         let newDetInputName = state.detInputName;
+        let newDetBackend = state.detBackend;
         if (!newDetSession || state.loadedDetPath !== config.detPath) {
-          showBanner('info', `[1/2] Loading Stage A Detector: ${config.detPath}...`);
-          newDetSession = await createWasmSession(config.detPath);
+          showBanner('info', `[1/2] Loading Stage A Detector (${config.detPrecision.toUpperCase()}): ${config.detPath}...`);
+          const res = await createSessionForModel(config.detPath, config.detPrecision);
+          newDetSession = res.session;
           newDetInputName = newDetSession.inputNames[0];
-
-          const isDetFp16 = config.detPrecision === 'float16';
-          const detWarmupTensor = createDummyTensor(isDetFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
-          await newDetSession.run({ [newDetInputName]: detWarmupTensor });
+          newDetBackend = res.backend;
           state.loadedDetPath = config.detPath;
         }
 
         // 2. Create or reuse Stage B RTMPose session with matching precision
         let newPoseSession = state.poseSession;
         let newPoseInputName = state.poseInputName;
+        let newPoseBackend = state.poseBackend;
         if (!newPoseSession || state.loadedPosePath !== config.posePath) {
-          showBanner('info', `[2/2] Loading Stage B RTMPose: ${config.posePath}...`);
-          newPoseSession = await createWasmSession(config.posePath);
+          showBanner('info', `[2/2] Loading Stage B RTMPose (${config.posePrecision.toUpperCase()}): ${config.posePath}...`);
+          const res = await createSessionForModel(config.posePath, config.posePrecision);
+          newPoseSession = res.session;
           newPoseInputName = newPoseSession.inputNames[0];
-
-          const isPoseFp16 = config.posePrecision === 'float16';
-          const poseWarmupTensor = createDummyTensor(isPoseFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
-          await newPoseSession.run({ [newPoseInputName]: poseWarmupTensor });
+          newPoseBackend = res.backend;
           state.loadedPosePath = config.posePath;
         }
 
@@ -770,20 +812,35 @@
         state.yoloInputName = null;
         state.detSession = newDetSession;
         state.detInputName = newDetInputName;
+        state.detBackend = newDetBackend;
         state.poseSession = newPoseSession;
         state.poseInputName = newPoseInputName;
+        state.poseBackend = newPoseBackend;
         state.activeModelKey = modelKey;
         state.activeModelConfig = config;
 
+        // UI Backend descriptor
+        let backendDesc;
+        if (newDetBackend === 'webgpu' && newPoseBackend === 'webgpu') {
+          backendDesc = 'WebGPU';
+        } else if (newDetBackend === 'webgpu') {
+          backendDesc = `Det:WebGPU, Pose:WASM(${activeWasmThreads}T)`;
+        } else if (newPoseBackend === 'webgpu') {
+          backendDesc = `Det:WASM(${activeWasmThreads}T), Pose:WebGPU`;
+        } else {
+          backendDesc = `WASM (${activeWasmThreads}T)`;
+        }
+
+        overlayModelPill.textContent = `${config.pill} [${backendDesc}]`;
+        showBanner('info', `✓ ${config.name} loaded in ${(performance.now() - t0).toFixed(0)} ms. Backend: ${backendDesc}.`);
+
       } else {
         // Single-Stage YOLO
-        showBanner('info', `Loading Single-Stage YOLO: ${config.path}...`);
-        const newYoloSession = await createWasmSession(config.path);
+        showBanner('info', `Loading Single-Stage YOLO (${config.precision.toUpperCase()}): ${config.path}...`);
+        const res = await createSessionForModel(config.path, config.precision);
+        const newYoloSession = res.session;
         const newYoloInputName = newYoloSession.inputNames[0];
-
-        const isFp16 = config.precision === 'float16';
-        const yoloWarmupTensor = createDummyTensor(isFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
-        await newYoloSession.run({ [newYoloInputName]: yoloWarmupTensor });
+        const newYoloBackend = res.backend;
 
         // ATOMIC COMMIT
         state.detSession = null;
@@ -792,8 +849,13 @@
         state.poseInputName = null;
         state.yoloSession = newYoloSession;
         state.yoloInputName = newYoloInputName;
+        state.yoloBackend = newYoloBackend;
         state.activeModelKey = modelKey;
         state.activeModelConfig = config;
+
+        const backendDesc = newYoloBackend === 'webgpu' ? 'WebGPU' : `WASM (${activeWasmThreads}T)`;
+        overlayModelPill.textContent = `${config.pill} [${backendDesc}]`;
+        showBanner('info', `✓ ${config.name} loaded in ${(performance.now() - t0).toFixed(0)} ms. Backend: ${backendDesc}.`);
       }
 
       state.isLoadingModel = false;
@@ -801,7 +863,6 @@
       state.loadDuration = dt;
       hudLoadTime.textContent = `${dt} ms`;
 
-      showBanner('info', `✓ ${config.name} loaded in ${dt} ms. Execution Provider: WASM SIMD (${activeWasmThreads} Threads).`);
       setTimeout(() => {
         if (!state.modelError) hideBanner();
       }, 4000);
@@ -811,37 +872,6 @@
       state.isLoadingModel = false;
       state.modelError = err.message || String(err);
       showBanner('error', `❌ Model Load Error: ${state.modelError}`);
-    }
-  }
-
-  // ── Warmup Helpers ──────────────────────────────────────────────────────────
-  async function warmUpTwoStage(config) {
-    const isDetFp16 = config.detPrecision === 'float16';
-    const detTensor = createDummyTensor(isDetFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
-    await state.detSession.run({ [state.detInputName]: detTensor });
-
-    const poseTensor = createDummyTensor('float16', [1, 3, 256, 256]);
-    await state.poseSession.run({ [state.poseInputName]: poseTensor });
-    console.log('[TwoStage] Warmup inference completed.');
-  }
-
-  async function warmUpYolo(config) {
-    const isFp16 = config.precision === 'float16';
-    const tensor = createDummyTensor(isFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
-    await state.yoloSession.run({ [state.yoloInputName]: tensor });
-    console.log('[YOLO] Warmup inference completed.');
-  }
-
-  function createDummyTensor(type, dims) {
-    const totalElements = dims.reduce((a, b) => a * b, 1);
-    if (type === 'float16') {
-      const f16Data = (typeof Float16Array !== 'undefined')
-        ? new Float16Array(totalElements)
-        : new Uint16Array(totalElements);
-      return new ort.Tensor('float16', f16Data, dims);
-    } else {
-      const f32 = new Float32Array(totalElements);
-      return new ort.Tensor('float32', f32, dims);
     }
   }
 
@@ -1639,7 +1669,7 @@
       } catch (err) {
         console.error('Frame inference error:', err);
         state.modelError = err.message || String(err);
-        showBanner('error', `❌ Runtime WASM Failure: ${state.modelError}`);
+        showBanner('error', `❌ Runtime Failure: ${state.modelError}`);
         renderDetections(sourceElement, []);
       }
     } else {
