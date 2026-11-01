@@ -2579,6 +2579,7 @@ def main():
         out_vid = Path(args.output)
     else:
         out_vid = output_dir / f"production_{args.precision}_{args.mode}_opt.mp4"
+    out_vid.parent.mkdir(parents=True, exist_ok=True)
 
     print("=" * 80)
     print("  PRODUCTION SHOES VTO TWO-STAGE PIPELINE (60+ FPS BEST WAY)")
