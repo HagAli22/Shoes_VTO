@@ -469,6 +469,7 @@ class FootTrack:
     """
     Stateful foot track combining Kalman motion modeling with One-Euro sub-pixel jitter filter.
     Enforces correct initialization and exactly one predict() call per frame lifecycle.
+    Implements MediaPipe immutable observation snapshot to prevent keypoint extrapolation drift.
     """
     def __init__(self, track_id: int, side: str, t0: float, raw_bbox: np.ndarray, initial_hand_prob: float):
         self.track_id = track_id
@@ -482,6 +483,9 @@ class FootTrack:
         self.mean_conf = 0.50
         self.valid_kpts = 10
         self.last_kps: Optional[np.ndarray] = None
+        # MediaPipe Immutable Snapshot: preserves original observation without in-place drift
+        self.last_kps_snapshot: Optional[np.ndarray] = None
+        self.last_kps_display: Optional[np.ndarray] = None
         self.smoothed_bbox = tuple(float(v) for v in raw_bbox)
         self.predicted_bbox = tuple(float(v) for v in raw_bbox)
 
@@ -516,6 +520,9 @@ class FootTrack:
         out[:, :2] = smoothed_coords
         out[:, 2] = np.clip(smoothed_confs, 0.0, 1.0)
         self.last_kps = out
+        # Store immutable snapshot of verified observation
+        self.last_kps_snapshot = out.copy()
+        self.last_kps_display = out
         self.lost_count = 0
         self.age += 1
         self.mean_conf = float(np.mean(out[:, 2]))
@@ -523,20 +530,163 @@ class FootTrack:
         return out
 
     def extrapolate_unobserved(self, flow_disp: Optional[np.ndarray] = None) -> np.ndarray:
-        """Step 2b: When unobserved or skipped, use Kalman predicted box and propagate kps."""
+        """
+        Step 2b: MediaPipe Safe Extrapolation.
+        Projects from the immutable observation snapshot by n frames of displacement/velocity
+        rather than mutating last_kps in-place, eliminating cumulative spatial drift.
+        """
         self.smoothed_bbox = self.predicted_bbox  # Already predicted in begin_frame_predict()
         self.lost_count += 1
         self.age += 1
-        if self.last_kps is not None:
+        if self.last_kps_snapshot is not None:
+            n = self.lost_count
+            out = self.last_kps_snapshot.copy()
             if flow_disp is not None and not np.isnan(flow_disp).any():
-                self.last_kps[:, 0] += flow_disp[0]
-                self.last_kps[:, 1] += flow_disp[1]
+                out[:, 0] += flow_disp[0] * n
+                out[:, 1] += flow_disp[1] * n
             else:
                 v = self.kalman.get_velocity()
-                self.last_kps[:, 0] += v[0]
-                self.last_kps[:, 1] += v[1]
-            self.last_kps[:, 2] *= 0.95  # Slightly decay confidence during extrapolation
+                out[:, 0] += v[0] * n
+                out[:, 1] += v[1] * n
+            out[:, 2] *= float(0.90 ** n)  # Gradually decay confidence
+            self.last_kps = out
+            self.last_kps_display = out
         return np.array(self.smoothed_bbox, dtype=np.float32)
+
+    def get_display_kps(self) -> Optional[np.ndarray]:
+        """Returns the current rendered keypoints."""
+        return self.last_kps_display if self.last_kps_display is not None else self.last_kps
+
+
+# ── MediaPipe-Style Per-Foot Decision & Association Functions ─────────────────
+
+MIN_TRACKING_CONF = 0.28
+MIN_VALID_KPTS = 5
+MAX_LOST_FRAMES = 2
+
+def needs_detection(trk: Optional[FootTrack]) -> bool:
+    """Per-foot detector trigger: Re-run NanoDet immediately when track quality drops."""
+    if trk is None:
+        return True
+    if trk.lost_count >= MAX_LOST_FRAMES:
+        return True
+    if trk.mean_conf < MIN_TRACKING_CONF:
+        return True
+    if trk.valid_kpts < MIN_VALID_KPTS:
+        return True
+    return False
+
+def compute_roi_from_keypoints(kps: Optional[np.ndarray], padding: float = 0.35) -> Optional[Tuple[float, float, float]]:
+    """
+    Computes an anatomical foot ROI (cx, cy, size) directly from high-confidence keypoints.
+    Ensures crops are centered on actual foot anatomy, avoiding Kalman bbox drift.
+    """
+    if kps is None or len(kps) == 0:
+        return None
+    valid = kps[kps[:, 2] >= 0.20]
+    if len(valid) < 3:
+        return None
+    min_x = float(np.min(valid[:, 0]))
+    min_y = float(np.min(valid[:, 1]))
+    max_x = float(np.max(valid[:, 0]))
+    max_y = float(np.max(valid[:, 1]))
+    cx = (min_x + max_x) / 2.0
+    cy = (min_y + max_y) / 2.0
+    span_w = max_x - min_x
+    span_h = max_y - min_y
+    size = max(span_w, span_h) * (1.0 + padding)
+    return cx, cy, max(size, 30.0)
+
+def associate_detections(
+    candidates: List[Dict[str, Any]],
+    active_tracks: Dict[str, FootTrack]
+) -> Dict[str, Optional[Dict[str, Any]]]:
+    """
+    Robust 2-foot association using IoU, centroid distance, and chirality affinity.
+    Replaces brittle chirality-only partitioning to prevent ID switches during
+    foot crossings, occlusions, and shadows.
+    """
+    if not candidates:
+        return {"left": None, "right": None}
+
+    left_trk = active_tracks.get("left")
+    right_trk = active_tracks.get("right")
+
+    def affinity_score(cand: Dict[str, Any], trk: FootTrack) -> float:
+        iou = compute_iou(cand["bbox"], np.array(trk.smoothed_bbox))
+        tcx = (trk.smoothed_bbox[0] + trk.smoothed_bbox[2]) / 2.0
+        tcy = (trk.smoothed_bbox[1] + trk.smoothed_bbox[3]) / 2.0
+        dx = cand["cx"] - tcx
+        cy_cand = (cand["bbox"][1] + cand["bbox"][3]) / 2.0
+        dy = cy_cand - tcy
+        dist = math.sqrt(dx * dx + dy * dy)
+        dist_score = 1.0 / (1.0 + dist / 100.0)
+        chiral_score = (1.0 - cand["hand_prob"]) if trk.side == "left" else cand["hand_prob"]
+        return float(0.50 * iou + 0.30 * dist_score + 0.20 * chiral_score)
+
+    scored = []
+    for c in candidates:
+        s_left = affinity_score(c, left_trk) if (left_trk and left_trk.lost_count == 0) else -1.0
+        s_right = affinity_score(c, right_trk) if (right_trk and right_trk.lost_count == 0) else -1.0
+        scored.append({
+            "cand": c,
+            "score_left": s_left,
+            "score_right": s_right,
+            "chiral_left": 1.0 - c["hand_prob"],
+            "chiral_right": c["hand_prob"]
+        })
+
+    best_left = None
+    best_right = None
+
+    if left_trk and right_trk and left_trk.lost_count == 0 and right_trk.lost_count == 0:
+        if len(candidates) >= 2:
+            pair1 = scored[0]["score_left"] + scored[1]["score_right"]
+            pair2 = scored[1]["score_left"] + scored[0]["score_right"]
+            if pair1 >= pair2:
+                best_left = scored[0]["cand"]
+                best_right = scored[1]["cand"]
+            else:
+                best_left = scored[1]["cand"]
+                best_right = scored[0]["cand"]
+        elif len(candidates) == 1:
+            s = scored[0]
+            if s["score_left"] >= s["score_right"]:
+                best_left = s["cand"]
+            else:
+                best_right = s["cand"]
+    elif left_trk and left_trk.lost_count == 0:
+        scored.sort(key=lambda s: s["score_left"], reverse=True)
+        best_left = scored[0]["cand"]
+        if len(candidates) > 1:
+            rem = [s for s in scored[1:] if s["chiral_right"] >= 0.45]
+            if rem:
+                best_right = rem[0]["cand"]
+    elif right_trk and right_trk.lost_count == 0:
+        scored.sort(key=lambda s: s["score_right"], reverse=True)
+        best_right = scored[0]["cand"]
+        if len(candidates) > 1:
+            rem = [s for s in scored[1:] if s["chiral_left"] >= 0.45]
+            if rem:
+                best_left = rem[0]["cand"]
+    else:
+        # Initial track acquisition or both lost:
+        lefts = sorted([c for c in candidates if c["hand_prob"] < 0.50], key=lambda c: c["joint_score"], reverse=True)
+        rights = sorted([c for c in candidates if c["hand_prob"] >= 0.50], key=lambda c: c["joint_score"], reverse=True)
+
+        if len(lefts) >= 2 and len(rights) == 0:
+            lefts.sort(key=lambda c: c["cx"])
+            if abs(lefts[1]["cx"] - lefts[0]["cx"]) > 60:
+                rights.append(lefts.pop(-1))
+        elif len(rights) >= 2 and len(lefts) == 0:
+            rights.sort(key=lambda c: c["cx"])
+            if abs(rights[1]["cx"] - rights[0]["cx"]) > 60:
+                lefts.append(rights.pop(0))
+
+        best_left = lefts[0] if lefts else None
+        best_right = rights[0] if rights else None
+
+    return {"left": best_left, "right": best_right}
 
 
 # ── Candidate Filter (Limit to Max 2 ROIs) ───────────────────────────────────────
@@ -1188,9 +1338,18 @@ def process_video_two_stage(
             for side, trk in tracks.items():
                 trk.begin_frame_predict()
 
-        # Step 3: Motion-Adaptive Trigger Decision
+        # Step 3: Motion-Adaptive Trigger Decision (MediaPipe Philosophy)
         if enable_adaptive_det:
-            need_det, trigger_reason = adaptive_det.should_detect(tracks, flow_qualities)
+            needs_det_left = needs_detection(tracks.get("left"))
+            needs_det_right = needs_detection(tracks.get("right"))
+
+            if adaptive_det.mode == "every_frame":
+                need_det, trigger_reason = True, "every_frame_mode"
+            elif needs_det_left or needs_det_right:
+                need_det = True
+                trigger_reason = f"mediapipe_recovery_L{int(needs_det_left)}_R{int(needs_det_right)}"
+            else:
+                need_det, trigger_reason = adaptive_det.should_detect(tracks, flow_qualities)
         else:
             need_det, trigger_reason = True, "always_detect"
 
@@ -1239,11 +1398,26 @@ def process_video_two_stage(
 
         else:
             # 3b. Motion-Adaptive Tracking Extrapolation (Skip NanoDet)
+            # MediaPipe Philosophy: Blend high-confidence keypoint ROI (70%) with Kalman prediction (30%)
             with profiler.time_stage("track_extrapolate"):
                 for side, trk in tracks.items():
                     if trk.lost_count == 0:
                         pred_box = np.array(trk.predicted_bbox, dtype=np.float32)
-                        detected_feet.append({"bbox": pred_box, "score": trk.mean_conf, "is_predicted": True})
+                        kpt_roi = compute_roi_from_keypoints(trk.last_kps_snapshot, padding=0.35)
+                        if kpt_roi is not None:
+                            k_cx, k_cy, k_size = kpt_roi
+                            p_cx = (pred_box[0] + pred_box[2]) / 2.0
+                            p_cy = (pred_box[1] + pred_box[3]) / 2.0
+                            p_w = pred_box[2] - pred_box[0]
+                            p_h = pred_box[3] - pred_box[1]
+                            blend_cx = 0.70 * k_cx + 0.30 * p_cx
+                            blend_cy = 0.70 * k_cy + 0.30 * p_cy
+                            blend_size = 0.70 * k_size + 0.30 * max(p_w, p_h) * 1.25
+                            half = blend_size / 2.0
+                            blended_box = np.array([blend_cx - half, blend_cy - half, blend_cx + half, blend_cy + half], dtype=np.float32)
+                            detected_feet.append({"bbox": blended_box, "score": trk.mean_conf, "is_predicted": True})
+                        else:
+                            detected_feet.append({"bbox": pred_box, "score": trk.mean_conf, "is_predicted": True})
 
         # Step 4: Stage B RTMPose Crop Extraction
         n_crops = min(2, len(detected_feet))
@@ -1318,22 +1492,10 @@ def process_video_two_stage(
         else:
             batch_counts[0] += 1
 
-        # Step 6: Dual-Foot Chirality Partitioning & Cross-Product Confirmation
-        left_cands = [c for c in valid_candidates if c["hand_prob"] < 0.50]
-        right_cands = [c for c in valid_candidates if c["hand_prob"] >= 0.50]
-
-        # Horizontal disambiguation fallback if both candidates fell into the same chirality bucket
-        if len(left_cands) >= 2 and len(right_cands) == 0:
-            left_cands.sort(key=lambda c: c["cx"])
-            if abs(left_cands[1]["cx"] - left_cands[0]["cx"]) > 60:
-                right_cands.append(left_cands.pop(-1))
-        elif len(right_cands) >= 2 and len(left_cands) == 0:
-            right_cands.sort(key=lambda c: c["cx"])
-            if abs(right_cands[1]["cx"] - right_cands[0]["cx"]) > 60:
-                left_cands.append(right_cands.pop(0))
-
-        best_left = max(left_cands, key=lambda c: c["joint_score"]) if left_cands else None
-        best_right = max(right_cands, key=lambda c: c["joint_score"]) if right_cands else None
+        # Step 6: Robust Dual-Foot Association (IoU + Centroid Distance + Chirality)
+        assigned = associate_detections(valid_candidates, tracks)
+        best_left = assigned["left"]
+        best_right = assigned["right"]
 
         # Step 7: Stateful Track Update & Occlusion Recovery (Single Predict Lifecycle)
         active_rendered = 0
@@ -1345,10 +1507,10 @@ def process_video_two_stage(
 
                 if best_det is not None:
                     # Keypoint-to-ROI measurement update:
-                    # When Stage A was skipped, derive observation bounding box directly from
-                    # the 13 estimated keypoints so Kalman filter measures physical motion, scale, and velocity.
+                    # Derive observation bounding box directly from the 13 estimated keypoints
+                    # to keep measurement source consistent between detection and tracking frames.
                     kpt_box = keypoints_to_bbox(best_det["kps"], pad_ratio=0.20, img_w=width, img_h=height)
-                    obs_box = kpt_box if (kpt_box is not None and not need_det) else best_det["bbox"]
+                    obs_box = kpt_box if kpt_box is not None else best_det["bbox"]
 
                     if side_name not in tracks:
                         tracks[side_name] = FootTrack(
@@ -1367,17 +1529,18 @@ def process_video_two_stage(
                     active_rendered += 1
                 else:
                     if side_name in tracks:
-                        # Extrapolate track during brief occlusion / skip using optical flow or velocity
-                        if tracks[side_name].lost_count <= 10 and tracks[side_name].last_kps is not None:
+                        # Extrapolate track during brief occlusion / skip using safe snapshot projection
+                        if tracks[side_name].lost_count <= 10 and tracks[side_name].last_kps_snapshot is not None:
                             disp = flow_displacements.get(side_name, None)
                             tracks[side_name].extrapolate_unobserved(disp)
                             frame_detections[side_name] = {
                                 "bbox": tracks[side_name].smoothed_bbox,
-                                "kps": tracks[side_name].last_kps,
-                                "score": tracks[side_name].mean_conf
+                                "kps": tracks[side_name].get_display_kps(),
+                                "score": tracks[side_name].mean_conf * float(0.85 ** tracks[side_name].lost_count)
                             }
                             active_rendered += 1
                         else:
+                            del tracks[side_name]
                             del tracks[side_name]
 
         # Step 8: Baseline Consistency Verification (One-to-One Global Assignment)
@@ -1703,7 +1866,18 @@ def run_async_pipeline(
                 for side, trk in tracks.items():
                     trk.begin_frame_predict()
 
-                need_det, _ = adaptive_det.should_detect(tracks, flow_qualities)
+                # Step 3: Motion-Adaptive Trigger Decision (MediaPipe Philosophy)
+                needs_det_left = needs_detection(tracks.get("left"))
+                needs_det_right = needs_detection(tracks.get("right"))
+
+                if adaptive_det.mode == "every_frame":
+                    need_det, trigger_reason = True, "every_frame_mode"
+                elif needs_det_left or needs_det_right:
+                    need_det = True
+                    trigger_reason = f"mediapipe_recovery_L{int(needs_det_left)}_R{int(needs_det_right)}"
+                else:
+                    need_det, trigger_reason = adaptive_det.should_detect(tracks, flow_qualities)
+
                 detected_feet = []
 
                 if need_det:
@@ -1731,9 +1905,25 @@ def run_async_pipeline(
                     detected_feet = cand_filter.filter_candidates(detected_feet, tracks)
                     adaptive_det.reset_heartbeat()
                 else:
+                    # MediaPipe Philosophy: Blend high-confidence keypoint ROI (70%) with Kalman prediction (30%)
                     for side, trk in tracks.items():
                         if trk.lost_count == 0:
-                            detected_feet.append({"bbox": np.array(trk.predicted_bbox, dtype=np.float32), "score": trk.mean_conf, "is_predicted": True})
+                            pred_box = np.array(trk.predicted_bbox, dtype=np.float32)
+                            kpt_roi = compute_roi_from_keypoints(trk.last_kps_snapshot, padding=0.35)
+                            if kpt_roi is not None:
+                                k_cx, k_cy, k_size = kpt_roi
+                                p_cx = (pred_box[0] + pred_box[2]) / 2.0
+                                p_cy = (pred_box[1] + pred_box[3]) / 2.0
+                                p_w = pred_box[2] - pred_box[0]
+                                p_h = pred_box[3] - pred_box[1]
+                                blend_cx = 0.70 * k_cx + 0.30 * p_cx
+                                blend_cy = 0.70 * k_cy + 0.30 * p_cy
+                                blend_size = 0.70 * k_size + 0.30 * max(p_w, p_h) * 1.25
+                                half = blend_size / 2.0
+                                blended_box = np.array([blend_cx - half, blend_cy - half, blend_cx + half, blend_cy + half], dtype=np.float32)
+                                detected_feet.append({"bbox": blended_box, "score": trk.mean_conf, "is_predicted": True})
+                            else:
+                                detected_feet.append({"bbox": pred_box, "score": trk.mean_conf, "is_predicted": True})
 
                 n_crops = min(2, len(detected_feet))
                 crop_counts[n_crops] += 1
@@ -1780,36 +1970,31 @@ def run_async_pipeline(
                 else:
                     batch_counts[0] += 1
 
-                left_cands = [c for c in valid_candidates if c["hand_prob"] < 0.50]
-                right_cands = [c for c in valid_candidates if c["hand_prob"] >= 0.50]
-                if len(left_cands) >= 2 and len(right_cands) == 0:
-                    left_cands.sort(key=lambda c: c["cx"])
-                    if abs(left_cands[1]["cx"] - left_cands[0]["cx"]) > 60:
-                        right_cands.append(left_cands.pop(-1))
-                elif len(right_cands) >= 2 and len(left_cands) == 0:
-                    right_cands.sort(key=lambda c: c["cx"])
-                    if abs(right_cands[1]["cx"] - right_cands[0]["cx"]) > 60:
-                        left_cands.append(right_cands.pop(0))
-
-                best_left = max(left_cands, key=lambda c: c["joint_score"]) if left_cands else None
-                best_right = max(right_cands, key=lambda c: c["joint_score"]) if right_cands else None
+                # Step 6: Robust Dual-Foot Association (IoU + Centroid Distance + Chirality)
+                assigned = associate_detections(valid_candidates, tracks)
+                best_left = assigned["left"]
+                best_right = assigned["right"]
                 frame_detections = {}
 
                 for side_name, best_det, track_id in [("left", best_left, 1), ("right", best_right, 2)]:
                     is_left = (side_name == "left")
                     if best_det is not None:
                         kpt_box = keypoints_to_bbox(best_det["kps"], pad_ratio=0.20, img_w=width, img_h=height)
-                        obs_box = kpt_box if (kpt_box is not None and not need_det) else best_det["bbox"]
+                        obs_box = kpt_box if kpt_box is not None else best_det["bbox"]
                         if side_name not in tracks:
                             tracks[side_name] = FootTrack(track_id, side_name, t_current, obs_box, 0.0 if is_left else 1.0)
                         smooth_kps = tracks[side_name].apply_observation(t_current, obs_box, best_det["kps"], best_det["hand_prob"])
                         frame_detections[side_name] = {"bbox": tracks[side_name].smoothed_bbox, "kps": smooth_kps, "score": best_det["score"]}
                     else:
                         if side_name in tracks:
-                            if tracks[side_name].lost_count <= 10 and tracks[side_name].last_kps is not None:
+                            if tracks[side_name].lost_count <= 10 and tracks[side_name].last_kps_snapshot is not None:
                                 disp = flow_displacements.get(side_name, None)
                                 tracks[side_name].extrapolate_unobserved(disp)
-                                frame_detections[side_name] = {"bbox": tracks[side_name].smoothed_bbox, "kps": tracks[side_name].last_kps, "score": tracks[side_name].mean_conf}
+                                frame_detections[side_name] = {
+                                    "bbox": tracks[side_name].smoothed_bbox,
+                                    "kps": tracks[side_name].get_display_kps(),
+                                    "score": tracks[side_name].mean_conf * float(0.85 ** tracks[side_name].lost_count)
+                                }
                             else:
                                 del tracks[side_name]
 
