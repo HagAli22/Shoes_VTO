@@ -720,26 +720,34 @@
   }
 
   // ── Session Creation Helper (WebGPU for FP16 with WASM Fallback; WASM for FP32/INT8) ──
+  let lastWebGpuError = null;
+
   async function createSessionForModel(modelPath, precision) {
     const isFp16 = (precision === 'float16');
 
     // Requirement: ONLY use WebGPU for FP16 if available; for FP32/INT8, strictly use WASM.
-    if (isFp16 && typeof navigator !== 'undefined' && navigator.gpu) {
-      try {
-        console.log(`[ORT] Attempting WebGPU EP for FP16 model: ${modelPath}`);
-        const session = await ort.InferenceSession.create(modelPath, {
-          executionProviders: ['webgpu'],
-          graphOptimizationLevel: 'all'
-        });
+    if (isFp16) {
+      if (typeof navigator === 'undefined' || !navigator.gpu) {
+        lastWebGpuError = 'navigator.gpu not found (requires HTTPS or localhost in Chrome/Edge)';
+        console.warn(`[ORT WebGPU] ${lastWebGpuError}`);
+      } else {
+        try {
+          console.log(`[ORT] Attempting WebGPU EP for FP16 model: ${modelPath}`);
+          const session = await ort.InferenceSession.create(modelPath, {
+            executionProviders: ['webgpu'],
+            graphOptimizationLevel: 'all'
+          });
 
-        // Test warmup run to verify WGSL shader compilation and pipeline creation
-        const warmupTensor = createDummyTensor('float16', [1, 3, 256, 256]);
-        await session.run({ [session.inputNames[0]]: warmupTensor });
+          // Test warmup run to verify WGSL shader compilation and pipeline creation
+          const warmupTensor = createDummyTensor('float16', [1, 3, 256, 256]);
+          await session.run({ [session.inputNames[0]]: warmupTensor });
 
-        console.log(`[ORT] [PASS] Successfully initialized WebGPU for ${modelPath}`);
-        return { session, backend: 'webgpu' };
-      } catch (webgpuErr) {
-        console.warn(`[ORT] WebGPU failed for ${modelPath} (shader-f16 or device limitation). Falling back to WASM:`, webgpuErr);
+          console.log(`[ORT] [PASS] Successfully initialized WebGPU for ${modelPath}`);
+          return { session, backend: 'webgpu' };
+        } catch (webgpuErr) {
+          lastWebGpuError = webgpuErr.message || String(webgpuErr);
+          console.warn(`[ORT] WebGPU failed for ${modelPath} (shader-f16 or device limitation). Falling back to WASM:`, webgpuErr);
+        }
       }
     }
 
@@ -832,8 +840,6 @@
         }
 
         overlayModelPill.textContent = `${config.pill} [${backendDesc}]`;
-        showBanner('info', `✓ ${config.name} loaded in ${(performance.now() - t0).toFixed(0)} ms. Backend: ${backendDesc}.`);
-
       } else {
         // Single-Stage YOLO
         showBanner('info', `Loading Single-Stage YOLO (${config.precision.toUpperCase()}): ${config.path}...`);
@@ -855,7 +861,6 @@
 
         const backendDesc = newYoloBackend === 'webgpu' ? 'WebGPU' : `WASM (${activeWasmThreads}T)`;
         overlayModelPill.textContent = `${config.pill} [${backendDesc}]`;
-        showBanner('info', `✓ ${config.name} loaded in ${(performance.now() - t0).toFixed(0)} ms. Backend: ${backendDesc}.`);
       }
 
       state.isLoadingModel = false;
@@ -863,9 +868,22 @@
       state.loadDuration = dt;
       hudLoadTime.textContent = `${dt} ms`;
 
+      // Check if WebGPU was attempted for an FP16 component but fell back to WASM
+      const hasFp16Part = (config.detPrecision === 'float16' || config.posePrecision === 'float16' || config.precision === 'float16');
+      const isPureWasm = (state.detBackend !== 'webgpu' && state.poseBackend !== 'webgpu' && state.yoloBackend !== 'webgpu');
+
+      if (lastWebGpuError && hasFp16Part && isPureWasm) {
+        showBanner('info', `✓ ${config.name} loaded in ${dt} ms. Running on WASM (${activeWasmThreads}T). Note: WebGPU fell back (${lastWebGpuError}).`);
+      } else {
+        const desc = (config.type === 'twostage')
+          ? ((state.detBackend === 'webgpu' && state.poseBackend === 'webgpu') ? 'WebGPU' : (state.poseBackend === 'webgpu' ? `Det:WASM, Pose:WebGPU` : `WASM (${activeWasmThreads}T)`))
+          : (state.yoloBackend === 'webgpu' ? 'WebGPU' : `WASM (${activeWasmThreads}T)`);
+        showBanner('info', `✓ ${config.name} loaded in ${dt} ms. Backend: ${desc}.`);
+      }
+
       setTimeout(() => {
         if (!state.modelError) hideBanner();
-      }, 4000);
+      }, 7000);
 
     } catch (err) {
       console.error('Model load failure:', err);
