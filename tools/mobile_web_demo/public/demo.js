@@ -68,10 +68,40 @@
   // ── Model Configurations ────────────────────────────────────────────────────
   const MODEL_CONFIGS = {
     // --- Two-Stage Qualcomm Experiments (Apache-2.0, improved5) ---
+    'twostage_fp32_fp32': {
+      type: 'twostage',
+      name: 'NanoDet(FP32) + RTMPose(FP32)',
+      pill: 'ND-FP32 + RTM-FP32',
+      sizeMb: '19.09 MB',
+      detPath: 'models/nanodet-improved5-fp32.onnx',
+      detPrecision: 'float32',
+      posePath: 'models/rtmpose-13kp-hand-improved5-fp32.onnx',
+      posePrecision: 'float32'
+    },
+    'twostage_fp32_int8': {
+      type: 'twostage',
+      name: 'NanoDet(FP32) + RTMPose(INT8)',
+      pill: 'ND-FP32 + RTM-INT8',
+      sizeMb: '8.04 MB',
+      detPath: 'models/nanodet-improved5-fp32.onnx',
+      detPrecision: 'float32',
+      posePath: 'models/rtmpose-13kp-hand-improved5-int8.onnx',
+      posePrecision: 'float32'
+    },
+    'twostage_int8_int8': {
+      type: 'twostage',
+      name: 'NanoDet(INT8) + RTMPose(INT8)',
+      pill: 'ND-INT8 + RTM-INT8',
+      sizeMb: '5.32 MB',
+      detPath: 'models/nanodet-improved5-int8.onnx',
+      detPrecision: 'float32',
+      posePath: 'models/rtmpose-13kp-hand-improved5-int8.onnx',
+      posePrecision: 'float32'
+    },
     'twostage_int8_fp16': {
       type: 'twostage',
       name: 'NanoDet(INT8) + RTMPose(FP16)',
-      pill: 'ND-INT8 + RTM (v5)',
+      pill: 'ND-INT8 + RTM-FP16',
       sizeMb: '8.92 MB',
       detPath: 'models/nanodet-improved5-int8.onnx',
       detPrecision: 'float32',
@@ -81,7 +111,7 @@
     'twostage_fp32_fp16': {
       type: 'twostage',
       name: 'NanoDet(FP32) + RTMPose(FP16)',
-      pill: 'ND-FP32 + RTM (v5)',
+      pill: 'ND-FP32 + RTM-FP16',
       sizeMb: '11.64 MB',
       detPath: 'models/nanodet-improved5-fp32.onnx',
       detPrecision: 'float32',
@@ -91,7 +121,7 @@
     'twostage_fp16_fp16': {
       type: 'twostage',
       name: 'NanoDet(FP16) + RTMPose(FP16)',
-      pill: 'ND-FP16 + RTM (v5)',
+      pill: 'ND-FP16 + RTM-FP16',
       sizeMb: '9.66 MB',
       detPath: 'models/nanodet-improved5-fp16.onnx',
       detPrecision: 'float16',
@@ -188,12 +218,213 @@
     }
   }
 
+  // ── Kalman Box Tracker (8-State Constant Velocity [cx, cy, w, h, vx, vy, vw, vh]^T) ──
+  class KalmanBoxTracker {
+    constructor(bbox) {
+      const cx = (bbox[0] + bbox[2]) / 2.0;
+      const cy = (bbox[1] + bbox[3]) / 2.0;
+      const w = Math.max(10.0, bbox[2] - bbox[0]);
+      const h = Math.max(10.0, bbox[3] - bbox[1]);
+
+      // State: [cx, cy, w, h, vx, vy, vw, vh]
+      this.x = [cx, cy, w, h, 0.0, 0.0, 0.0, 0.0];
+      this.pPos = 1.0;
+      this.pVel = 10.0;
+      this.qPos = 0.05;
+      this.qVel = 0.10;
+      this.rPos = 1.5;
+      this.isFirstFrame = true;
+    }
+
+    stepPredict() {
+      if (this.isFirstFrame) return this.getBbox();
+      this.x[0] += this.x[4];
+      this.x[1] += this.x[5];
+      this.x[2] += this.x[6];
+      this.x[3] += this.x[7];
+      this.pPos += this.pVel + this.qPos;
+      this.pVel += this.qVel;
+      return this.getBbox();
+    }
+
+    updateMeasurement(bbox) {
+      const zx = (bbox[0] + bbox[2]) / 2.0;
+      const zy = (bbox[1] + bbox[3]) / 2.0;
+      const zw = Math.max(10.0, bbox[2] - bbox[0]);
+      const zh = Math.max(10.0, bbox[3] - bbox[1]);
+
+      if (this.isFirstFrame) {
+        this.x[0] = zx;
+        this.x[1] = zy;
+        this.x[2] = zw;
+        this.x[3] = zh;
+        this.isFirstFrame = false;
+        return this.getBbox();
+      }
+
+      const k = this.pPos / (this.pPos + this.rPos);
+      this.x[4] = 0.6 * this.x[4] + 0.4 * (zx - this.x[0]);
+      this.x[5] = 0.6 * this.x[5] + 0.4 * (zy - this.x[1]);
+      this.x[6] = 0.6 * this.x[6] + 0.4 * (zw - this.x[2]);
+      this.x[7] = 0.6 * this.x[7] + 0.4 * (zh - this.x[3]);
+
+      this.x[0] += k * (zx - this.x[0]);
+      this.x[1] += k * (zy - this.x[1]);
+      this.x[2] += k * (zw - this.x[2]);
+      this.x[3] += k * (zh - this.x[3]);
+      this.pPos = (1.0 - k) * this.pPos;
+
+      return this.getBbox();
+    }
+
+    getBbox() {
+      const cx = this.x[0];
+      const cy = this.x[1];
+      const w = Math.max(10.0, this.x[2]);
+      const h = Math.max(10.0, this.x[3]);
+      return [cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0];
+    }
+
+    getVelocity() {
+      return [this.x[4], this.x[5]];
+    }
+
+    getSpeed() {
+      return Math.sqrt(this.x[4] * this.x[4] + this.x[5] * this.x[5]);
+    }
+  }
+
+  // ── Stateful Foot Track ───────────────────────────────────────────────────────
+  class FootTrack {
+    constructor(side, rawBbox, handProb = 0.5) {
+      this.side = side; // 0 = Left, 1 = Right
+      this.kalman = new KalmanBoxTracker(rawBbox);
+      this.handProb = handProb;
+      this.lostCount = 0;
+      this.age = 1;
+      this.meanConf = 0.50;
+      this.validKpts = 10;
+      this.lastKps = null;
+      this.smoothedBbox = [...rawBbox];
+      this.predictedBbox = [...rawBbox];
+    }
+
+    beginFramePredict() {
+      const pBox = this.kalman.stepPredict();
+      this.predictedBbox = [...pBox];
+      return pBox;
+    }
+
+    applyObservation(rawBbox, kps, handProb) {
+      const postBox = this.kalman.updateMeasurement(rawBbox);
+      this.smoothedBbox = [...postBox];
+      this.handProb = 0.8 * this.handProb + 0.2 * handProb;
+      this.lastKps = kps;
+      this.lostCount = 0;
+      this.age += 1;
+
+      let sumConf = 0;
+      let valid = 0;
+      for (const kp of kps) {
+        sumConf += kp.visibility;
+        if (kp.visibility >= 0.20) valid++;
+      }
+      this.meanConf = sumConf / 13.0;
+      this.validKpts = valid;
+      return postBox;
+    }
+
+    extrapolateUnobserved() {
+      this.smoothedBbox = [...this.predictedBbox];
+      this.lostCount += 1;
+      this.age += 1;
+      if (this.lastKps) {
+        const [vx, vy] = this.kalman.getVelocity();
+        for (const kp of this.lastKps) {
+          kp.x += vx;
+          kp.y += vy;
+          kp.visibility *= 0.95;
+        }
+      }
+      return this.smoothedBbox;
+    }
+  }
+
+  // ── Motion-Adaptive Detector Policy (Fixed Heartbeat 5 + Recovery) ───────────
+  class MotionAdaptiveDetector {
+    constructor(interval = 5) {
+      this.interval = interval;
+      this.framesSinceDet = 0;
+      this.totalFrames = 0;
+      this.skippedFrames = 0;
+      this.lastReason = 'initial';
+    }
+
+    shouldDetect(tracks, heartbeatEnabled) {
+      this.totalFrames++;
+      this.framesSinceDet++;
+
+      if (!heartbeatEnabled) {
+        this.framesSinceDet = 0;
+        this.lastReason = 'every_frame';
+        return { detect: true, reason: 'every_frame' };
+      }
+
+      // 1. Mandatory Heartbeat Interval (default 5 frames)
+      if (this.framesSinceDet >= this.interval) {
+        this.framesSinceDet = 0;
+        this.lastReason = 'heartbeat_interval';
+        return { detect: true, reason: 'heartbeat_interval' };
+      }
+
+      // 2. Active Track Availability
+      const activeSides = [0, 1].filter(s => tracks[s] && tracks[s].lostCount === 0);
+      if (activeSides.length < 2) {
+        this.framesSinceDet = 0;
+        this.lastReason = 'missing_tracks';
+        return { detect: true, reason: 'missing_tracks' };
+      }
+
+      // 3. Pose Quality & Confidence Degradation
+      for (const side of activeSides) {
+        const trk = tracks[side];
+        if (trk.meanConf < 0.25 || trk.validKpts < 3) {
+          this.framesSinceDet = 0;
+          this.lastReason = 'low_confidence';
+          return { detect: true, reason: 'low_confidence' };
+        }
+        if (trk.kalman.getSpeed() > 25.0) {
+          this.framesSinceDet = 0;
+          this.lastReason = 'fast_motion';
+          return { detect: true, reason: 'fast_motion' };
+        }
+      }
+
+      // All tracks stable: SKIP Stage A!
+      this.skippedFrames++;
+      this.lastReason = 'pose_guided_skip';
+      return { detect: false, reason: 'pose_guided_skip' };
+    }
+
+    getSkipRatePct() {
+      return this.totalFrames > 0 ? (this.skippedFrames / this.totalFrames * 100.0) : 0.0;
+    }
+
+    reset() {
+      this.framesSinceDet = 0;
+      this.totalFrames = 0;
+      this.skippedFrames = 0;
+      this.lastReason = 'reset';
+    }
+  }
+
   // ── State Management ────────────────────────────────────────────────────────
   const state = {
-    activeModelKey: 'twostage_int8_fp16',
-    activeModelConfig: MODEL_CONFIGS['twostage_int8_fp16'],
+    activeModelKey: 'twostage_fp32_fp32',
+    activeModelConfig: MODEL_CONFIGS['twostage_fp32_fp32'],
     currentSource: 'video',
     filterEnabled: true,
+    heartbeatEnabled: true,
     facingMode: 'environment',
     isPlaying: false,
     isLoadingModel: false,
@@ -201,8 +432,10 @@
     // Sessions for Two-Stage
     detSession: null,
     detInputName: null,
+    loadedDetPath: null,
     poseSession: null,
     poseInputName: null,
+    loadedPosePath: null,
 
     // Session for Single-Stage YOLO
     yoloSession: null,
@@ -210,6 +443,12 @@
 
     modelError: null,
     loadDuration: null,
+
+    tracks: {
+      0: null, // Left
+      1: null  // Right
+    },
+    adaptiveDetector: new MotionAdaptiveDetector(5),
 
     smoothers: {
       0: new KeypointSmoother(13), // Left
@@ -235,6 +474,7 @@
 
   const allModelButtons = document.querySelectorAll('.segmented-control button[data-model]');
   const sourceButtons = document.querySelectorAll('#sourceControl button');
+  const heartbeatToggle = document.getElementById('heartbeatToggle');
   const filterToggle = document.getElementById('filterToggle');
   const playPauseBtn = document.getElementById('playPauseBtn');
   const playPauseIcon = document.getElementById('playPauseIcon');
@@ -250,6 +490,8 @@
   const hudE2E = document.getElementById('hudE2E');
   const hudLoadTime = document.getElementById('hudLoadTime');
   const hudStageSplit = document.getElementById('hudStageSplit');
+  const hudTrackingMode = document.getElementById('hudTrackingMode');
+  const hudSkipRate = document.getElementById('hudSkipRate');
   const hudDetections = document.getElementById('hudDetections');
   const overlayModelPill = document.getElementById('overlayModelPill');
   const overlayFpsPill = document.getElementById('overlayFpsPill');
@@ -356,27 +598,38 @@
       }
 
       if (config.type === 'twostage') {
-        // 1. Create Stage A Detector session into local variable
-        showBanner('info', `[1/2] Loading Stage A Detector: ${config.detPath}...`);
-        const newDetSession = await createWasmSession(config.detPath);
-        const newDetInputName = newDetSession.inputNames[0];
+        // 1. Create or reuse Stage A Detector session
+        let newDetSession = state.detSession;
+        let newDetInputName = state.detInputName;
+        if (!newDetSession || state.loadedDetPath !== config.detPath) {
+          showBanner('info', `[1/2] Loading Stage A Detector: ${config.detPath}...`);
+          newDetSession = await createWasmSession(config.detPath);
+          newDetInputName = newDetSession.inputNames[0];
 
-        // 2. Warm up new detector session with its matching input precision
-        const isDetFp16 = config.detPrecision === 'float16';
-        const detWarmupTensor = createDummyTensor(isDetFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
-        await newDetSession.run({ [newDetInputName]: detWarmupTensor });
+          const isDetFp16 = config.detPrecision === 'float16';
+          const detWarmupTensor = createDummyTensor(isDetFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
+          await newDetSession.run({ [newDetInputName]: detWarmupTensor });
+          state.loadedDetPath = config.detPath;
+        }
 
-        // 3. Load or reuse Stage B RTMPose (shared 7.48 MB model)
+        // 2. Create or reuse Stage B RTMPose session with matching precision
         let newPoseSession = state.poseSession;
         let newPoseInputName = state.poseInputName;
-        if (!newPoseSession) {
-          showBanner('info', `[2/2] Loading Stage B RTMPose-13KP: ${config.posePath}...`);
+        if (!newPoseSession || state.loadedPosePath !== config.posePath) {
+          showBanner('info', `[2/2] Loading Stage B RTMPose: ${config.posePath}...`);
           newPoseSession = await createWasmSession(config.posePath);
           newPoseInputName = newPoseSession.inputNames[0];
 
-          const poseWarmupTensor = createDummyTensor('float16', [1, 3, 256, 256]);
+          const isPoseFp16 = config.posePrecision === 'float16';
+          const poseWarmupTensor = createDummyTensor(isPoseFp16 ? 'float16' : 'float32', [1, 3, 256, 256]);
           await newPoseSession.run({ [newPoseInputName]: poseWarmupTensor });
+          state.loadedPosePath = config.posePath;
         }
+
+        // 3. Reset foot tracks and detector state on model change
+        state.tracks[0] = null;
+        state.tracks[1] = null;
+        state.adaptiveDetector.reset();
 
         // 4. ATOMIC COMMIT: Swap sessions and configuration simultaneously
         state.yoloSession = null;
@@ -578,6 +831,67 @@
       if (!overlap) keep.push(idx);
     }
     return keep;
+  }
+
+  // ── Candidate Filter & Keypoint Bbox Utilities ──────────────────────────────
+  function computeKptBbox(keypoints, padding = 10.0) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const kp of keypoints) {
+      if (kp.visibility >= 0.15) {
+        if (kp.x < minX) minX = kp.x;
+        if (kp.y < minY) minY = kp.y;
+        if (kp.x > maxX) maxX = kp.x;
+        if (kp.y > maxY) maxY = kp.y;
+      }
+    }
+    if (minX === Infinity) return null;
+    return [
+      Math.max(0, minX - padding),
+      Math.max(0, minY - padding),
+      maxX + padding,
+      maxY + padding
+    ];
+  }
+
+  function filterCandidateRois(rawDetections, tracks, iouThresh = 0.40) {
+    if (rawDetections.length <= 1) return rawDetections;
+
+    const matched = [];
+    const unmatched = [];
+
+    for (const det of rawDetections) {
+      let isMatched = false;
+      for (const side of [0, 1]) {
+        const trk = tracks[side];
+        if (trk && trk.lostCount === 0 && computeIoU(det.origBox, trk.smoothedBbox) > 0.25) {
+          matched.push(det);
+          isMatched = true;
+          break;
+        }
+      }
+      if (!isMatched) {
+        unmatched.push(det);
+      }
+    }
+
+    unmatched.sort((a, b) => b.score - a.score);
+    const selected = matched.slice(0, 2);
+
+    for (const cand of unmatched) {
+      if (selected.length >= 2) break;
+      let overlap = false;
+      for (const s of selected) {
+        if (computeIoU(cand.origBox, s.origBox) >= iouThresh) {
+          overlap = true;
+          break;
+        }
+      }
+      if (!overlap) {
+        selected.push(cand);
+      }
+    }
+
+    return selected.slice(0, 2);
   }
 
   // ── NanoDet Stage A Decoder ─────────────────────────────────────────────────
@@ -967,34 +1281,132 @@
     if (!state.modelError && cfg) {
       try {
         if (cfg.type === 'twostage' && state.detSession && state.poseSession) {
-          // ── Two-Stage Qualcomm Pipeline ──
-          const tPre0 = performance.now();
-          const prep = preprocessNanoDetDirect(sourceElement, cfg.detPrecision);
-          const tPre = performance.now() - tPre0;
+          // ── Two-Stage Qualcomm Pipeline (Pose-Guided Heartbeat 5x) ──
+          const dec = state.adaptiveDetector.shouldDetect(state.tracks, state.heartbeatEnabled);
+          let tDet = 0;
+          let totalPoseInfer = 0;
+          let finalDetections = [];
 
-          if (prep) {
-            // Stage A: NanoDet Foot Detector
-            const tDet0 = performance.now();
-            const detOutputs = await state.detSession.run({ [state.detInputName]: prep.tensor });
-            const tDet = performance.now() - tDet0;
+          if (dec.detect) {
+            // ── Path 1: Stage A Detector Frame (Heartbeat / Recovery / Fallback) ──
+            const tPre0 = performance.now();
+            const prep = preprocessNanoDetDirect(sourceElement, cfg.detPrecision);
+            const tPre = performance.now() - tPre0;
 
-            const tPostDet0 = performance.now();
-            const boxesOut = detOutputs['boxes'];
-            const scoresOut = detOutputs['scores'];
-            // conf_thresh = 0.40 matching eval_video.py
-            const rawDetections = decodeNanoDet(boxesOut, scoresOut, prep, 0.40, 0.45);
-            let tPostDet = performance.now() - tPostDet0;
+            if (prep) {
+              const tDet0 = performance.now();
+              const detOutputs = await state.detSession.run({ [state.detInputName]: prep.tensor });
+              tDet = performance.now() - tDet0;
 
-            // Stage B: RTMPose on each candidate crop & Anatomical Clutter Gate
-            const validCandidates = [];
-            let totalPoseInfer = 0;
+              const boxesOut = detOutputs['boxes'];
+              const scoresOut = detOutputs['scores'];
+              const rawDetections = decodeNanoDet(boxesOut, scoresOut, prep, 0.40, 0.45);
 
-            for (const det of rawDetections) {
-              const b = det.origBox;
-              const bw = b[2] - b[0];
-              const bh = b[3] - b[1];
-              const cx = (b[0] + b[2]) / 2.0;
-              const cy = (b[1] + b[3]) / 2.0;
+              // Candidate Filter: Limit to strict maximum of 2 candidate foot ROIs
+              const candidateDets = filterCandidateRois(rawDetections, state.tracks, 0.40);
+              const validCandidates = [];
+
+              for (const det of candidateDets) {
+                const b = det.origBox;
+                const bw = b[2] - b[0];
+                const bh = b[3] - b[1];
+                const cx = (b[0] + b[2]) / 2.0;
+                const cy = (b[1] + b[3]) / 2.0;
+
+                const cropBox = computeCropBox(cx, cy, bw, bh, 0.25);
+                const cropTensor = extractCropTensor(sourceElement, cropBox.cx, cropBox.cy, cropBox.size, cfg.posePrecision);
+
+                const tPose0 = performance.now();
+                const poseOutputs = await state.poseSession.run({ [state.poseInputName]: cropTensor });
+                totalPoseInfer += (performance.now() - tPose0);
+
+                const poseResult = decodeRtmPoseOutputs(poseOutputs, cropBox.cx, cropBox.cy, cropBox.size);
+
+                // Anatomical Clutter Gate: Reject carpet leaves, floor patterns, shadows
+                if (poseResult.meanConf < 0.20 || poseResult.validKptsCount < 3) {
+                  continue;
+                }
+
+                validCandidates.push({
+                  origBox: det.origBox,
+                  score: det.score,
+                  keypoints: poseResult.keypoints,
+                  handProb: poseResult.handProb, // <0.50: Left, >=0.50: Right
+                  meanConf: poseResult.meanConf,
+                  validKptsCount: poseResult.validKptsCount,
+                  jointScore: det.score * (0.5 + 0.5 * poseResult.meanConf),
+                  cx: cx,
+                  cy: cy
+                });
+              }
+
+              // Dual-Foot Chirality Partitioning
+              let leftCands = validCandidates.filter(c => c.handProb < 0.50);
+              let rightCands = validCandidates.filter(c => c.handProb >= 0.50);
+
+              if (leftCands.length >= 2 && rightCands.length === 0) {
+                leftCands.sort((a, b) => a.cx - b.cx);
+                if (Math.abs(leftCands[1].cx - leftCands[0].cx) > 60) {
+                  rightCands.push(leftCands.pop());
+                }
+              } else if (rightCands.length >= 2 && leftCands.length === 0) {
+                rightCands.sort((a, b) => a.cx - b.cx);
+                if (Math.abs(rightCands[1].cx - rightCands[0].cx) > 60) {
+                  leftCands.push(rightCands.shift());
+                }
+              }
+
+              const bestLeft = leftCands.length > 0
+                ? leftCands.reduce((prev, curr) => (curr.jointScore > prev.jointScore ? curr : prev))
+                : null;
+              const bestRight = rightCands.length > 0
+                ? rightCands.reduce((prev, curr) => (curr.jointScore > prev.jointScore ? curr : prev))
+                : null;
+
+              if (bestLeft) {
+                if (!state.tracks[0]) {
+                  state.tracks[0] = new FootTrack(0, bestLeft.origBox, bestLeft.handProb);
+                }
+                const kptBox = computeKptBbox(bestLeft.keypoints) || bestLeft.origBox;
+                state.tracks[0].applyObservation(kptBox, bestLeft.keypoints, bestLeft.handProb);
+                finalDetections.push({
+                  origBox: state.tracks[0].smoothedBbox,
+                  score: bestLeft.score,
+                  classId: 0,
+                  keypoints: bestLeft.keypoints
+                });
+              } else if (state.tracks[0]) {
+                state.tracks[0].extrapolateUnobserved();
+              }
+
+              if (bestRight) {
+                if (!state.tracks[1]) {
+                  state.tracks[1] = new FootTrack(1, bestRight.origBox, bestRight.handProb);
+                }
+                const kptBox = computeKptBbox(bestRight.keypoints) || bestRight.origBox;
+                state.tracks[1].applyObservation(kptBox, bestRight.keypoints, bestRight.handProb);
+                finalDetections.push({
+                  origBox: state.tracks[1].smoothedBbox,
+                  score: bestRight.score,
+                  classId: 1,
+                  keypoints: bestRight.keypoints
+                });
+              } else if (state.tracks[1]) {
+                state.tracks[1].extrapolateUnobserved();
+              }
+            }
+
+          } else {
+            // ── Path 2: Pose-Guided Tracking Frame (NanoDet Skipped! ~80% Speedup) ──
+            for (const side of [0, 1]) {
+              const trk = state.tracks[side];
+              if (!trk || trk.lostCount > 3) continue;
+
+              const pBox = trk.beginFramePredict();
+              const cx = (pBox[0] + pBox[2]) / 2.0;
+              const cy = (pBox[1] + pBox[3]) / 2.0;
+              const bw = pBox[2] - pBox[0];
+              const bh = pBox[3] - pBox[1];
 
               const cropBox = computeCropBox(cx, cy, bw, bh, 0.25);
               const cropTensor = extractCropTensor(sourceElement, cropBox.cx, cropBox.cy, cropBox.size, cfg.posePrecision);
@@ -1005,83 +1417,37 @@
 
               const poseResult = decodeRtmPoseOutputs(poseOutputs, cropBox.cx, cropBox.cy, cropBox.size);
 
-              // ── Anatomical Clutter Gate ──
-              // Completely rejects carpet leaves, floor patterns, shadows
-              if (poseResult.meanConf < 0.20 || poseResult.validKptsCount < 3) {
-                continue;
-              }
-
-              validCandidates.push({
-                origBox: det.origBox,
-                score: det.score,
-                keypoints: poseResult.keypoints,
-                handProb: poseResult.handProb, // <0.50: Left, >=0.50: Right
-                meanConf: poseResult.meanConf,
-                validKptsCount: poseResult.validKptsCount,
-                jointScore: det.score * (0.5 + 0.5 * poseResult.meanConf),
-                cx: cx,
-                cy: cy
-              });
-            }
-
-            // Step C: Dual-Foot Chirality Partitioning (Exact Parity with eval_video.py)
-            let leftCands = validCandidates.filter(c => c.handProb < 0.50);
-            let rightCands = validCandidates.filter(c => c.handProb >= 0.50);
-
-            // Horizontal disambiguation fallback if both candidates fell into the same chirality bucket
-            if (leftCands.length >= 2 && rightCands.length === 0) {
-              leftCands.sort((a, b) => a.cx - b.cx);
-              if (Math.abs(leftCands[1].cx - leftCands[0].cx) > 60) {
-                rightCands.push(leftCands.pop());
-              }
-            } else if (rightCands.length >= 2 && leftCands.length === 0) {
-              rightCands.sort((a, b) => a.cx - b.cx);
-              if (Math.abs(rightCands[1].cx - rightCands[0].cx) > 60) {
-                leftCands.push(rightCands.shift());
+              // Anatomical Clutter Gate
+              if (poseResult.meanConf >= 0.20 && poseResult.validKptsCount >= 3) {
+                const kptBox = computeKptBbox(poseResult.keypoints) || pBox;
+                trk.applyObservation(kptBox, poseResult.keypoints, poseResult.handProb);
+                finalDetections.push({
+                  origBox: trk.smoothedBbox,
+                  score: poseResult.meanConf,
+                  classId: side,
+                  keypoints: poseResult.keypoints
+                });
+              } else {
+                trk.extrapolateUnobserved();
               }
             }
-
-            const bestLeft = leftCands.length > 0
-              ? leftCands.reduce((prev, curr) => (curr.jointScore > prev.jointScore ? curr : prev))
-              : null;
-            const bestRight = rightCands.length > 0
-              ? rightCands.reduce((prev, curr) => (curr.jointScore > prev.jointScore ? curr : prev))
-              : null;
-
-            const finalDetections = [];
-            if (bestLeft) {
-              finalDetections.push({
-                origBox: bestLeft.origBox,
-                score: bestLeft.score,
-                classId: 0, // Left Foot (Sky Blue)
-                keypoints: bestLeft.keypoints
-              });
-            }
-            if (bestRight) {
-              finalDetections.push({
-                origBox: bestRight.origBox,
-                score: bestRight.score,
-                classId: 1, // Right Foot (Orange)
-                keypoints: bestRight.keypoints
-              });
-            }
-
-            // One-Euro Temporal Smoothing
-            const nowSec = performance.now() / 1000.0;
-            for (const det of finalDetections) {
-              if (state.filterEnabled) {
-                det.keypoints = state.smoothers[det.classId].smooth(det.keypoints, nowSec);
-              }
-            }
-
-            renderDetections(sourceElement, finalDetections);
-
-            const e2e = performance.now() - frameStart;
-            const totalInfer = tDet + totalPoseInfer;
-            const totalProc = e2e - totalInfer;
-
-            updateTelemetry(totalInfer, totalProc, e2e, finalDetections.length, tDet, totalPoseInfer);
           }
+
+          // One-Euro Temporal Smoothing
+          const nowSec = performance.now() / 1000.0;
+          for (const det of finalDetections) {
+            if (state.filterEnabled) {
+              det.keypoints = state.smoothers[det.classId].smooth(det.keypoints, nowSec);
+            }
+          }
+
+          renderDetections(sourceElement, finalDetections);
+
+          const e2e = performance.now() - frameStart;
+          const totalInfer = tDet + totalPoseInfer;
+          const totalProc = e2e - totalInfer;
+
+          updateTelemetry(totalInfer, totalProc, e2e, finalDetections.length, tDet, totalPoseInfer);
 
         } else if (cfg.type === 'yolo' && state.yoloSession) {
           // ── Single-Stage YOLO Pipeline ──
@@ -1171,6 +1537,22 @@
         hudStageSplit.textContent = `${avgStageA.toFixed(1)}ms / ${avgStageB.toFixed(1)}ms`;
       } else {
         hudStageSplit.textContent = `N/A (Single)`;
+      }
+    }
+
+    if (hudTrackingMode) {
+      if (state.activeModelConfig && state.activeModelConfig.type === 'twostage') {
+        hudTrackingMode.textContent = state.heartbeatEnabled ? 'Heartbeat 5 (Pose-Guided)' : 'Every-Frame (Baseline)';
+      } else {
+        hudTrackingMode.textContent = 'Single-Stage YOLO';
+      }
+    }
+
+    if (hudSkipRate) {
+      if (state.activeModelConfig && state.activeModelConfig.type === 'twostage') {
+        hudSkipRate.textContent = `${state.adaptiveDetector.getSkipRatePct().toFixed(1)}%`;
+      } else {
+        hudSkipRate.textContent = '0.0%';
       }
     }
   }
@@ -1284,6 +1666,13 @@
     });
   });
 
+  if (heartbeatToggle) {
+    heartbeatToggle.addEventListener('change', () => {
+      state.heartbeatEnabled = heartbeatToggle.checked;
+      state.adaptiveDetector.reset();
+    });
+  }
+
   filterToggle.addEventListener('change', () => {
     state.filterEnabled = filterToggle.checked;
     state.smoothers[0].reset();
@@ -1322,8 +1711,8 @@
 
   // ── Initial Start ───────────────────────────────────────────────────────────
   window.addEventListener('DOMContentLoaded', async () => {
-    // 1. Load default model (twostage_int8_fp16)
-    await loadModel('twostage_int8_fp16');
+    // 1. Load default model (twostage_fp32_fp32 - Pure FP32 Reference)
+    await loadModel('twostage_fp32_fp32');
     // 2. Start video
     await startVideoSource();
   });

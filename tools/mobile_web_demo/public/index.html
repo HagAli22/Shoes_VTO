@@ -28,16 +28,28 @@
           <span class="arch-badge">Qualcomm Pipeline</span>
         </div>
         <div class="segmented-control model-control-grid" id="twoStageControl">
-          <button type="button" class="active" data-model="twostage_int8_fp16">
-            <span class="btn-title">Exp 1: NanoDet(INT8) + RTMPose(FP16)</span>
+          <button type="button" class="active" data-model="twostage_fp32_fp32">
+            <span class="btn-title">Exp 1: NanoDet(FP32) + RTMPose(FP32)</span>
+            <span class="btn-sub">Combined 19.09 MB (4.16 MB + 14.93 MB) - Pure FP32</span>
+          </button>
+          <button type="button" data-model="twostage_fp32_int8">
+            <span class="btn-title">Exp 2: NanoDet(FP32) + RTMPose(INT8)</span>
+            <span class="btn-sub">Combined 8.04 MB (4.16 MB + 3.88 MB) - Fast Pose</span>
+          </button>
+          <button type="button" data-model="twostage_int8_int8">
+            <span class="btn-title">Exp 3: NanoDet(INT8) + RTMPose(INT8)</span>
+            <span class="btn-sub">Combined 5.32 MB (1.44 MB + 3.88 MB) - Ultra Edge</span>
+          </button>
+          <button type="button" data-model="twostage_int8_fp16">
+            <span class="btn-title">Exp 4: NanoDet(INT8) + RTMPose(FP16)</span>
             <span class="btn-sub">Combined 8.92 MB (1.44 MB + 7.48 MB)</span>
           </button>
           <button type="button" data-model="twostage_fp32_fp16">
-            <span class="btn-title">Exp 2: NanoDet(FP32) + RTMPose(FP16)</span>
+            <span class="btn-title">Exp 5: NanoDet(FP32) + RTMPose(FP16)</span>
             <span class="btn-sub">Combined 11.64 MB (4.16 MB + 7.48 MB)</span>
           </button>
           <button type="button" data-model="twostage_fp16_fp16">
-            <span class="btn-title">Exp 3: NanoDet(FP16) + RTMPose(FP16)</span>
+            <span class="btn-title">Exp 6: NanoDet(FP16) + RTMPose(FP16)</span>
             <span class="btn-sub">Combined 9.66 MB (2.18 MB + 7.48 MB)</span>
           </button>
         </div>
@@ -62,6 +74,16 @@
         <div class="segmented-control" id="sourceControl">
           <button type="button" class="active" data-source="video">Test Video (MP4)</button>
           <button type="button" data-source="camera">Phone Camera</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <div class="toggle-row">
+          <label class="control-label" style="margin-bottom:0;">Pose-Guided Heartbeat 5x Tracking</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="heartbeatToggle" checked>
+            <span class="slider"></span>
+          </label>
         </div>
       </div>
 
@@ -93,7 +115,7 @@
       <video id="inputVideo" playsinline muted loop crossorigin="anonymous"></video>
       <canvas id="renderCanvas"></canvas>
       <div class="viewport-overlay">
-        <div class="status-pill" id="overlayModelPill">INT8 WASM</div>
+        <div class="status-pill" id="overlayModelPill">FP32 WASM</div>
         <div class="status-pill" id="overlayFpsPill">0.0 FPS</div>
       </div>
     </div>
@@ -128,9 +150,11 @@
         </div>
       </div>
 
-      <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.75rem; color:var(--text-muted);">
+      <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.75rem; color:var(--text-muted); flex-wrap:wrap; gap:6px;">
         <span>Load/Init Time: <strong id="hudLoadTime" style="color:var(--text-main);">--</strong></span>
         <span>Stage A / B: <strong id="hudStageSplit" style="color:var(--text-main);">--</strong></span>
+        <span>Mode: <strong id="hudTrackingMode" style="color:var(--primary);">Heartbeat 5</strong></span>
+        <span>Skip Rate: <strong id="hudSkipRate" style="color:var(--text-main);">0.0%</strong></span>
         <span>Detections: <strong id="hudDetections" style="color:var(--text-main);">0</strong></span>
       </div>
 
