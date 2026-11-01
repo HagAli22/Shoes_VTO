@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Test WebGPU / WASM Diagnostic</title>
+  <script src="vendor/float16.min.js"></script>
+  <script src="vendor/ort.webgpu.min.js"></script>
+</head>
+<body style="background:#111; color:#eee; font-family:monospace; padding:20px;">
+  <h2>ONNX Runtime Web - WebGPU & FP16 Diagnostic</h2>
+  <button id="btn" style="padding:10px 20px; font-size:16px;">Run Diagnostic Test</button>
+  <pre id="log" style="background:#222; padding:15px; border-radius:6px; margin-top:15px; font-size:14px; white-space:pre-wrap;"></pre>
+
+  <script>
+    const logEl = document.getElementById('log');
+    function log(msg) {
+      logEl.textContent += msg + '\n';
+      console.log(msg);
+    }
+
+    document.getElementById('btn').addEventListener('click', async () => {
+      logEl.textContent = '';
+      log('[1] Checking navigator.gpu...');
+      if (!navigator.gpu) {
+        log('❌ navigator.gpu is UNDEFINED. WebGPU is not accessible. (Ensure you are on https:// or http://localhost / http://127.0.0.1).');
+        return;
+      }
+      log('✓ navigator.gpu is present.');
+
+      log('\n[2] Requesting GPU Adapter...');
+      let adapter;
+      try {
+        adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+          log('❌ navigator.gpu.requestAdapter() returned null.');
+          return;
+        }
+        log('✓ GPU Adapter obtained.');
+        const features = [];
+        for (const f of adapter.features) features.push(f);
+        log('  Adapter Features: ' + (features.length ? features.join(', ') : 'NONE'));
+        log('  Supports shader-f16: ' + (adapter.features.has('shader-f16') ? 'YES [✓]' : 'NO [❌]'));
+      } catch (e) {
+        log('❌ Error requesting adapter: ' + e);
+        return;
+      }
+
+      log('\n[3] Requesting GPU Device...');
+      let device;
+      try {
+        const requiredFeatures = [];
+        if (adapter.features.has('shader-f16')) requiredFeatures.push('shader-f16');
+        device = await adapter.requestDevice({ requiredFeatures });
+        log('✓ GPU Device obtained.');
+      } catch (e) {
+        log('❌ Error requesting device: ' + e);
+      }
+
+      log('\n[4] Configuring ORT wasmPaths...');
+      ort.env.wasm.wasmPaths = new URL('vendor/', window.location.href).href;
+      log('  wasmPaths: ' + ort.env.wasm.wasmPaths);
+
+      log('\n[5] Testing ort.InferenceSession.create with WebGPU on RTMPose FP16...');
+      try {
+        const t0 = performance.now();
+        const session = await ort.InferenceSession.create('models/rtmpose-13kp-hand-improved5-fp16.onnx', {
+          executionProviders: ['webgpu']
+        });
+        const dt = (performance.now() - t0).toFixed(1);
+        log(`✓ SUCCESS! Session created with WebGPU in ${dt} ms.`);
+        log('  Input names: ' + session.inputNames.join(', '));
+        log('  Output names: ' + session.outputNames.join(', '));
+
+        log('\n[6] Testing forward run on WebGPU...');
+        const total = 1 * 3 * 256 * 256;
+        const f16 = new Float16Array(total);
+        const tensor = new ort.Tensor('float16', f16, [1, 3, 256, 256]);
+        const out = await session.run({ [session.inputNames[0]]: tensor });
+        log('✓ SUCCESS! Model forward pass on WebGPU completed.');
+        log('  Output simcc_x shape: ' + out.simcc_x.dims);
+      } catch (err) {
+        log('❌ WebGPU Session Failed:');
+        log('  Error name: ' + err.name);
+        log('  Error message: ' + err.message);
+        log('  Stack: ' + err.stack);
+      }
+    });
+
+    // Auto-run on load
+    window.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('btn').click();
+    });
+  </script>
+</body>
+</html>
+
