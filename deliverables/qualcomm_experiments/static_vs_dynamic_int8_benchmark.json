@@ -1,0 +1,142 @@
+[
+  {
+    "model": "rtmpose-13kp-hand-improved5-fp32.onnx",
+    "size_mb": 14.237296104431152,
+    "total_nodes": 191,
+    "mean_latency_ms": 8.942596000015328,
+    "p50_latency_ms": 8.259550000730087,
+    "p95_latency_ms": 12.765309999485906,
+    "fps": 111.82435167576462,
+    "top_ops": [
+      [
+        "Mul",
+        46
+      ],
+      [
+        "Conv",
+        38
+      ],
+      [
+        "Sigmoid",
+        37
+      ],
+      [
+        "Constant",
+        12
+      ],
+      [
+        "Add",
+        8
+      ],
+      [
+        "MatMul",
+        8
+      ]
+    ]
+  },
+  {
+    "model": "rtmpose-13kp-hand-improved5-int8.onnx",
+    "size_mb": 3.6964635848999023,
+    "total_nodes": 447,
+    "mean_latency_ms": 18.47371900013968,
+    "p50_latency_ms": 18.144149998988723,
+    "p95_latency_ms": 23.127764998753264,
+    "fps": 54.13095219172918,
+    "top_ops": [
+      [
+        "Mul",
+        138
+      ],
+      [
+        "Add",
+        48
+      ],
+      [
+        "Cast",
+        46
+      ],
+      [
+        "DynamicQuantizeLinear",
+        40
+      ],
+      [
+        "Reshape",
+        39
+      ],
+      [
+        "ConvInteger",
+        38
+      ]
+    ]
+  },
+  {
+    "model": "rtmpose-13kp-hand-improved5-static-qdq-int8.onnx",
+    "size_mb": 3.7807369232177734,
+    "total_nodes": 636,
+    "mean_latency_ms": 8.080876000021817,
+    "p50_latency_ms": 8.215000001655426,
+    "p95_latency_ms": 9.287724998648628,
+    "fps": 123.74895988965802,
+    "top_ops": [
+      [
+        "DequantizeLinear",
+        270
+      ],
+      [
+        "QuantizeLinear",
+        177
+      ],
+      [
+        "Mul",
+        46
+      ],
+      [
+        "Conv",
+        38
+      ],
+      [
+        "Sigmoid",
+        37
+      ],
+      [
+        "Constant",
+        12
+      ]
+    ]
+  },
+  {
+    "model": "rtmpose-13kp-hand-improved5-static-qop-int8.onnx",
+    "size_mb": 3.6996421813964844,
+    "total_nodes": 220,
+    "mean_latency_ms": 7.56737100015016,
+    "p50_latency_ms": 7.486550000976422,
+    "p95_latency_ms": 8.990784999696189,
+    "fps": 132.14628964010842,
+    "top_ops": [
+      [
+        "QLinearMul",
+        46
+      ],
+      [
+        "QLinearConv",
+        38
+      ],
+      [
+        "QLinearSigmoid",
+        37
+      ],
+      [
+        "DequantizeLinear",
+        17
+      ],
+      [
+        "QuantizeLinear",
+        14
+      ],
+      [
+        "Constant",
+        12
+      ]
+    ]
+  }
+]

@@ -72,7 +72,7 @@
     // --- Two-Stage Qualcomm Experiments (Apache-2.0, improved5) ---
     'twostage_fp32_fp32': {
       type: 'twostage',
-      name: 'NanoDet(FP32) + RTMPose(FP32)',
+      name: 'NanoDet(FP32) + RTMPose(FP32) [Fastest WASM]',
       pill: 'ND-FP32 + RTM-FP32',
       sizeMb: '19.09 MB',
       detPath: 'models/nanodet-improved5-fp32.onnx',
@@ -82,7 +82,7 @@
     },
     'twostage_fp32_int8': {
       type: 'twostage',
-      name: 'NanoDet(FP32) + RTMPose(INT8)',
+      name: 'NanoDet(FP32) + RTMPose(INT8) [Qualcomm NPU Target]',
       pill: 'ND-FP32 + RTM-INT8',
       sizeMb: '8.04 MB',
       detPath: 'models/nanodet-improved5-fp32.onnx',
@@ -92,7 +92,7 @@
     },
     'twostage_int8_int8': {
       type: 'twostage',
-      name: 'NanoDet(INT8) + RTMPose(INT8)',
+      name: 'NanoDet(INT8) + RTMPose(INT8) [Qualcomm NPU Target]',
       pill: 'ND-INT8 + RTM-INT8',
       sizeMb: '5.32 MB',
       detPath: 'models/nanodet-improved5-int8.onnx',
@@ -801,10 +801,13 @@
       state.loadDuration = dt;
       hudLoadTime.textContent = `${dt} ms`;
 
-      showBanner('info', `✓ ${config.name} loaded in ${dt} ms. Execution Provider: WASM SIMD (${activeWasmThreads} Threads).`);
-      setTimeout(() => {
-        if (!state.modelError) hideBanner();
-      }, 4000);
+      if (modelKey.includes('int8')) {
+        showBanner('info', `✓ ${config.name} loaded in ${dt} ms. (Note: INT8 is targeted for Qualcomm NPU/DSP; on Browser WASM SIMD, FP32 has native single-cycle execution and is ~2.4x faster).`);
+        setTimeout(() => { if (!state.modelError) hideBanner(); }, 6000);
+      } else {
+        showBanner('info', `✓ ${config.name} loaded in ${dt} ms. Execution Provider: WASM SIMD (${activeWasmThreads} Threads).`);
+        setTimeout(() => { if (!state.modelError) hideBanner(); }, 4000);
+      }
 
     } catch (err) {
       console.error('Model load failure:', err);

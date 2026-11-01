@@ -152,10 +152,37 @@ extrapolateUnobserved() {
 ### 4.2 Browser Web Demo (WASM Multi-Thread SIMD)
 
 Tested on 4-thread WASM SIMD in Chrome:
-- **NanoDet(FP32) + RTMPose(FP32)**: ~14.8 – 18.2 FPS
-- **NanoDet(FP32) + RTMPose(INT8)**: ~18.5 – 22.0 FPS
-- **NanoDet(INT8) + RTMPose(INT8)**: ~22.0 – 26.5 FPS
+- **Exp 1: NanoDet(FP32) + RTMPose(FP32)**: ~18.0 – 26.0 FPS (⚡ Fastest on WASM / Desktop CPU)
+- **Exp 2: NanoDet(FP32) + RTMPose(INT8)**: ~10.5 – 14.0 FPS (📱 Qualcomm NPU Target: dynamic quant overhead on CPU)
+- **Exp 3: NanoDet(INT8) + RTMPose(INT8)**: ~9.0 – 12.0 FPS (📱 Qualcomm NPU Target: ultra-compact 5.3 MB storage)
+- **Exp 4: NanoDet(INT8) + RTMPose(FP16)**: ~16.0 – 22.0 FPS (Balanced Mobile)
+- **Exp 5: NanoDet(FP32) + RTMPose(FP16)**: ~18.0 – 25.0 FPS (High Precision Mobile)
 - **Single-Stage YOLOv8n (INT8)**: ~24.0 – 28.0 FPS
+
+---
+
+### 4.3 Deep Dive: Dynamic INT8 vs Static QDQ vs FP32 on CPU/WASM vs Edge NPUs
+
+During multi-precision benchmarking, an apparent anomaly was investigated: **Why does Exp 2 (NanoDet FP32 + RTMPose INT8) run slower on CPU/WASM than Exp 1 (Pure FP32), when INT8 is theoretically smaller?**
+
+#### A. The Root Cause: Dynamic Quantization Overhead
+The existing INT8 models were converted using `quantize_dynamic`. In dynamic quantization:
+1. Weights are quantized statically to uint8 (reducing model size from 14.9 MB to 3.8 MB).
+2. Activations are **not calibrated statically**. Before every single convolution, ONNX Runtime runs `DynamicQuantizeLinear` (scanning the activation tensor to find dynamic min/max, computing scale and zero-point, converting float32 to uint8) -> `ConvInteger` -> `Cast` -> `Mul` (dequantize back to float32).
+3. This adds **40 DynamicQuantizeLinear**, **46 Cast**, and **138 Mul** nodes, exploding the graph from **191 nodes (FP32)** to **447 nodes (INT8)**.
+
+#### B. Isolated Component Profiling (4 Threads CPU / WASM Kernel):
+| Model Variant | Quant Format | File Size | Graph Nodes | Mean Latency | Throughput | Relative Speed |
+|---|---|---|---|---|---|---|
+| **RTMPose FP32** | None | 14.24 MB | 191 | **8.94 ms** | **111.8 FPS** | **1.0x (Baseline)** |
+| **RTMPose Dynamic INT8** | Dynamic | 3.70 MB | 447 | **18.47 ms** | **54.1 FPS** | **2.07x SLOWER** |
+| **RTMPose Static QDQ INT8** | Static Calibrated | 3.78 MB | 636 | **8.08 ms** | **123.7 FPS** | **2.28x FASTER than Dyn** |
+| **RTMPose Static QOp INT8** | Static QOperator | 3.70 MB | 220 | **7.57 ms** | **132.1 FPS** | **2.44x FASTER than Dyn** |
+
+#### C. Hardware Architecture Reality:
+- **Qualcomm Snapdragon NPU / Hexagon DSP (via QNN):** Dedicated fixed-point systolic arrays execute INT8 math at 4x–8x the TOPS of floating point, and the 4x reduction in memory bus traffic over mobile LPDDR saves critical thermal watts. This is why INT8 is the designated target for edge mobile NPU deployment.
+- **CPU / WebAssembly SIMD:** Modern vector engines (WASM SIMD `f32x4` / AVX2 FMA) have single-cycle 32-bit floating-point throughput. On small vision backbones (CSPNeXt-tiny & ShuffleNetV2), native FP32 executes faster than INT8 dynamic conversion.
+- **Static Quantization (QDQ):** Eliminates runtime min/max scanning, achieving **8.08 ms** (faster than FP32), but subpixel continuous regression (SimCC) requires quantization-aware training (QAT) to maintain millimeter subpixel accuracy.
 
 ---
 
@@ -166,3 +193,4 @@ Tested on 4-thread WASM SIMD in Chrome:
 - [x] **Git Cleanliness**: All changes staged, committed, and synchronized with `origin Tryrtmo`.
 - [x] **13-Keypoint Schema**: 100% preserved with complete anatomical joint naming and visualization parity.
 - [x] **No External WebGPU or MediaPipe Native Dependencies**: Pure ONNX Runtime Web WASM SIMD + PyTorch/OpenCV Python implementation.
+

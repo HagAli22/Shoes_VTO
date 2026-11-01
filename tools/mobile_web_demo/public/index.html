@@ -30,27 +30,27 @@
         <div class="segmented-control model-control-grid" id="twoStageControl">
           <button type="button" class="active" data-model="twostage_fp32_fp32">
             <span class="btn-title">Exp 1: NanoDet(FP32) + RTMPose(FP32)</span>
-            <span class="btn-sub">Combined 19.09 MB (4.16 MB + 14.93 MB) - Pure FP32</span>
+            <span class="btn-sub">Combined 19.09 MB - ⚡ Fastest on WASM / Desktop</span>
           </button>
           <button type="button" data-model="twostage_fp32_int8">
             <span class="btn-title">Exp 2: NanoDet(FP32) + RTMPose(INT8)</span>
-            <span class="btn-sub">Combined 8.04 MB (4.16 MB + 3.88 MB) - Fast Pose</span>
+            <span class="btn-sub">Combined 8.04 MB - 📱 Qualcomm NPU Target (INT8)</span>
           </button>
           <button type="button" data-model="twostage_int8_int8">
             <span class="btn-title">Exp 3: NanoDet(INT8) + RTMPose(INT8)</span>
-            <span class="btn-sub">Combined 5.32 MB (1.44 MB + 3.88 MB) - Ultra Edge</span>
+            <span class="btn-sub">Combined 5.32 MB - 📱 Qualcomm NPU Target (Ultra-Compact)</span>
           </button>
           <button type="button" data-model="twostage_int8_fp16">
             <span class="btn-title">Exp 4: NanoDet(INT8) + RTMPose(FP16)</span>
-            <span class="btn-sub">Combined 8.92 MB (1.44 MB + 7.48 MB)</span>
+            <span class="btn-sub">Combined 8.92 MB - Balanced Mobile (Fast Det + Sharp Pose)</span>
           </button>
           <button type="button" data-model="twostage_fp32_fp16">
             <span class="btn-title">Exp 5: NanoDet(FP32) + RTMPose(FP16)</span>
-            <span class="btn-sub">Combined 11.64 MB (4.16 MB + 7.48 MB)</span>
+            <span class="btn-sub">Combined 11.64 MB - High Precision Mobile</span>
           </button>
           <button type="button" data-model="twostage_fp16_fp16">
             <span class="btn-title">Exp 6: NanoDet(FP16) + RTMPose(FP16)</span>
-            <span class="btn-sub">Combined 9.66 MB (2.18 MB + 7.48 MB)</span>
+            <span class="btn-sub">Combined 9.66 MB - Pure FP16 Mobile Edge</span>
           </button>
         </div>
       </div>
