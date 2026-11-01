@@ -306,7 +306,10 @@
       this.age = 1;
       this.meanConf = 0.50;
       this.validKpts = 10;
-      this.lastKps = null;
+      // lastKpsSnapshot: immutable copy of the last reliable observation (never mutated)
+      // lastKpsDisplay:  mutable display copy used only for rendering during extrapolation
+      this.lastKpsSnapshot = null;
+      this.lastKpsDisplay  = null;
       this.smoothedBbox = [...rawBbox];
       this.predictedBbox = [...rawBbox];
     }
@@ -321,7 +324,9 @@
       const postBox = this.kalman.updateMeasurement(rawBbox);
       this.smoothedBbox = [...postBox];
       this.handProb = 0.8 * this.handProb + 0.2 * handProb;
-      this.lastKps = kps;
+      // Store an immutable snapshot — this must NEVER be mutated after this point
+      this.lastKpsSnapshot = kps.map(k => ({ ...k }));
+      this.lastKpsDisplay  = kps; // live display reference (updated by smoother)
       this.lostCount = 0;
       this.age += 1;
 
@@ -336,23 +341,178 @@
       return postBox;
     }
 
+    // FIX 1: Clone from immutable snapshot — eliminates accumulated keypoint drift.
+    // Each call projects from the original observation, not the previous extrapolation.
     extrapolateUnobserved() {
       this.smoothedBbox = [...this.predictedBbox];
       this.lostCount += 1;
       this.age += 1;
-      if (this.lastKps) {
+      if (this.lastKpsSnapshot) {
         const [vx, vy] = this.kalman.getVelocity();
-        for (const kp of this.lastKps) {
-          kp.x += vx;
-          kp.y += vy;
-          kp.visibility *= 0.95;
-        }
+        const n = this.lostCount;
+        // Project from original snapshot by n frames of velocity; fade visibility per frame
+        this.lastKpsDisplay = this.lastKpsSnapshot.map(kp => ({
+          ...kp,
+          x: kp.x + vx * n,
+          y: kp.y + vy * n,
+          visibility: kp.visibility * Math.pow(0.90, n)
+        }));
       }
       return this.smoothedBbox;
     }
+
+    // Convenience: returns best-available keypoints for rendering (display or snapshot)
+    getDisplayKps() {
+      return this.lastKpsDisplay || this.lastKpsSnapshot;
+    }
   }
 
-  // ── Motion-Adaptive Detector Policy (Fixed Heartbeat 5 + Recovery) ───────────
+  // ── MediaPipe-Style Per-Foot Detection Policy ────────────────────────────────
+  // Thresholds mirror MediaPipe's min_tracking_confidence philosophy.
+  const MIN_TRACKING_CONF = 0.28;  // below → re-detect immediately
+  const MIN_VALID_KPTS    = 5;     // fewer visible keypoints → re-detect
+  const MAX_LOST_FRAMES   = 2;     // missed frames before mandatory re-detect
+
+  // Per-foot decision: true → NanoDet must run for this foot next frame.
+  function needsDetection(trk) {
+    if (!trk) return true;                              // foot never found
+    if (trk.lostCount >= MAX_LOST_FRAMES) return true; // foot disappeared
+    if (trk.meanConf  < MIN_TRACKING_CONF) return true; // pose unreliable
+    if (trk.validKpts < MIN_VALID_KPTS)    return true; // keypoints sparse
+    return false;                                       // stable → skip detector
+  }
+
+  // FIX 3: Compute a tight ROI from last-frame keypoints (MediaPipe ROI philosophy).
+  // Returns { cx, cy, size } or null if insufficient visible keypoints.
+  function computeRoiFromKeypoints(kps, padding = 0.35) {
+    if (!kps) return null;
+    const visible = kps.filter(kp => kp.visibility >= 0.20);
+    if (visible.length < 3) return null;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const kp of visible) {
+      if (kp.x < minX) minX = kp.x;
+      if (kp.y < minY) minY = kp.y;
+      if (kp.x > maxX) maxX = kp.x;
+      if (kp.y > maxY) maxY = kp.y;
+    }
+    const cx = (minX + maxX) / 2.0;
+    const cy = (minY + maxY) / 2.0;
+    const spanW = maxX - minX;
+    const spanH = maxY - minY;
+    const size  = Math.max(spanW, spanH) * (1.0 + padding);
+    return { cx, cy, size: Math.max(size, 30.0) };
+  }
+
+  // FIX 4: IoU + centroid-distance + chirality association.
+  // Returns { left: candidate|null, right: candidate|null }.
+  // Greedy 2×N assignment: guarantees at most one left and one right.
+  function associateDetections(candidates, tracks) {
+    if (candidates.length === 0) return { left: null, right: null };
+
+    function affinityScore(cand, trk) {
+      // IoU between detection and smoothed track bbox
+      const iou = computeIoU(cand.origBox, trk.smoothedBbox);
+      // Centroid distance, normalized by ~100 px
+      const tcx = (trk.smoothedBbox[0] + trk.smoothedBbox[2]) / 2.0;
+      const tcy = (trk.smoothedBbox[1] + trk.smoothedBbox[3]) / 2.0;
+      const dx  = cand.cx - tcx;
+      const dy  = cand.cy - tcy;
+      const distScore = 1.0 / (1.0 + Math.sqrt(dx * dx + dy * dy) / 100.0);
+      // Chirality compatibility
+      const chiralOk = (trk.side === 0) ? (1.0 - cand.handProb) : cand.handProb;
+      // Weighted combination: 50% IoU, 30% distance, 20% chirality
+      return 0.50 * iou + 0.30 * distScore + 0.20 * chiralOk;
+    }
+
+    const leftTrack  = tracks[0];
+    const rightTrack = tracks[1];
+
+    // Score every candidate against each existing track
+    const scored = candidates.map(c => ({
+      cand:       c,
+      scoreLeft:  leftTrack  ? affinityScore(c, leftTrack)  : -1,
+      scoreRight: rightTrack ? affinityScore(c, rightTrack) : -1,
+      // Pure chirality fallback when no tracks exist yet
+      chiralLeft:  1.0 - c.handProb,
+      chiralRight: c.handProb
+    }));
+
+    let bestLeft  = null;
+    let bestRight = null;
+
+    if (leftTrack && rightTrack) {
+      // Both tracks exist: greedy 2x2 Hungarian approximation
+      // Try all permutations of the top-2 candidates (≤2 candidates, so ≤2 picks)
+      let bestPairScore = -1;
+      for (let i = 0; i < candidates.length; i++) {
+        for (let j = 0; j < candidates.length; j++) {
+          if (i === j) continue;
+          const pairScore = scored[i].scoreLeft + scored[j].scoreRight;
+          if (pairScore > bestPairScore) {
+            bestPairScore = pairScore;
+            bestLeft  = scored[i].cand;
+            bestRight = scored[j].cand;
+          }
+        }
+      }
+      // Single-candidate case: assign to whichever track scores higher
+      if (candidates.length === 1) {
+        const s = scored[0];
+        if (s.scoreLeft >= s.scoreRight) {
+          bestLeft  = s.cand;
+          bestRight = null;
+        } else {
+          bestLeft  = null;
+          bestRight = s.cand;
+        }
+      }
+    } else if (leftTrack) {
+      // Only left track exists: pick best for left by affinity; remainder → right by chirality
+      scored.sort((a, b) => b.scoreLeft - a.scoreLeft);
+      bestLeft = scored[0].cand;
+      if (candidates.length > 1) {
+        const rem = scored.slice(1).filter(s => s.chiralRight >= 0.50);
+        if (rem.length > 0) bestRight = rem[0].cand;
+      }
+    } else if (rightTrack) {
+      // Only right track exists: symmetric
+      scored.sort((a, b) => b.scoreRight - a.scoreRight);
+      bestRight = scored[0].cand;
+      if (candidates.length > 1) {
+        const rem = scored.slice(1).filter(s => s.chiralLeft > 0.50);
+        if (rem.length > 0) bestLeft = rem[0].cand;
+      }
+    } else {
+      // No tracks yet: assign purely by chirality (handProb)
+      const lefts  = candidates.filter(c => c.handProb <  0.50)
+                               .sort((a, b) => b.jointScore - a.jointScore);
+      const rights = candidates.filter(c => c.handProb >= 0.50)
+                               .sort((a, b) => b.jointScore - a.jointScore);
+
+      // Geometric split: if both appear as same chirality but are clearly separated, split by x
+      let leftCands  = lefts;
+      let rightCands = rights;
+      if (leftCands.length >= 2 && rightCands.length === 0) {
+        leftCands.sort((a, b) => a.cx - b.cx);
+        if (Math.abs(leftCands[1].cx - leftCands[0].cx) > 60) {
+          rightCands = [leftCands.pop()];
+        }
+      } else if (rightCands.length >= 2 && leftCands.length === 0) {
+        rightCands.sort((a, b) => a.cx - b.cx);
+        if (Math.abs(rightCands[1].cx - rightCands[0].cx) > 60) {
+          leftCands = [rightCands.shift()];
+        }
+      }
+      bestLeft  = leftCands.length  > 0 ? leftCands[0]  : null;
+      bestRight = rightCands.length > 0 ? rightCands[0] : null;
+    }
+
+    return { left: bestLeft, right: bestRight };
+  }
+
+  // ── Fixed Heartbeat 5 Detector Clock (telemetry only) ────────────────────────
+  // needsDetection() now drives per-foot triggers; this class tracks skip-rate only.
   class MotionAdaptiveDetector {
     constructor(interval = 5) {
       this.interval = interval;
@@ -362,47 +522,22 @@
       this.lastReason = 'initial';
     }
 
-    shouldDetect(tracks, heartbeatEnabled) {
-      this.totalFrames++;
-      this.framesSinceDet++;
-
-      if (!heartbeatEnabled) {
-        this.framesSinceDet = 0;
-        this.lastReason = 'every_frame';
-        return { detect: true, reason: 'every_frame' };
-      }
-
-      // 1. Mandatory Fixed Heartbeat 5 clock (Guarantees true 80% Stage A bypass)
-      if (this.framesSinceDet >= this.interval) {
-        this.framesSinceDet = 0;
-        this.lastReason = 'heartbeat_interval';
-        return { detect: true, reason: 'heartbeat_interval' };
-      }
-
-      // 2. Initial track acquisition: runs NanoDet until at least one foot track is initialized
-      const hasAnyTrack = (tracks[0] !== null && tracks[0].lostCount < 3) ||
-                          (tracks[1] !== null && tracks[1].lostCount < 3);
-      if (!hasAnyTrack) {
-        this.framesSinceDet = 0;
-        this.lastReason = 'initial_search';
-        return { detect: true, reason: 'initial_search' };
-      }
-
-      // 3. Recovery only when BOTH foot tracks are lost for multiple frames
-      if (tracks[0] && tracks[1] && tracks[0].lostCount >= 3 && tracks[1].lostCount >= 3 && this.framesSinceDet >= 2) {
-        this.framesSinceDet = 0;
-        this.lastReason = 'both_lost_recovery';
-        return { detect: true, reason: 'both_lost_recovery' };
-      }
-
-      // Stable tracking: SKIP Stage A!
-      this.skippedFrames++;
-      this.lastReason = 'pose_guided_skip';
-      return { detect: false, reason: 'pose_guided_skip' };
+    // Returns true if the heartbeat interval has elapsed (safety fallback).
+    heartbeatElapsed() {
+      return this.framesSinceDet >= this.interval;
     }
 
-    getSkipRatePct() {
-      return this.totalFrames > 0 ? (this.skippedFrames / this.totalFrames * 100.0) : 0.0;
+    // Called each frame: increments counters, resets on detection.
+    tick(didDetect) {
+      this.totalFrames++;
+      this.framesSinceDet++;
+      if (didDetect) {
+        this.framesSinceDet = 0;
+        this.lastReason = 'detected';
+      } else {
+        this.skippedFrames++;
+        this.lastReason = 'skipped';
+      }
     }
 
     reset() {
@@ -410,6 +545,10 @@
       this.totalFrames = 0;
       this.skippedFrames = 0;
       this.lastReason = 'reset';
+    }
+
+    getSkipRatePct() {
+      return this.totalFrames > 0 ? (this.skippedFrames / this.totalFrames * 100.0) : 0.0;
     }
   }
 
@@ -1281,17 +1420,27 @@
     if (!state.modelError && cfg) {
       try {
         if (cfg.type === 'twostage' && state.detSession && state.poseSession) {
-          // ── Two-Stage Qualcomm Pipeline (Pose-Guided Heartbeat 5x) ──
-          const dec = state.adaptiveDetector.shouldDetect(state.tracks, state.heartbeatEnabled);
+          // ── Two-Stage MediaPipe-Style Pipeline ──────────────────────────────────
+          //
+          // Per-foot detection decisions (FIX 2 + FIX 6):
+          //   needsDetection(trk) → true if foot is missing, lost, or unreliable
+          //   heartbeat fallback  → every 5 frames regardless (safety net)
+          //   every-frame mode    → when heartbeat toggle is OFF (baseline)
+          //
+          const heartbeatFired = state.heartbeatEnabled
+            ? state.adaptiveDetector.heartbeatElapsed()
+            : false;
+          const needsDetLeft  = !state.heartbeatEnabled || needsDetection(state.tracks[0]);
+          const needsDetRight = !state.heartbeatEnabled || needsDetection(state.tracks[1]);
+          const runDetector   = needsDetLeft || needsDetRight || heartbeatFired;
+
           let tDet = 0;
           let totalPoseInfer = 0;
           let finalDetections = [];
 
-          if (dec.detect) {
-            // ── Path 1: Stage A Detector Frame (Heartbeat / Recovery / Fallback) ──
-            const tPre0 = performance.now();
+          if (runDetector) {
+            // ── Path 1: Stage A Detector + Stage B Pose (Detection / Heartbeat) ──
             const prep = preprocessNanoDetDirect(sourceElement, cfg.detPrecision);
-            const tPre = performance.now() - tPre0;
 
             if (prep) {
               const tDet0 = performance.now();
@@ -1302,12 +1451,12 @@
               const scoresOut = detOutputs['scores'];
               const rawDetections = decodeNanoDet(boxesOut, scoresOut, prep, 0.40, 0.45);
 
-              // Candidate Filter: Limit to strict maximum of 2 candidate foot ROIs
+              // Candidate Filter: max 2 foot ROIs
               const candidateDets = filterCandidateRois(rawDetections, state.tracks, 0.40);
               const validCandidates = [];
 
               for (const det of candidateDets) {
-                const b = det.origBox;
+                const b  = det.origBox;
                 const bw = b[2] - b[0];
                 const bh = b[3] - b[1];
                 const cx = (b[0] + b[2]) / 2.0;
@@ -1322,91 +1471,87 @@
 
                 const poseResult = decodeRtmPoseOutputs(poseOutputs, cropBox.cx, cropBox.cy, cropBox.size);
 
-                // Anatomical Clutter Gate: Reject carpet leaves, floor patterns, shadows
-                if (poseResult.meanConf < 0.20 || poseResult.validKptsCount < 3) {
-                  continue;
-                }
+                // Anatomical Clutter Gate: reject carpet/floor patterns
+                if (poseResult.meanConf < 0.20 || poseResult.validKptsCount < 3) continue;
+
+                // FIX 5: Use keypoint-derived bbox for Kalman measurement (consistent source)
+                const kptBox = computeKptBbox(poseResult.keypoints) || det.origBox;
 
                 validCandidates.push({
-                  origBox: det.origBox,
-                  score: det.score,
-                  keypoints: poseResult.keypoints,
-                  handProb: poseResult.handProb, // <0.50: Left, >=0.50: Right
-                  meanConf: poseResult.meanConf,
+                  origBox:       kptBox,          // keypoint bbox fed to Kalman
+                  detBox:        det.origBox,      // detector box kept for display only
+                  score:         det.score,
+                  keypoints:     poseResult.keypoints,
+                  handProb:      poseResult.handProb,
+                  meanConf:      poseResult.meanConf,
                   validKptsCount: poseResult.validKptsCount,
-                  jointScore: det.score * (0.5 + 0.5 * poseResult.meanConf),
-                  cx: cx,
-                  cy: cy
+                  jointScore:    det.score * (0.5 + 0.5 * poseResult.meanConf),
+                  cx, cy
                 });
               }
 
-              // Dual-Foot Chirality Partitioning
-              let leftCands = validCandidates.filter(c => c.handProb < 0.50);
-              let rightCands = validCandidates.filter(c => c.handProb >= 0.50);
+              // FIX 4: IoU + centroid-distance + chirality association
+              const assigned = associateDetections(validCandidates, state.tracks);
+              const assignedMap = { 0: assigned.left, 1: assigned.right };
 
-              if (leftCands.length >= 2 && rightCands.length === 0) {
-                leftCands.sort((a, b) => a.cx - b.cx);
-                if (Math.abs(leftCands[1].cx - leftCands[0].cx) > 60) {
-                  rightCands.push(leftCands.pop());
+              for (const side of [0, 1]) {
+                const best = assignedMap[side];
+                if (best) {
+                  if (!state.tracks[side]) {
+                    state.tracks[side] = new FootTrack(side, best.origBox, best.handProb);
+                  }
+                  state.tracks[side].applyObservation(best.origBox, best.keypoints, best.handProb);
+                  finalDetections.push({
+                    origBox:  state.tracks[side].smoothedBbox,
+                    score:    best.score,
+                    classId:  side,
+                    keypoints: best.keypoints
+                  });
+                } else if (state.tracks[side]) {
+                  // This side wasn't found by detector this frame → extrapolate (safe clone)
+                  state.tracks[side].extrapolateUnobserved();
+                  const dispKps = state.tracks[side].getDisplayKps();
+                  if (dispKps && state.tracks[side].lostCount <= 4) {
+                    finalDetections.push({
+                      origBox:  state.tracks[side].smoothedBbox,
+                      score:    state.tracks[side].meanConf * Math.pow(0.85, state.tracks[side].lostCount),
+                      classId:  side,
+                      keypoints: dispKps
+                    });
+                  }
                 }
-              } else if (rightCands.length >= 2 && leftCands.length === 0) {
-                rightCands.sort((a, b) => a.cx - b.cx);
-                if (Math.abs(rightCands[1].cx - rightCands[0].cx) > 60) {
-                  leftCands.push(rightCands.shift());
-                }
-              }
-
-              const bestLeft = leftCands.length > 0
-                ? leftCands.reduce((prev, curr) => (curr.jointScore > prev.jointScore ? curr : prev))
-                : null;
-              const bestRight = rightCands.length > 0
-                ? rightCands.reduce((prev, curr) => (curr.jointScore > prev.jointScore ? curr : prev))
-                : null;
-
-              if (bestLeft) {
-                if (!state.tracks[0]) {
-                  state.tracks[0] = new FootTrack(0, bestLeft.origBox, bestLeft.handProb);
-                }
-                state.tracks[0].applyObservation(bestLeft.origBox, bestLeft.keypoints, bestLeft.handProb);
-                finalDetections.push({
-                  origBox: state.tracks[0].smoothedBbox,
-                  score: bestLeft.score,
-                  classId: 0,
-                  keypoints: bestLeft.keypoints
-                });
-              } else if (state.tracks[0]) {
-                state.tracks[0].extrapolateUnobserved();
-              }
-
-              if (bestRight) {
-                if (!state.tracks[1]) {
-                  state.tracks[1] = new FootTrack(1, bestRight.origBox, bestRight.handProb);
-                }
-                state.tracks[1].applyObservation(bestRight.origBox, bestRight.keypoints, bestRight.handProb);
-                finalDetections.push({
-                  origBox: state.tracks[1].smoothedBbox,
-                  score: bestRight.score,
-                  classId: 1,
-                  keypoints: bestRight.keypoints
-                });
-              } else if (state.tracks[1]) {
-                state.tracks[1].extrapolateUnobserved();
               }
             }
 
           } else {
-            // ── Path 2: Pose-Guided Tracking Frame (NanoDet Skipped! ~80% Speedup) ──
+            // ── Path 2: Pose-Guided Tracking (NanoDet Skipped) ─────────────────
+            // FIX 3: Use keypoint-derived ROI instead of pure Kalman bbox
             for (const side of [0, 1]) {
               const trk = state.tracks[side];
               if (!trk || trk.lostCount > 3) continue;
 
               const pBox = trk.beginFramePredict();
-              const cx = (pBox[0] + pBox[2]) / 2.0;
-              const cy = (pBox[1] + pBox[3]) / 2.0;
-              const bw = pBox[2] - pBox[0];
-              const bh = pBox[3] - pBox[1];
 
-              const cropBox = computeCropBox(cx, cy, bw, bh, 0.25);
+              // Blend keypoint ROI (70%) with Kalman prediction (30%) for crop center
+              const kptRoi = computeRoiFromKeypoints(trk.lastKpsSnapshot, 0.35);
+              let cropBox;
+              if (kptRoi) {
+                const kalmanCx = (pBox[0] + pBox[2]) / 2.0;
+                const kalmanCy = (pBox[1] + pBox[3]) / 2.0;
+                const kalmanW  = pBox[2] - pBox[0];
+                const kalmanH  = pBox[3] - pBox[1];
+                const blendCx   = 0.70 * kptRoi.cx + 0.30 * kalmanCx;
+                const blendCy   = 0.70 * kptRoi.cy + 0.30 * kalmanCy;
+                const blendSize = 0.70 * kptRoi.size + 0.30 * Math.max(kalmanW, kalmanH) * 1.25;
+                cropBox = { cx: blendCx, cy: blendCy, size: blendSize };
+              } else {
+                const bw = pBox[2] - pBox[0];
+                const bh = pBox[3] - pBox[1];
+                const cx = (pBox[0] + pBox[2]) / 2.0;
+                const cy = (pBox[1] + pBox[3]) / 2.0;
+                cropBox = computeCropBox(cx, cy, bw, bh, 0.25);
+              }
+
               const cropTensor = extractCropTensor(sourceElement, cropBox.cx, cropBox.cy, cropBox.size, cfg.posePrecision);
 
               const tPose0 = performance.now();
@@ -1417,25 +1562,33 @@
 
               // Anatomical Clutter Gate
               if (poseResult.meanConf >= 0.20 && poseResult.validKptsCount >= 3) {
+                // FIX 5: Feed keypoint-derived bbox to Kalman (consistent with detection path)
                 const kptBox = computeKptBbox(poseResult.keypoints) || pBox;
-                const blendedBox = [
-                  0.7 * kptBox[0] + 0.3 * pBox[0],
-                  0.7 * kptBox[1] + 0.3 * pBox[1],
-                  0.7 * kptBox[2] + 0.3 * pBox[2],
-                  0.7 * kptBox[3] + 0.3 * pBox[3],
-                ];
-                trk.applyObservation(blendedBox, poseResult.keypoints, poseResult.handProb);
+                trk.applyObservation(kptBox, poseResult.keypoints, poseResult.handProb);
                 finalDetections.push({
-                  origBox: trk.smoothedBbox,
-                  score: poseResult.meanConf,
-                  classId: side,
+                  origBox:  trk.smoothedBbox,
+                  score:    poseResult.meanConf,
+                  classId:  side,
                   keypoints: poseResult.keypoints
                 });
               } else {
+                // Pose unreliable this frame → safe clone extrapolation (FIX 1)
                 trk.extrapolateUnobserved();
+                const dispKps = trk.getDisplayKps();
+                if (dispKps && trk.lostCount <= 4) {
+                  finalDetections.push({
+                    origBox:  trk.smoothedBbox,
+                    score:    trk.meanConf * Math.pow(0.85, trk.lostCount),
+                    classId:  side,
+                    keypoints: dispKps
+                  });
+                }
               }
             }
           }
+
+          // Tick the heartbeat clock (FIX 6)
+          state.adaptiveDetector.tick(runDetector);
 
           // One-Euro Temporal Smoothing
           const nowSec = performance.now() / 1000.0;
@@ -1546,7 +1699,9 @@
 
     if (hudTrackingMode) {
       if (state.activeModelConfig && state.activeModelConfig.type === 'twostage') {
-        hudTrackingMode.textContent = state.heartbeatEnabled ? 'Heartbeat 5 (Pose-Guided)' : 'Every-Frame (Baseline)';
+        hudTrackingMode.textContent = state.heartbeatEnabled
+          ? 'MediaPipe (per-foot) + Heartbeat 5'
+          : 'Every-Frame (Baseline)';
       } else {
         hudTrackingMode.textContent = 'Single-Stage YOLO';
       }
@@ -1674,6 +1829,9 @@
     heartbeatToggle.addEventListener('change', () => {
       state.heartbeatEnabled = heartbeatToggle.checked;
       state.adaptiveDetector.reset();
+      // Also reset tracks so re-detection starts fresh in new mode
+      state.tracks[0] = null;
+      state.tracks[1] = null;
     });
   }
 
