@@ -53,22 +53,27 @@ def train_handedness(
     print(f"  Device:          {device} (Batch: {batch_size}, LR: {lr})")
     print("=" * 75)
 
-    # 1. Build Model with Handedness Head
+    # 1. Inspect Checkpoint for Architecture
+    ckpt = torch.load(init_weights, map_location=device, weights_only=False)
+    backbone_name = ckpt.get("student_arch", ckpt.get("backbone_name", "cspnext"))
+    print(f"[*] Detected backbone architecture from checkpoint: {backbone_name}")
+
+    # 2. Build Model with Handedness Head
     model = RTMPose13KP(
         num_keypoints=13,
         input_size=(256, 256),
         simcc_split_ratio=2.0,
-        backbone_name="cspnext",
+        backbone_name=backbone_name,
         pretrained=False,
         include_handedness=True
     ).to(device)
 
-    # 2. Warm-start weights
-    ckpt = torch.load(init_weights, map_location=device, weights_only=False)
+    # 3. Warm-start weights
     state = ckpt.get("model_state", ckpt)
     missing, unexpected = model.load_state_dict(state, strict=False)
     print(f"[*] Loaded base weights from {init_weights}")
-    print(f"    Missing keys (expected for new hand head): {missing}")
+    if missing:
+        print(f"    Missing keys (expected for newly added hand head): {missing}")
 
     # 3. Freeze all parameters except head.hand
     trainable_params = []
@@ -202,8 +207,13 @@ def train_handedness(
                 "epoch": epoch,
                 "model_state": model.state_dict(),
                 "val_hand_acc": val_acc,
-                "backbone_name": "cspnext",
-                "include_handedness": True
+                "hand_acc": val_acc,
+                "backbone_name": backbone_name,
+                "student_arch": backbone_name,
+                "include_handedness": True,
+                "val_pck05": ckpt.get("val_pck05", 0.0),
+                "val_pck10": ckpt.get("val_pck10", 0.0),
+                "mean_px_err": ckpt.get("mean_px_err", 0.0)
             }
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
             torch.save(save_dict, output_path)
