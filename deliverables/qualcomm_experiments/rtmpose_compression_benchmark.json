@@ -1,0 +1,58 @@
+[
+  {
+    "id": "baseline_improved5",
+    "name": "RTMPose-13KP Baseline (improved5)",
+    "backbone": "cspnext",
+    "parameters": 3725869,
+    "size_fp32_mb": 14.21,
+    "size_int8_mb": 3.55,
+    "latency_b1_ms": 22.83,
+    "latency_b2_ms": 35.36,
+    "pck05": 84.88,
+    "pck10": 93.82,
+    "mean_err_px": 11.7,
+    "hand_acc": 95.0
+  },
+  {
+    "id": "rtmpose_slim_optionA",
+    "name": "Option A: RTMPose-Slim (Stride-16)",
+    "backbone": "cspnext_slim",
+    "parameters": 796621,
+    "size_fp32_mb": 3.04,
+    "size_int8_mb": 0.76,
+    "latency_b1_ms": 15.7,
+    "latency_b2_ms": 26.56,
+    "pck05": 2.51,
+    "pck10": 7.25,
+    "mean_err_px": 125.14,
+    "hand_acc": 49.17
+  },
+  {
+    "id": "rtmpose_slim_s4lite",
+    "name": "Option A+Lite: RTMPose-Slim-Stage4Lite",
+    "backbone": "cspnext_slim_s4lite",
+    "parameters": 1113901,
+    "size_fp32_mb": 4.25,
+    "size_int8_mb": 1.06,
+    "latency_b1_ms": 18.35,
+    "latency_b2_ms": 32.53,
+    "pck05": 0.31,
+    "pck10": 2.78,
+    "mean_err_px": 131.18,
+    "hand_acc": 50.42
+  },
+  {
+    "id": "rtmpose_pico_optionB",
+    "name": "Option B: RTMPose-Pico (0.5x width)",
+    "backbone": "cspnext_pico",
+    "parameters": 869645,
+    "size_fp32_mb": 3.32,
+    "size_int8_mb": 0.83,
+    "latency_b1_ms": 15.36,
+    "latency_b2_ms": 25.49,
+    "pck05": 3.37,
+    "pck10": 8.6,
+    "mean_err_px": 129.76,
+    "hand_acc": 50.42
+  }
+]

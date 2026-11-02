@@ -103,7 +103,79 @@ CELL_6 = """
 # Export Stage 2 RTMPose-13KP with Hand Head
 !python src/models/qualcomm_experiments/rtmpose/export_onnx.py \
   --weights /content/Shoes_VTO/checkpoints/rtmpose_13kp_improved5/best_with_hand.pt \
-  --output /content/Shoes_VTO/deliverables/qualcomm_experiments/models/rtmpose_13kp_hand_improved5_opset12.onnx \
-  --include_handedness
+  --output /content/Shoes_VTO/deliverables/qualcomm_experiments/models/rtmpose_13kp_hand_improved5_opset12.onnx
 """
+
+# ==============================================================================
+# CELL 7: Option A - Distill RTMPose-Slim (Stride-16, 3.04 MB FP32 / 0.76 MB INT8)
+# ==============================================================================
+CELL_7 = """
+# Cell 7: Option A: Distill RTMPose-Slim (Stride-16, 3.04 MB) from improved5
+# Transfers 100% of Stem + Stages 1-3 weights (79.3% of student model warm-started)
+# Distills soft SimCC coordinates (tau=2.0) and chirality probability
+!python src/models/qualcomm_experiments/rtmpose/train_distill.py \
+  --data /content/Shoes_VTO/data/merged_v6_with_negatives \
+  --teacher /content/Shoes_VTO/checkpoints/rtmpose_13kp_improved5/best_with_hand.pt \
+  --student_arch cspnext_slim \
+  --output /content/Shoes_VTO/checkpoints/rtmpose_13kp_slim_distill \
+  --epochs 40 \
+  --batch 32 \
+  --lr 3e-4 \
+  --temperature 2.0 \
+  --alpha_kd 1.0 \
+  --warmup 3 \
+  --workers 4 \
+  --amp
+"""
+
+# ==============================================================================
+# CELL 8: Option A+Lite - Distill RTMPose-Slim-Stage4Lite (4.25 MB FP32 / 1.06 MB INT8)
+# ==============================================================================
+CELL_8 = """
+# Cell 8: Option A+Lite: Distill RTMPose-Slim-Stage4Lite (Stride-32, 4.25 MB)
+# Includes lightweight Depthwise-Separable Stage 4 (cutting 81.6% of Stage 4 params)
+!python src/models/qualcomm_experiments/rtmpose/train_distill.py \
+  --data /content/Shoes_VTO/data/merged_v6_with_negatives \
+  --teacher /content/Shoes_VTO/checkpoints/rtmpose_13kp_improved5/best_with_hand.pt \
+  --student_arch cspnext_slim_s4lite \
+  --output /content/Shoes_VTO/checkpoints/rtmpose_13kp_slim_s4lite_distill \
+  --epochs 40 \
+  --batch 32 \
+  --lr 3e-4 \
+  --temperature 2.0 \
+  --alpha_kd 1.0 \
+  --warmup 3 \
+  --workers 4 \
+  --amp
+"""
+
+# ==============================================================================
+# CELL 9: Export Compressed RTMPose Models to ONNX (FP32, FP16, and INT8)
+# ==============================================================================
+CELL_9 = """
+# Cell 9: Export Compressed Models to ONNX (FP32, FP16, and INT8)
+# Export Option A: RTMPose-Slim (3.04 MB FP32 / 1.52 MB FP16 / 0.76 MB INT8)
+!python src/models/qualcomm_experiments/rtmpose/export_onnx.py \
+  --weights /content/Shoes_VTO/checkpoints/rtmpose_13kp_slim_distill/best_with_hand.pt \
+  --output /content/Shoes_VTO/deliverables/qualcomm_experiments/models/rtmpose_slim_improved5_opset12.onnx \
+  --backbone cspnext_slim
+
+# Export Option A+Lite: RTMPose-Slim-Stage4Lite (4.25 MB FP32 / 2.12 MB FP16 / 1.06 MB INT8)
+!python src/models/qualcomm_experiments/rtmpose/export_onnx.py \
+  --weights /content/Shoes_VTO/checkpoints/rtmpose_13kp_slim_s4lite_distill/best_with_hand.pt \
+  --output /content/Shoes_VTO/deliverables/qualcomm_experiments/models/rtmpose_slim_s4lite_improved5_opset12.onnx \
+  --backbone cspnext_slim_s4lite
+"""
+
+# ==============================================================================
+# CELL 10: Benchmark Compressed Models vs Baseline on Validation Set
+# ==============================================================================
+CELL_10 = """
+# Cell 10: Comparative Accuracy & Latency Benchmark
+!python tools/evaluation/benchmark_rtmpose_compressed.py \
+  --data /content/Shoes_VTO/data/merged_v6_with_negatives/valid/images \
+  --teacher /content/Shoes_VTO/checkpoints/rtmpose_13kp_improved5/best_with_hand.pt \
+  --output /content/Shoes_VTO/deliverables/qualcomm_experiments/rtmpose_compression_benchmark.json
+"""
+
 

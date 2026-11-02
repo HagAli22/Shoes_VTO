@@ -149,6 +149,187 @@ class CSPNeXtTiny(nn.Module):
         return x
 
 
+class CSPNeXtSlim(nn.Module):
+    """
+    CSPNeXt-Slim Backbone: High-Resolution Stride-16 Foot Pose Backbone.
+    Eliminates Stage 4 entirely (saving 1.85M parameters / 7.07 MB).
+    Outputs 192 channels at stride 16 (16x16 for 256x256 input).
+    Directly inherits 100% of Stem + Stages 1-3 from rtmpose_13kp_improved5.
+    Total parameters: ~495K (~1.89 MB FP32).
+    """
+    def __init__(self):
+        super().__init__()
+        # Stem: stride 2 (3 -> 12 -> 12 -> 24)
+        self.stem = nn.Sequential(
+            ConvModule(3, 12, kernel_size=3, stride=2, padding=1),
+            ConvModule(12, 12, kernel_size=3, stride=1, padding=1),
+            ConvModule(12, 24, kernel_size=3, stride=1, padding=1)
+        )
+        # Stage 1: stride 4 (64x64, 48 channels)
+        self.stage1 = nn.Sequential(
+            ConvModule(24, 48, kernel_size=3, stride=2, padding=1),
+            CSPLayer(48, 48, num_blocks=1, add_identity=True)
+        )
+        # Stage 2: stride 8 (32x32, 96 channels)
+        self.stage2 = nn.Sequential(
+            ConvModule(48, 96, kernel_size=3, stride=2, padding=1),
+            CSPLayer(96, 96, num_blocks=1, add_identity=True)
+        )
+        # Stage 3: stride 16 (16x16, 192 channels)
+        self.stage3 = nn.Sequential(
+            ConvModule(96, 192, kernel_size=3, stride=2, padding=1),
+            CSPLayer(192, 192, num_blocks=1, add_identity=True)
+        )
+        self.out_channels = 192
+        self.stride = 16
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        return x
+
+
+class CSPNeXtSlimStage4Lite(nn.Module):
+    """
+    CSPNeXt-Slim Backbone with Stage-4-Lite.
+    Retains Stride 32 (8x8 for 256x256 input) while cutting Stage 4 parameters
+    from 1.85M down to ~340K (an 81.6% reduction in Stage 4 size).
+    Outputs 192 channels at stride 32.
+    Directly inherits 100% of Stem + Stages 1-3 from rtmpose_13kp_improved5.
+    Total parameters: ~835K (~3.18 MB FP32).
+    """
+    def __init__(self):
+        super().__init__()
+        # Stem: stride 2
+        self.stem = nn.Sequential(
+            ConvModule(3, 12, kernel_size=3, stride=2, padding=1),
+            ConvModule(12, 12, kernel_size=3, stride=1, padding=1),
+            ConvModule(12, 24, kernel_size=3, stride=1, padding=1)
+        )
+        # Stage 1: stride 4 (64x64, 48 channels)
+        self.stage1 = nn.Sequential(
+            ConvModule(24, 48, kernel_size=3, stride=2, padding=1),
+            CSPLayer(48, 48, num_blocks=1, add_identity=True)
+        )
+        # Stage 2: stride 8 (32x32, 96 channels)
+        self.stage2 = nn.Sequential(
+            ConvModule(48, 96, kernel_size=3, stride=2, padding=1),
+            CSPLayer(96, 96, num_blocks=1, add_identity=True)
+        )
+        # Stage 3: stride 16 (16x16, 192 channels)
+        self.stage3 = nn.Sequential(
+            ConvModule(96, 192, kernel_size=3, stride=2, padding=1),
+            CSPLayer(192, 192, num_blocks=1, add_identity=True)
+        )
+        # Stage 4 Lite: Stride 2 downsampling with Depthwise Separable Conv + SPPF (192-ch) + CSPLayer (192-ch)
+        self.stage4 = nn.Sequential(
+            DepthwiseSeparableConv(192, 192, kernel_size=5, stride=2, padding=2),
+            SPPF(192, 192, kernel_size=5),
+            CSPLayer(192, 192, num_blocks=1, add_identity=False)
+        )
+        self.out_channels = 192
+        self.stride = 32
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.stage4(x)
+        return x
+
+
+class CSPNeXtPico(nn.Module):
+    """
+    CSPNeXt-Pico Backbone (0.5x width factor across all stages).
+    Outputs 192 channels at stride 32.
+    Total parameters: ~480K (~1.83 MB FP32).
+    """
+    def __init__(self):
+        super().__init__()
+        # Stem: stride 2
+        self.stem = nn.Sequential(
+            ConvModule(3, 8, kernel_size=3, stride=2, padding=1),
+            ConvModule(8, 8, kernel_size=3, stride=1, padding=1),
+            ConvModule(8, 16, kernel_size=3, stride=1, padding=1)
+        )
+        # Stage 1: stride 4 (64x64, 24 channels)
+        self.stage1 = nn.Sequential(
+            ConvModule(16, 24, kernel_size=3, stride=2, padding=1),
+            CSPLayer(24, 24, num_blocks=1, add_identity=True)
+        )
+        # Stage 2: stride 8 (32x32, 48 channels)
+        self.stage2 = nn.Sequential(
+            ConvModule(24, 48, kernel_size=3, stride=2, padding=1),
+            CSPLayer(48, 48, num_blocks=1, add_identity=True)
+        )
+        # Stage 3: stride 16 (16x16, 96 channels)
+        self.stage3 = nn.Sequential(
+            ConvModule(48, 96, kernel_size=3, stride=2, padding=1),
+            CSPLayer(96, 96, num_blocks=1, add_identity=True)
+        )
+        # Stage 4: stride 32 (8x8, 192 channels)
+        self.stage4 = nn.Sequential(
+            ConvModule(96, 192, kernel_size=3, stride=2, padding=1),
+            SPPF(192, 192, kernel_size=5),
+            CSPLayer(192, 192, num_blocks=1, add_identity=False)
+        )
+        self.out_channels = 192
+        self.stride = 32
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.stage4(x)
+        return x
+
+
+def load_improved5_backbone_weights(
+    backbone_model: nn.Module,
+    ckpt_path: str = "checkpoints/rtmpose_13kp_improved5/best_with_hand.pt"
+) -> int:
+    """
+    Transfers 100% of matching Stem, Stage 1, Stage 2, and Stage 3 weights
+    from rtmpose_13kp_improved5 checkpoint into the student backbone.
+    Returns the number of transferred parameters.
+    """
+    ckpt_file = Path(ckpt_path)
+    if not ckpt_file.exists():
+        # Fall back to best.pt
+        alt = ckpt_file.parent / "best.pt"
+        if alt.exists():
+            ckpt_file = alt
+        else:
+            print(f"[!] Warning: Checkpoint {ckpt_path} not found.")
+            return 0
+
+    try:
+        ckpt = torch.load(str(ckpt_file), map_location="cpu", weights_only=False)
+    except TypeError:
+        ckpt = torch.load(str(ckpt_file), map_location="cpu")
+
+    state = ckpt.get("model_state", ckpt)
+    bb_state = {k.replace("backbone.", ""): v for k, v in state.items() if k.startswith("backbone.")}
+
+    # Filter tensors that match both name and exact tensor shape
+    model_dict = backbone_model.state_dict()
+    matched_state = {}
+    transferred_params = 0
+
+    for k, v in bb_state.items():
+        if k in model_dict and model_dict[k].shape == v.shape:
+            matched_state[k] = v
+            transferred_params += v.numel()
+
+    missing, unexpected = backbone_model.load_state_dict(matched_state, strict=False)
+    print(f"[+] Transferred {len(matched_state)} tensors ({transferred_params:,} params) from {ckpt_file.name} to backbone.")
+    return transferred_params
+
+
 def load_official_coco_weights(
     backbone_model: nn.Module,
     ckpt_path: str = "checkpoints/rtmpose_tiny_coco.pth"
