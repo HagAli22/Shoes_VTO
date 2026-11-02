@@ -1,0 +1,796 @@
+{
+  "gpu_info": {
+    "device_name": "Quadro P2000",
+    "compute_capability": [
+      6,
+      1
+    ],
+    "total_memory_mb": 4095.875,
+    "cuda_version": "12.1",
+    "cudnn_version": 90100,
+    "ort_version": "1.23.2",
+    "ort_providers": [
+      "TensorrtExecutionProvider",
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ]
+  },
+  "models": {
+    "RTMPose_FP32": {
+      "profiling": {
+        "cuda_nodes": 4200,
+        "cpu_nodes": 60,
+        "provider_breakdown_ms": {
+          "CUDAExecutionProvider": 382.209,
+          "CPUExecutionProvider": 1.275
+        },
+        "top_ops": [
+          {
+            "op": "Conv",
+            "count": 1140,
+            "total_ms": 228.73,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Mul",
+            "count": 330,
+            "total_ms": 60.346,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "QuickGelu",
+            "count": 1050,
+            "total_ms": 23.112,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "GlobalAveragePool",
+            "count": 120,
+            "total_ms": 14.948,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "ReduceL2",
+            "count": 60,
+            "total_ms": 7.812,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Gemm",
+            "count": 60,
+            "total_ms": 7.471,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "MatMul",
+            "count": 210,
+            "total_ms": 6.334,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Concat",
+            "count": 180,
+            "total_ms": 6.051,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Add",
+            "count": 240,
+            "total_ms": 5.355,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "HardSigmoid",
+            "count": 120,
+            "total_ms": 3.614,
+            "provider": "CUDAExecutionProvider"
+          }
+        ],
+        "top_slowest_nodes": [
+          {
+            "name": "/backbone/stem/stem.0/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 129.219,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/Mul_kernel_time",
+            "op": "Mul",
+            "dur_ms": 52.195,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage1/stage1.1/attention/pool/GlobalAveragePool_kernel_time",
+            "op": "GlobalAveragePool",
+            "dur_ms": 11.46,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage1/stage1.1/blocks/blocks.0/conv2/depthwise_conv/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 9.786,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage3/stage3.0/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 4.904,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/head/mlp/mlp.0/ReduceL2_kernel_time",
+            "op": "ReduceL2",
+            "dur_ms": 3.851,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage1/stage1.1/attention/fc/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 3.648,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/head/hand/hand.4/Gemm_kernel_time",
+            "op": "Gemm",
+            "dur_ms": 3.17,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage1/stage1.1/short_conv/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 2.96,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage3/stage3.1/short_conv/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 2.586,
+            "provider": "CUDAExecutionProvider"
+          }
+        ],
+        "profile_file": "deliverables\\qualcomm_experiments\\profiling\\ort_profile_rtmpose_13kp_hand_improved5_opset12_2026-10-31_19-52-49.json"
+      },
+      "bench_b1_standard": {
+        "batch_size": 1,
+        "input_type": "tensor(float)",
+        "gpu_p50_ms": 4.6981120109558105,
+        "gpu_mean_ms": 5.559268479347229,
+        "gpu_p95_ms": 6.3316992044448845,
+        "cpu_wall_p50_ms": 4.776100002345629,
+        "cpu_wall_mean_ms": 5.831129999933182,
+        "cpu_wall_p95_ms": 7.078899996122343,
+        "use_io_binding": false,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_standard": {
+        "batch_size": 2,
+        "input_type": "tensor(float)",
+        "gpu_p50_ms": 7.474800109863281,
+        "gpu_mean_ms": 7.492695665359497,
+        "gpu_p95_ms": 7.944755125045776,
+        "cpu_wall_p50_ms": 7.442450001690304,
+        "cpu_wall_mean_ms": 7.499497000389965,
+        "cpu_wall_p95_ms": 7.960420004746993,
+        "use_io_binding": false,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_io_binding": {
+        "batch_size": 2,
+        "input_type": "tensor(float)",
+        "gpu_p50_ms": 7.0289599895477295,
+        "gpu_mean_ms": 7.476384000778198,
+        "gpu_p95_ms": 9.7061182975769,
+        "cpu_wall_p50_ms": 7.024900001852075,
+        "cpu_wall_mean_ms": 7.477117999878828,
+        "cpu_wall_p95_ms": 9.829779996653084,
+        "use_io_binding": true,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_cuda_graph": {
+        "batch_size": 2,
+        "input_type": "tensor(float)",
+        "gpu_p50_ms": 7.262207984924316,
+        "gpu_mean_ms": 7.581201281547546,
+        "gpu_p95_ms": 9.382758283615113,
+        "cpu_wall_p50_ms": 7.428150001942413,
+        "cpu_wall_mean_ms": 7.592155000384082,
+        "cpu_wall_p95_ms": 8.81812000006903,
+        "use_io_binding": false,
+        "enable_cuda_graph": true
+      },
+      "transfers_and_prep": {
+        "preprocessing_mean_ms": 1.8599439997342415,
+        "h2d_copy_mean_ms": 0.16552448153495788,
+        "d2h_copy_mean_ms": 0.011383039895445108
+      },
+      "memory": {
+        "torch_mem_before_mb": 0.0,
+        "torch_peak_mem_mb": 0.0,
+        "torch_mem_after_mb": 0.0,
+        "nvidia_smi_snapshot": "51, 16, 97, 4096"
+      }
+    },
+    "RTMPose_FP16": {
+      "profiling": {
+        "cuda_nodes": 4200,
+        "cpu_nodes": 60,
+        "provider_breakdown_ms": {
+          "CUDAExecutionProvider": 261.358,
+          "CPUExecutionProvider": 1.467
+        },
+        "top_ops": [
+          {
+            "op": "Conv",
+            "count": 1140,
+            "total_ms": 133.643,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "QuickGelu",
+            "count": 1050,
+            "total_ms": 28.345,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "MatMul",
+            "count": 210,
+            "total_ms": 17.516,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Gemm",
+            "count": 60,
+            "total_ms": 13.168,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "ReduceL2",
+            "count": 60,
+            "total_ms": 10.082,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Mul",
+            "count": 330,
+            "total_ms": 9.946,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Add",
+            "count": 240,
+            "total_ms": 9.818,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Concat",
+            "count": 180,
+            "total_ms": 6.847,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "GlobalAveragePool",
+            "count": 120,
+            "total_ms": 4.873,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Gather",
+            "count": 30,
+            "total_ms": 3.639,
+            "provider": "CUDAExecutionProvider"
+          }
+        ],
+        "top_slowest_nodes": [
+          {
+            "name": "/head/hand/hand.4/Gemm_kernel_time",
+            "op": "Gemm",
+            "dur_ms": 7.43,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/head/gau/uv/MatMul_kernel_time",
+            "op": "MatMul",
+            "dur_ms": 5.996,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage1/stage1.1/blocks/blocks.0/conv2/depthwise_conv/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 5.834,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage2/stage2.0/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 5.752,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage2/stage2.1/blocks/blocks.0/conv1/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 5.575,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/head/mlp/mlp.0/ReduceL2_kernel_time",
+            "op": "ReduceL2",
+            "dur_ms": 4.901,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage1/stage1.1/short_conv/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 3.573,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage1/stage1.1/attention/fc/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 3.215,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/head/final/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 3.047,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/backbone/stage2/stage2.1/short_conv/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 2.874,
+            "provider": "CUDAExecutionProvider"
+          }
+        ],
+        "profile_file": "deliverables\\qualcomm_experiments\\profiling\\ort_profile_rtmpose_13kp_hand_improved5_fp16_2026-10-31_19-52-54.json"
+      },
+      "bench_b1_standard": {
+        "batch_size": 1,
+        "input_type": "tensor(float16)",
+        "gpu_p50_ms": 8.978960037231445,
+        "gpu_mean_ms": 9.108303337097167,
+        "gpu_p95_ms": 10.173798370361329,
+        "cpu_wall_p50_ms": 8.996599997772137,
+        "cpu_wall_mean_ms": 9.110615999743459,
+        "cpu_wall_p95_ms": 10.028125000826549,
+        "use_io_binding": false,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_standard": {
+        "batch_size": 2,
+        "input_type": "tensor(float16)",
+        "gpu_p50_ms": 12.322303771972656,
+        "gpu_mean_ms": 12.470700769424438,
+        "gpu_p95_ms": 13.236986827850341,
+        "cpu_wall_p50_ms": 12.324100003752392,
+        "cpu_wall_mean_ms": 12.47371999968891,
+        "cpu_wall_p95_ms": 13.513705001969356,
+        "use_io_binding": false,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_io_binding": {
+        "batch_size": 2,
+        "input_type": "tensor(float16)",
+        "gpu_p50_ms": 11.62830400466919,
+        "gpu_mean_ms": 11.643591079711914,
+        "gpu_p95_ms": 11.804451370239258,
+        "cpu_wall_p50_ms": 11.627349998889258,
+        "cpu_wall_mean_ms": 11.643344000258367,
+        "cpu_wall_p95_ms": 11.852839999119169,
+        "use_io_binding": true,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_cuda_graph": {
+        "batch_size": 2,
+        "input_type": "tensor(float16)",
+        "gpu_p50_ms": 12.017824172973633,
+        "gpu_mean_ms": 12.044833908081054,
+        "gpu_p95_ms": 12.455106830596923,
+        "cpu_wall_p50_ms": 12.007650002487935,
+        "cpu_wall_mean_ms": 12.046127000139677,
+        "cpu_wall_p95_ms": 12.40877000054752,
+        "use_io_binding": false,
+        "enable_cuda_graph": true
+      },
+      "transfers_and_prep": {
+        "preprocessing_mean_ms": 8.08474399993429,
+        "h2d_copy_mean_ms": 0.24390784054994583,
+        "d2h_copy_mean_ms": 0.014677119925618171
+      },
+      "memory": {
+        "torch_mem_before_mb": 0.0,
+        "torch_peak_mem_mb": 0.0,
+        "torch_mem_after_mb": 0.0,
+        "nvidia_smi_snapshot": "88, 8, 131, 4096"
+      }
+    },
+    "NanoDet_FP32": {
+      "profiling": {
+        "cuda_nodes": 12960,
+        "cpu_nodes": 8520,
+        "provider_breakdown_ms": {
+          "CUDAExecutionProvider": 685.071,
+          "CPUExecutionProvider": 230.47
+        },
+        "top_ops": [
+          {
+            "op": "Conv",
+            "count": 2550,
+            "total_ms": 226.14,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Relu",
+            "count": 1890,
+            "total_ms": 102.298,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Gather",
+            "count": 3330,
+            "total_ms": 86.014,
+            "provider": "CPUExecutionProvider"
+          },
+          {
+            "op": "Unsqueeze",
+            "count": 3240,
+            "total_ms": 79.874,
+            "provider": "CPUExecutionProvider"
+          },
+          {
+            "op": "Concat",
+            "count": 1920,
+            "total_ms": 73.255,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Reshape",
+            "count": 1770,
+            "total_ms": 49.611,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Slice",
+            "count": 960,
+            "total_ms": 45.965,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Div",
+            "count": 900,
+            "total_ms": 33.878,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Transpose",
+            "count": 660,
+            "total_ms": 33.617,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Shape",
+            "count": 1230,
+            "total_ms": 29.476,
+            "provider": "CUDAExecutionProvider"
+          }
+        ],
+        "top_slowest_nodes": [
+          {
+            "name": "/m/backbone/conv1/conv1.2/Relu_kernel_time",
+            "op": "Relu",
+            "dur_ms": 41.785,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/fpn/Resize_kernel_time",
+            "op": "Resize",
+            "dur_ms": 19.425,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/backbone/stage2/stage2.0/Transpose_kernel_time",
+            "op": "Transpose",
+            "dur_ms": 7.861,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/backbone/stage3/stage3.3/branch2/branch2.0/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 6.708,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/backbone/stage4/stage4.3/Div_1_kernel_time",
+            "op": "Div",
+            "dur_ms": 6.341,
+            "provider": "CPUExecutionProvider"
+          },
+          {
+            "name": "/m/Clip_8_kernel_time",
+            "op": "Clip",
+            "dur_ms": 5.853,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/backbone/stage4/stage4.3/Slice_1_kernel_time",
+            "op": "Slice",
+            "dur_ms": 5.811,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/distribution_project_2/Softmax_kernel_time",
+            "op": "Softmax",
+            "dur_ms": 3.409,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/head/cls_convs.1.1/pointwise/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 3.091,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/fpn/top_down_conv2/pointwise/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 2.979,
+            "provider": "CUDAExecutionProvider"
+          }
+        ],
+        "profile_file": "deliverables\\qualcomm_experiments\\profiling\\ort_profile_nanodet_stage_a_improved5_opset12_2026-10-31_19-53-03.json"
+      },
+      "bench_b1_standard": {
+        "batch_size": 1,
+        "input_type": "tensor(float)",
+        "gpu_p50_ms": 8.197888374328613,
+        "gpu_mean_ms": 8.188987226486207,
+        "gpu_p95_ms": 12.170700693130494,
+        "cpu_wall_p50_ms": 8.432500002527377,
+        "cpu_wall_mean_ms": 8.206862000079127,
+        "cpu_wall_p95_ms": 12.21560999911162,
+        "use_io_binding": false,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_standard": {
+        "batch_size": 2,
+        "input_type": "tensor(float)",
+        "gpu_p50_ms": 7.456255912780762,
+        "gpu_mean_ms": 7.628248643875122,
+        "gpu_p95_ms": 9.339955472946167,
+        "cpu_wall_p50_ms": 7.451749999745516,
+        "cpu_wall_mean_ms": 7.633370000476134,
+        "cpu_wall_p95_ms": 9.193305001826957,
+        "use_io_binding": false,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_io_binding": {
+        "batch_size": 2,
+        "input_type": "tensor(float)",
+        "gpu_p50_ms": 7.189584016799927,
+        "gpu_mean_ms": 7.578808007240295,
+        "gpu_p95_ms": 9.66860771179199,
+        "cpu_wall_p50_ms": 7.226199999422533,
+        "cpu_wall_mean_ms": 7.58064200017543,
+        "cpu_wall_p95_ms": 9.853235000628047,
+        "use_io_binding": true,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_cuda_graph": {
+        "batch_size": 2,
+        "input_type": "tensor(float)",
+        "gpu_p50_ms": 6.634495973587036,
+        "gpu_mean_ms": 6.6498470115661625,
+        "gpu_p95_ms": 7.076572775840759,
+        "cpu_wall_p50_ms": 6.621699994866503,
+        "cpu_wall_mean_ms": 6.660323000178323,
+        "cpu_wall_p95_ms": 7.041615000707679,
+        "use_io_binding": false,
+        "enable_cuda_graph": true
+      },
+      "transfers_and_prep": {
+        "preprocessing_mean_ms": 1.7601499999000225,
+        "h2d_copy_mean_ms": 0.48667520225048067,
+        "d2h_copy_mean_ms": 0.022494080066680907
+      },
+      "memory": {
+        "torch_mem_before_mb": 0.0,
+        "torch_peak_mem_mb": 0.0,
+        "torch_mem_after_mb": 0.0,
+        "nvidia_smi_snapshot": "61, 20, 117, 4096"
+      }
+    },
+    "NanoDet_FP16": {
+      "profiling": {
+        "cuda_nodes": 13260,
+        "cpu_nodes": 8520,
+        "provider_breakdown_ms": {
+          "CUDAExecutionProvider": 426.04,
+          "CPUExecutionProvider": 135.194
+        },
+        "top_ops": [
+          {
+            "op": "Conv",
+            "count": 2550,
+            "total_ms": 169.474,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Gather",
+            "count": 3330,
+            "total_ms": 54.827,
+            "provider": "CPUExecutionProvider"
+          },
+          {
+            "op": "Concat",
+            "count": 1920,
+            "total_ms": 47.931,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Unsqueeze",
+            "count": 3240,
+            "total_ms": 46.791,
+            "provider": "CPUExecutionProvider"
+          },
+          {
+            "op": "Relu",
+            "count": 1890,
+            "total_ms": 38.498,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Reshape",
+            "count": 1770,
+            "total_ms": 32.273,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Slice",
+            "count": 960,
+            "total_ms": 26.182,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Shape",
+            "count": 1230,
+            "total_ms": 18.409,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Transpose",
+            "count": 660,
+            "total_ms": 17.882,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "op": "Add",
+            "count": 870,
+            "total_ms": 17.746,
+            "provider": "CPUExecutionProvider"
+          }
+        ],
+        "top_slowest_nodes": [
+          {
+            "name": "/m/fpn/Resize_input_cast0_kernel_time",
+            "op": "Cast",
+            "dur_ms": 4.568,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/backbone/stage2/stage2.2/branch2/branch2.5/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 3.097,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/fpn/reduce_layers.1/conv/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 3.085,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/backbone/stage4/stage4.0/branch1/branch1.2/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 2.505,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/backbone/stage3/stage3.3/branch2/branch2.0/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 2.325,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/backbone/stage2/stage2.2/branch2/branch2.0/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 1.445,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/head/gfl_cls.2/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 1.445,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/backbone/stage4/stage4.0/branch2/branch2.5/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 1.334,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/head/cls_convs.0.0/pointwise/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 1.314,
+            "provider": "CUDAExecutionProvider"
+          },
+          {
+            "name": "/m/fpn/top_down_conv3/pointwise/Conv_kernel_time",
+            "op": "Conv",
+            "dur_ms": 1.181,
+            "provider": "CUDAExecutionProvider"
+          }
+        ],
+        "profile_file": "deliverables\\qualcomm_experiments\\profiling\\ort_profile_nanodet_stage_a_improved5_fp16_2026-10-31_19-53-11.json"
+      },
+      "bench_b1_standard": {
+        "batch_size": 1,
+        "input_type": "tensor(float16)",
+        "gpu_p50_ms": 6.194688081741333,
+        "gpu_mean_ms": 7.930891218185425,
+        "gpu_p95_ms": 11.291494512557975,
+        "cpu_wall_p50_ms": 6.087450004997663,
+        "cpu_wall_mean_ms": 7.933310000153142,
+        "cpu_wall_p95_ms": 11.710149998179977,
+        "use_io_binding": false,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_standard": {
+        "batch_size": 2,
+        "input_type": "tensor(float16)",
+        "gpu_p50_ms": 7.802367925643921,
+        "gpu_mean_ms": 7.875695362091064,
+        "gpu_p95_ms": 9.055897665023803,
+        "cpu_wall_p50_ms": 7.76659999974072,
+        "cpu_wall_mean_ms": 7.880131999991136,
+        "cpu_wall_p95_ms": 8.824050000112038,
+        "use_io_binding": false,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_io_binding": {
+        "batch_size": 2,
+        "input_type": "tensor(float16)",
+        "gpu_p50_ms": 7.878159999847412,
+        "gpu_mean_ms": 9.416625270843506,
+        "gpu_p95_ms": 15.830169963836655,
+        "cpu_wall_p50_ms": 7.881049998104572,
+        "cpu_wall_mean_ms": 9.417301000285079,
+        "cpu_wall_p95_ms": 15.903770001023068,
+        "use_io_binding": true,
+        "enable_cuda_graph": false
+      },
+      "bench_b2_cuda_graph": {
+        "batch_size": 2,
+        "input_type": "tensor(float16)",
+        "gpu_p50_ms": 6.967296123504639,
+        "gpu_mean_ms": 7.825433955192566,
+        "gpu_p95_ms": 11.981925964355462,
+        "cpu_wall_p50_ms": 7.199700005003251,
+        "cpu_wall_mean_ms": 7.825400000583613,
+        "cpu_wall_p95_ms": 12.591694998627645,
+        "use_io_binding": false,
+        "enable_cuda_graph": true
+      },
+      "transfers_and_prep": {
+        "preprocessing_mean_ms": 11.074456000205828,
+        "h2d_copy_mean_ms": 0.24506112158298493,
+        "d2h_copy_mean_ms": 0.014307200033217669
+      },
+      "memory": {
+        "torch_mem_before_mb": 0.0,
+        "torch_peak_mem_mb": 0.0,
+        "torch_mem_after_mb": 0.0,
+        "nvidia_smi_snapshot": "65, 7, 117, 4096"
+      }
+    }
+  }
+}

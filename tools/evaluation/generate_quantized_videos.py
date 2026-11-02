@@ -17,8 +17,20 @@ import os
 import time
 import math
 import argparse
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
+
+try:
+    import torch
+    _tlib = Path(torch.__file__).parent / 'lib'
+    if _tlib.exists():
+        if hasattr(os, 'add_dll_directory'):
+            os.add_dll_directory(str(_tlib))
+        os.environ['PATH'] = str(_tlib) + os.pathsep + os.environ.get('PATH', '')
+except Exception:
+    pass
+
 import numpy as np
 import cv2
 import onnxruntime as ort
@@ -267,6 +279,7 @@ def process_video_two_stage(
     latencies = []
     frame_idx = 0
     t_start = time.time()
+    all_frame_records = []
 
     while True:
         ret, frame = cap.read()
@@ -365,6 +378,11 @@ def process_video_two_stage(
         best_right = max(right_cands, key=lambda c: c["joint_score"]) if right_cands else None
 
         active_rendered = 0
+        frame_record = {
+            "frame_idx": int(frame_idx),
+            "timestamp": round(float(t_current), 4),
+            "feet": {}
+        }
         for side_name, best_det, track_id in [("left", best_left, 1), ("right", best_right, 2)]:
             is_left = (side_name == "left")
             colors = COLOR_LEFT if is_left else COLOR_RIGHT
@@ -381,6 +399,16 @@ def process_video_two_stage(
                 cv2.putText(frame, f"ID:{track_id} {colors['label']} ({best_det['score']:.2f})", (bx1, max(25, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 2)
                 draw_skeleton(frame, smooth_kps, is_left=is_left)
                 active_rendered += 1
+
+                frame_record["feet"][side_name] = {
+                    "bbox": [round(float(v), 2) for v in s_bbox],
+                    "raw_bbox": [round(float(v), 2) for v in best_det["bbox"]],
+                    "score": round(float(best_det["score"]), 4),
+                    "hand_prob": round(float(best_det["hand_prob"]), 4),
+                    "kps": [[round(float(k[0]), 2), round(float(k[1]), 2), round(float(k[2]), 4)] for k in smooth_kps],
+                    "raw_kps": [[round(float(k[0]), 2), round(float(k[1]), 2), round(float(k[2]), 4)] for k in best_det["kps"]],
+                    "status": "detected"
+                }
             else:
                 if side_name in tracks:
                     tracks[side_name].lost_count += 1
@@ -391,8 +419,20 @@ def process_video_two_stage(
                         cv2.putText(frame, f"ID:{track_id} {colors['label']} (Tracked)", (bx1, max(25, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colors["bbox"], 1)
                         draw_skeleton(frame, tracks[side_name].last_kps, is_left=is_left)
                         active_rendered += 1
+
+                        frame_record["feet"][side_name] = {
+                            "bbox": [round(float(v), 2) for v in s_bbox],
+                            "raw_bbox": None,
+                            "score": 0.0,
+                            "hand_prob": 0.0 if is_left else 1.0,
+                            "kps": [[round(float(k[0]), 2), round(float(k[1]), 2), round(float(k[2]), 4)] for k in tracks[side_name].last_kps],
+                            "raw_kps": None,
+                            "status": "tracked_lost"
+                        }
                     elif tracks[side_name].lost_count > 6:
                         del tracks[side_name]
+
+        all_frame_records.append(frame_record)
 
         elapsed_ms = (time.perf_counter() - t_frame_start) * 1000.0
         latencies.append(elapsed_ms)
@@ -417,6 +457,11 @@ def process_video_two_stage(
     cap.release()
     writer.release()
     tot_time = time.time() - t_start
+
+    json_path = output_path.with_suffix('.json')
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(all_frame_records, f, indent=2)
+    print(f"  [+] Saved baseline raw predictions to: {json_path}")
     print(f"  [+] Finished [{cfg['id']}]: {output_path.name} in {tot_time:.1f}s ({frame_idx/tot_time:.1f} FPS, Avg Latency: {np.mean(latencies):.1f}ms)")
 
 
@@ -574,7 +619,7 @@ def process_video_yolo(
 def main():
     parser = argparse.ArgumentParser(description="Multi-Precision Video Demo Generator")
     parser.add_argument("--video", type=str, default="data/test_video.mp4", help="Input video path")
-    parser.add_argument("--output_dir", type=str, default="deliverables/qualcomm_experiments/demo_videos2", help="Output directory")
+    parser.add_argument("--output_dir", type=str, default="deliverables/qualcomm_experiments/demo_videos", help="Output directory")
     parser.add_argument("--conf", type=float, default=0.40, help="Confidence threshold (default: 0.40)")
     parser.add_argument("--config_ids", type=str, default=None, help="Comma-separated IDs to run, e.g. B1,1,2,3,4,5,6")
     args = parser.parse_args()
@@ -603,8 +648,8 @@ def main():
             "id": "B1",
             "name": "NanoDet(FP32) + RTMPose(FP32)",
             "type": "two_stage",
-            "nanodet": str(q_dir / "nanodet_stage_a_improved4_opset12.onnx"),
-            "rtmpose": str(q_dir / "rtmpose_13kp_hand_opset12.onnx"),
+            "nanodet": str(q_dir / "nanodet_stage_a_improved5_opset12.onnx"),
+            "rtmpose": str(q_dir / "rtmpose_13kp_hand_improved5_opset12.onnx"),
             "model_size_mb": 4.16 + 14.93,
             "filename": "B1_twostage_nanodet_fp32_rtmpose_fp32.mp4"
         },
@@ -612,8 +657,8 @@ def main():
             "id": "1",
             "name": "NanoDet(FP32) + RTMPose(FP16)",
             "type": "two_stage",
-            "nanodet": str(q_dir / "nanodet_stage_a_improved4_opset12.onnx"),
-            "rtmpose": str(q_dir / "rtmpose_13kp_hand_fp16.onnx"),
+            "nanodet": str(q_dir / "nanodet_stage_a_improved5_opset12.onnx"),
+            "rtmpose": str(q_dir / "rtmpose_13kp_hand_improved5_fp16.onnx"),
             "model_size_mb": 4.16 + 7.50,
             "filename": "exp1_twostage_nanodet_fp32_rtmpose_fp16.mp4"
         },
@@ -621,8 +666,8 @@ def main():
             "id": "2",
             "name": "NanoDet(FP32) + RTMPose(INT8)",
             "type": "two_stage",
-            "nanodet": str(q_dir / "nanodet_stage_a_improved4_opset12.onnx"),
-            "rtmpose": str(q_dir / "rtmpose_13kp_hand_int8.onnx"),
+            "nanodet": str(q_dir / "nanodet_stage_a_improved5_opset12.onnx"),
+            "rtmpose": str(q_dir / "rtmpose_13kp_hand_improved5_int8.onnx"),
             "model_size_mb": 4.16 + 3.88,
             "filename": "exp2_twostage_nanodet_fp32_rtmpose_int8.mp4"
         },
@@ -630,8 +675,8 @@ def main():
             "id": "3",
             "name": "NanoDet(FP16) + RTMPose(FP16)",
             "type": "two_stage",
-            "nanodet": str(q_dir / "nanodet_stage_a_improved4_fp16.onnx"),
-            "rtmpose": str(q_dir / "rtmpose_13kp_hand_fp16.onnx"),
+            "nanodet": str(q_dir / "nanodet_stage_a_improved5_fp16.onnx"),
+            "rtmpose": str(q_dir / "rtmpose_13kp_hand_improved5_fp16.onnx"),
             "model_size_mb": 2.25 + 7.50,
             "filename": "exp3_twostage_nanodet_fp16_rtmpose_fp16.mp4"
         },
@@ -639,8 +684,8 @@ def main():
             "id": "4",
             "name": "NanoDet(FP16) + RTMPose(INT8)",
             "type": "two_stage",
-            "nanodet": str(q_dir / "nanodet_stage_a_improved4_fp16.onnx"),
-            "rtmpose": str(q_dir / "rtmpose_13kp_hand_int8.onnx"),
+            "nanodet": str(q_dir / "nanodet_stage_a_improved5_fp16.onnx"),
+            "rtmpose": str(q_dir / "rtmpose_13kp_hand_improved5_int8.onnx"),
             "model_size_mb": 2.25 + 3.88,
             "filename": "exp4_twostage_nanodet_fp16_rtmpose_int8.mp4"
         },
@@ -648,8 +693,8 @@ def main():
             "id": "5",
             "name": "NanoDet(INT8) + RTMPose(FP16)",
             "type": "two_stage",
-            "nanodet": str(q_dir / "nanodet_stage_a_improved4_int8.onnx"),
-            "rtmpose": str(q_dir / "rtmpose_13kp_hand_fp16.onnx"),
+            "nanodet": str(q_dir / "nanodet_stage_a_improved5_int8.onnx"),
+            "rtmpose": str(q_dir / "rtmpose_13kp_hand_improved5_fp16.onnx"),
             "model_size_mb": 1.44 + 7.50,
             "filename": "exp5_twostage_nanodet_int8_rtmpose_fp16.mp4"
         },
@@ -657,8 +702,8 @@ def main():
             "id": "6",
             "name": "NanoDet(INT8) + RTMPose(INT8)",
             "type": "two_stage",
-            "nanodet": str(q_dir / "nanodet_stage_a_improved4_int8.onnx"),
-            "rtmpose": str(q_dir / "rtmpose_13kp_hand_int8.onnx"),
+            "nanodet": str(q_dir / "nanodet_stage_a_improved5_int8.onnx"),
+            "rtmpose": str(q_dir / "rtmpose_13kp_hand_improved5_int8.onnx"),
             "model_size_mb": 1.44 + 3.88,
             "filename": "exp6_twostage_nanodet_int8_rtmpose_int8.mp4"
         },

@@ -205,8 +205,8 @@
 
   class KeypointSmoother {
     constructor(numKeypoints = 13) {
-      this.filtersX = Array.from({ length: numKeypoints }, () => new OneEuroFilter());
-      this.filtersY = Array.from({ length: numKeypoints }, () => new OneEuroFilter());
+      this.filtersX = Array.from({ length: numKeypoints }, () => new OneEuroFilter(0.8, 0.01, 1.0, 0.75));
+      this.filtersY = Array.from({ length: numKeypoints }, () => new OneEuroFilter(0.8, 0.01, 1.0, 0.75));
     }
 
     smooth(keypoints, t) {
@@ -310,6 +310,12 @@
     constructor(side, rawBbox, handProb = 0.5) {
       this.side = side; // 0 = Left, 1 = Right
       this.kalman = new KalmanBoxTracker(rawBbox);
+      this.boxFilters = [
+        new OneEuroFilter(1.5, 0.015, 1.0, 0.0),
+        new OneEuroFilter(1.5, 0.015, 1.0, 0.0),
+        new OneEuroFilter(1.5, 0.015, 1.0, 0.0),
+        new OneEuroFilter(1.5, 0.015, 1.0, 0.0)
+      ];
       this.handProb = handProb;
       this.lostCount = 0;
       this.age = 1;
@@ -354,9 +360,18 @@
       return pBox;
     }
 
-    applyObservation(rawBbox, kps, handProb) {
+    applyObservation(rawBbox, kps, handProb, t = 0.0) {
       const postBox = this.kalman.updateMeasurement(rawBbox);
-      this.smoothedBbox = [...postBox];
+      if (t > 0.0 && this.boxFilters) {
+        this.smoothedBbox = [
+          this.boxFilters[0].filter(rawBbox[0], t),
+          this.boxFilters[1].filter(rawBbox[1], t),
+          this.boxFilters[2].filter(rawBbox[2], t),
+          this.boxFilters[3].filter(rawBbox[3], t)
+        ];
+      } else {
+        this.smoothedBbox = [...postBox];
+      }
       this.handProb = 0.8 * this.handProb + 0.2 * handProb;
       // Store an immutable snapshot — this must NEVER be mutated after this point
       this.lastKpsSnapshot = kps.map(k => ({ ...k }));
@@ -410,7 +425,7 @@
   // Thresholds mirror MediaPipe's min_tracking_confidence philosophy.
   const MIN_TRACKING_CONF = 0.28;  // below → re-detect immediately
   const MIN_VALID_KPTS    = 5;     // fewer visible keypoints → re-detect
-  const MAX_LOST_FRAMES   = 2;     // missed frames before mandatory re-detect
+  const MAX_LOST_FRAMES   = 4;     // missed frames before mandatory re-detect
 
   // Per-foot decision: true → NanoDet must run for this foot next frame.
   function needsDetection(trk) {
@@ -1162,7 +1177,7 @@
   // ── SimCC Sub-pixel Continuous Expectation Decoder (Zero-Allocation) ─────────
   const STATIC_SIMCC_PROBS = new Float32Array(512);
 
-  function decodeSimccAxis(logitsData, offset, length = 512, ratio = 2.0, win = 8) {
+  function decodeSimccAxis(logitsData, offset, length = 512, ratio = 2.0, win = 12) {
     let maxVal = -Infinity;
     for (let i = 0; i < length; i++) {
       const val = getFloatValue(logitsData, offset + i);
@@ -1521,12 +1536,10 @@
                 // Anatomical Clutter Gate: reject carpet/floor patterns
                 if (poseResult.meanConf < 0.20 || poseResult.validKptsCount < 3) continue;
 
-                // FIX 5: Use keypoint-derived bbox for Kalman measurement (consistent source)
-                const kptBox = computeKptBbox(poseResult.keypoints) || det.origBox;
-
+                // Retain true detector foot box for 100% baseline parity
                 validCandidates.push({
-                  origBox:       kptBox,          // keypoint bbox fed to Kalman
-                  detBox:        det.origBox,      // detector box kept for display only
+                  origBox:       det.origBox.slice(),
+                  detBox:        det.origBox,
                   score:         det.score,
                   keypoints:     poseResult.keypoints,
                   handProb:      poseResult.handProb,
@@ -1551,7 +1564,7 @@
                   if (!state.tracks[side]) {
                     state.tracks[side] = new FootTrack(side, best.origBox, best.handProb);
                   }
-                  state.tracks[side].applyObservation(best.origBox, stableKps, best.handProb);
+                  state.tracks[side].applyObservation(best.origBox, stableKps, best.handProb, nowSec);
                   finalDetections.push({
                     origBox:  state.tracks[side].smoothedBbox,
                     score:    best.score,
@@ -1562,7 +1575,7 @@
                   // This side wasn't found by detector this frame → extrapolate (safe clone)
                   state.tracks[side].extrapolateUnobserved();
                   const dispKps = state.tracks[side].getDisplayKps();
-                  if (dispKps && state.tracks[side].lostCount <= 4) {
+                  if (dispKps && state.tracks[side].lostCount <= 6) {
                     finalDetections.push({
                       origBox:  state.tracks[side].smoothedBbox,
                       score:    state.tracks[side].meanConf * Math.pow(0.85, state.tracks[side].lostCount),
@@ -1583,25 +1596,12 @@
 
               const pBox = trk.beginFramePredict();
 
-              // Blend keypoint ROI (70%) with Kalman prediction (30%) for crop center
-              const kptRoi = computeRoiFromKeypoints(trk.lastKpsSnapshot, 0.35);
-              let targetCrop;
-              if (kptRoi) {
-                const kalmanCx = (pBox[0] + pBox[2]) / 2.0;
-                const kalmanCy = (pBox[1] + pBox[3]) / 2.0;
-                const kalmanW  = pBox[2] - pBox[0];
-                const kalmanH  = pBox[3] - pBox[1];
-                const blendCx   = 0.70 * kptRoi.cx + 0.30 * kalmanCx;
-                const blendCy   = 0.70 * kptRoi.cy + 0.30 * kalmanCy;
-                const blendSize = 0.70 * kptRoi.size + 0.30 * Math.max(kalmanW, kalmanH) * 1.25;
-                targetCrop = { cx: blendCx, cy: blendCy, size: blendSize };
-              } else {
-                const bw = pBox[2] - pBox[0];
-                const bh = pBox[3] - pBox[1];
-                const cx = (pBox[0] + pBox[2]) / 2.0;
-                const cy = (pBox[1] + pBox[3]) / 2.0;
-                targetCrop = computeCropBox(cx, cy, bw, bh, 0.25);
-              }
+              // Exact crop geometry parity with baseline computeCropBox from tracked foot box
+              const bw = Math.max(1.0, pBox[2] - pBox[0]);
+              const bh = Math.max(1.0, pBox[3] - pBox[1]);
+              const cx = (pBox[0] + pBox[2]) / 2.0;
+              const cy = (pBox[1] + pBox[3]) / 2.0;
+              const targetCrop = computeCropBox(cx, cy, bw, bh, 0.25);
 
               // EMA Smoothed Crop Window (Breaks feedback jitter loop)
               const cropBox = trk.getSmoothedCrop(targetCrop.cx, targetCrop.cy, targetCrop.size);
@@ -1620,9 +1620,30 @@
                 if (state.filterEnabled) {
                   stableKps = state.smoothers[side].smooth(poseResult.keypoints, nowSec);
                 }
-                // Feed keypoint-derived bbox to Kalman (consistent with detection path)
-                const kptBox = computeKptBbox(stableKps) || pBox;
-                trk.applyObservation(kptBox, stableKps, poseResult.handProb);
+                // Update full detection box using keypoint displacement
+                let obsBox = [...pBox];
+                if (trk.lastKpsSnapshot) {
+                  let sumDx = 0, sumDy = 0, validPairs = 0;
+                  for (let k = 0; k < 13; k++) {
+                    if (stableKps[k].visibility >= 0.20 && trk.lastKpsSnapshot[k].visibility >= 0.20) {
+                      sumDx += (stableKps[k].x - trk.lastKpsSnapshot[k].x);
+                      sumDy += (stableKps[k].y - trk.lastKpsSnapshot[k].y);
+                      validPairs++;
+                    }
+                  }
+                  if (validPairs >= 3) {
+                    const deltaX = sumDx / validPairs;
+                    const deltaY = sumDy / validPairs;
+                    obsBox = [
+                      trk.smoothedBbox[0] + deltaX,
+                      trk.smoothedBbox[1] + deltaY,
+                      trk.smoothedBbox[2] + deltaX,
+                      trk.smoothedBbox[3] + deltaY
+                    ];
+                  }
+                }
+
+                trk.applyObservation(obsBox, stableKps, poseResult.handProb, nowSec);
                 finalDetections.push({
                   origBox:  trk.smoothedBbox,
                   score:    poseResult.meanConf,
@@ -1633,7 +1654,7 @@
                 // Pose unreliable this frame → safe clone extrapolation (FIX 1)
                 trk.extrapolateUnobserved();
                 const dispKps = trk.getDisplayKps();
-                if (dispKps && trk.lostCount <= 4) {
+                if (dispKps && trk.lostCount <= 6) {
                   finalDetections.push({
                     origBox:  trk.smoothedBbox,
                     score:    trk.meanConf * Math.pow(0.85, trk.lostCount),

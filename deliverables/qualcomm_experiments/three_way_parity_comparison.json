@@ -1,0 +1,35 @@
+{
+  "baseline": {
+    "name": "Baseline Reference",
+    "active_instances": 1140,
+    "tracking_frames": 0,
+    "skip_rate": 0.0,
+    "mean_iou": 1.0,
+    "median_iou": 1.0,
+    "mean_kpt_diff": 0.0,
+    "median_kpt_diff": 0.0,
+    "mean_jerk": 11.96908683681644
+  },
+  "old_stabilized": {
+    "name": "Old Stabilized (Prior)",
+    "active_instances": 1125,
+    "tracking_frames": 364,
+    "skip_rate": 63.41463414634146,
+    "mean_iou": 0.7818891673557351,
+    "median_iou": 0.7957245895409921,
+    "mean_kpt_diff": 14.314292960967755,
+    "median_kpt_diff": 10.89005174643812,
+    "mean_jerk": 13.689833251564824
+  },
+  "new_parity": {
+    "name": "New Parity Stabilized (Current)",
+    "active_instances": 1134,
+    "tracking_frames": 458,
+    "skip_rate": 79.79094076655052,
+    "mean_iou": 0.8432036226179077,
+    "median_iou": 0.8623648187227468,
+    "mean_kpt_diff": 13.153689527245199,
+    "median_kpt_diff": 8.84255391826045,
+    "mean_jerk": 9.33037282038302
+  }
+}

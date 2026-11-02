@@ -71,13 +71,33 @@
         log('  Input names: ' + session.inputNames.join(', '));
         log('  Output names: ' + session.outputNames.join(', '));
 
-        log('\n[6] Testing forward run on WebGPU...');
+        log('\n[6] Testing forward run on WebGPU with sample tensor...');
         const total = 1 * 3 * 256 * 256;
         const f16 = new Float16Array(total);
+        // Fill with dummy normal values ~0.5
+        for (let i = 0; i < total; i++) f16[i] = 0.5;
         const tensor = new ort.Tensor('float16', f16, [1, 3, 256, 256]);
         const out = await session.run({ [session.inputNames[0]]: tensor });
         log('✓ SUCCESS! Model forward pass on WebGPU completed.');
-        log('  Output simcc_x shape: ' + out.simcc_x.dims);
+        log('  Output names returned: ' + Object.keys(out).join(', '));
+        
+        log('\n[7] Testing ort.InferenceSession.create with WebGPU on NanoDet FP16...');
+        try {
+          const detSession = await ort.InferenceSession.create('models/nanodet-improved5-fp16.onnx', {
+            executionProviders: ['webgpu']
+          });
+          log('✓ SUCCESS! NanoDet FP16 WebGPU session created.');
+          const detOut = await detSession.run({ [detSession.inputNames[0]]: tensor });
+          log('✓ SUCCESS! NanoDet FP16 forward pass completed on WebGPU.');
+          for (const k of Object.keys(detOut)) {
+            const data = detOut[k].data;
+            const slice = [];
+            for (let i = 0; i < Math.min(6, data.length); i++) slice.push(Number(data[i]).toFixed(4));
+            log(`  ${k} (type=${detOut[k].type}, dims=[${detOut[k].dims}]): [${slice.join(', ')}]`);
+          }
+        } catch (detErr) {
+          log('❌ NanoDet FP16 WebGPU Failed: ' + detErr.message);
+        }
       } catch (err) {
         log('❌ WebGPU Session Failed:');
         log('  Error name: ' + err.name);

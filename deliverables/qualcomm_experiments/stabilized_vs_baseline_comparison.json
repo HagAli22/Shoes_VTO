@@ -1,0 +1,14 @@
+[
+  {
+    "id": "B1",
+    "name": "NanoDet(FP32) + RTMPose(FP32)",
+    "model_size_mb": 19.09,
+    "fps": 19.33079409807941,
+    "mean_latency_ms": 17.63893101051128,
+    "skip_rate_pct": 79.79094076655052,
+    "kpt_mae_px_vs_baseline": 13.153717994689941,
+    "bbox_iou_vs_baseline": 0.8432039022445679,
+    "mean_jerk_px": 9.33019733428955,
+    "chirality_agreement_pct": 99.47368421052632
+  }
+]

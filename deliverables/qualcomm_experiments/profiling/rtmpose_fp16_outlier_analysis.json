@@ -1,0 +1,161 @@
+{
+  "num_crops_evaluated": 120,
+  "total_keypoints_evaluated": 1560,
+  "aggregate_metrics": {
+    "mean_px": 0.49871034048150453,
+    "median_px": 0.0,
+    "p95_px": 1.5811388300841898,
+    "p99_px": 4.5,
+    "max_px": 95.10651922975627,
+    "exact_match_pct": 78.52564102564102,
+    "subpixel_05px_match_pct": 86.34615384615385,
+    "within_2px_pct": 96.02564102564102
+  },
+  "outlier_count_over_5px": 9,
+  "top_outliers": [
+    {
+      "error_px": 95.10651922975627,
+      "frame": 0,
+      "kp_id": 0,
+      "kp_name": "ankle",
+      "fp32_coords": [
+        186.5,
+        114.0
+      ],
+      "fp16_coords": [
+        182.0,
+        19.0
+      ],
+      "vis_fp32": 0.004148602485656738,
+      "vis_fp16": 0.0041656494140625
+    },
+    {
+      "error_px": 79.0,
+      "frame": 40,
+      "kp_id": 2,
+      "kp_name": "medial_malleolus",
+      "fp32_coords": [
+        136.5,
+        210.0
+      ],
+      "fp16_coords": [
+        57.5,
+        210.0
+      ],
+      "vis_fp32": 0.04347050189971924,
+      "vis_fp16": 0.043212890625
+    },
+    {
+      "error_px": 66.0,
+      "frame": 0,
+      "kp_id": 6,
+      "kp_name": "metatarsal_5",
+      "fp32_coords": [
+        163.5,
+        152.5
+      ],
+      "fp16_coords": [
+        97.5,
+        152.5
+      ],
+      "vis_fp32": 0.6734726428985596,
+      "vis_fp16": 0.6806640625
+    },
+    {
+      "error_px": 41.5,
+      "frame": 0,
+      "kp_id": 10,
+      "kp_name": "toe_ring",
+      "fp32_coords": [
+        193.0,
+        36.0
+      ],
+      "fp16_coords": [
+        151.5,
+        36.0
+      ],
+      "vis_fp32": 0.8396120071411133,
+      "vis_fp16": 0.83837890625
+    },
+    {
+      "error_px": 31.0,
+      "frame": 8,
+      "kp_id": 4,
+      "kp_name": "navicular",
+      "fp32_coords": [
+        115.5,
+        205.5
+      ],
+      "fp16_coords": [
+        84.5,
+        205.5
+      ],
+      "vis_fp32": 0.04264509677886963,
+      "vis_fp16": 0.043701171875
+    },
+    {
+      "error_px": 19.0,
+      "frame": 16,
+      "kp_id": 7,
+      "kp_name": "toe_big",
+      "fp32_coords": [
+        162.0,
+        91.5
+      ],
+      "fp16_coords": [
+        162.0,
+        110.5
+      ],
+      "vis_fp32": 0.006318926811218262,
+      "vis_fp16": 0.0062408447265625
+    },
+    {
+      "error_px": 9.0,
+      "frame": 16,
+      "kp_id": 9,
+      "kp_name": "toe_middle",
+      "fp32_coords": [
+        158.0,
+        82.0
+      ],
+      "fp16_coords": [
+        149.0,
+        82.0
+      ],
+      "vis_fp32": 0.0013042092323303223,
+      "vis_fp16": 0.00131988525390625
+    },
+    {
+      "error_px": 8.0,
+      "frame": 16,
+      "kp_id": 5,
+      "kp_name": "metatarsal_1",
+      "fp32_coords": [
+        163.5,
+        171.0
+      ],
+      "fp16_coords": [
+        163.5,
+        163.0
+      ],
+      "vis_fp32": 0.003697633743286133,
+      "vis_fp16": 0.0037078857421875
+    },
+    {
+      "error_px": 6.0,
+      "frame": 16,
+      "kp_id": 3,
+      "kp_name": "lateral_malleolus",
+      "fp32_coords": [
+        229.5,
+        131.5
+      ],
+      "fp16_coords": [
+        223.5,
+        131.5
+      ],
+      "vis_fp32": 0.008152365684509277,
+      "vis_fp16": 0.00841522216796875
+    }
+  ]
+}

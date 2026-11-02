@@ -1,0 +1,148 @@
+{
+  "nanodet_fp32": {
+    "model": "nanodet_stage_a_improved5_opset12.onnx",
+    "total_cuda_dur_ms": 42.85645,
+    "total_cpu_dur_ms": 6.06745,
+    "total_iter_dur_ms": 48.9239,
+    "cpu_percentage": 12.40181179341794,
+    "cpu_node_count": 284,
+    "cpu_op_breakdown_ms": {
+      "Gather": 1.9320500000000005,
+      "Unsqueeze": 1.7413000000000005,
+      "Concat": 1.0145000000000002,
+      "Div": 0.6668499999999999,
+      "Add": 0.27705,
+      "Mul": 0.31415,
+      "Cast": 0.12155
+    },
+    "shape_nodes_count": 270,
+    "shape_nodes_dur_ms": 5.760249999999997,
+    "math_nodes_count": 14,
+    "math_nodes_dur_ms": 0.30720000000000003,
+    "top_slowest_cpu_nodes": [
+      {
+        "op": "Concat",
+        "total_us": 642.0,
+        "count": 30
+      },
+      {
+        "op": "Gather",
+        "total_us": 606.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 570.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 559.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 555.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 554.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 548.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 547.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 545.0,
+        "count": 30
+      },
+      {
+        "op": "Div",
+        "total_us": 541.0,
+        "count": 30
+      }
+    ]
+  },
+  "nanodet_fp16": {
+    "model": "nanodet_stage_a_improved5_fp16.onnx",
+    "total_cuda_dur_ms": 21.462200000000003,
+    "total_cpu_dur_ms": 6.0221,
+    "total_iter_dur_ms": 27.484300000000005,
+    "cpu_percentage": 21.91105467485073,
+    "cpu_node_count": 284,
+    "cpu_op_breakdown_ms": {
+      "Gather": 1.9093000000000004,
+      "Unsqueeze": 1.6982999999999997,
+      "Concat": 1.0227500000000003,
+      "Div": 0.66545,
+      "Add": 0.27579999999999993,
+      "Mul": 0.32665,
+      "Cast": 0.12384999999999999
+    },
+    "shape_nodes_count": 270,
+    "shape_nodes_dur_ms": 5.689450000000003,
+    "math_nodes_count": 14,
+    "math_nodes_dur_ms": 0.33265,
+    "top_slowest_cpu_nodes": [
+      {
+        "op": "Gather",
+        "total_us": 640.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 631.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 615.0,
+        "count": 30
+      },
+      {
+        "op": "Div",
+        "total_us": 610.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 606.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 597.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 596.0,
+        "count": 30
+      },
+      {
+        "op": "Mul",
+        "total_us": 590.0,
+        "count": 30
+      },
+      {
+        "op": "Concat",
+        "total_us": 573.0,
+        "count": 30
+      },
+      {
+        "op": "Mul",
+        "total_us": 569.0,
+        "count": 30
+      }
+    ]
+  }
+}

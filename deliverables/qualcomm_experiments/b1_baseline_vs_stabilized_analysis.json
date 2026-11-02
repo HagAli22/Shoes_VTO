@@ -1,0 +1,14 @@
+{
+  "total_frames": 574,
+  "tracking_frames": 364,
+  "skip_rate_pct": 63.4,
+  "mean_bbox_iou": 0.7819,
+  "mean_kpt_offset_px": 14.31,
+  "median_kpt_offset_px": 10.89,
+  "baseline_resting_jitter_px": 1.547,
+  "stabilized_resting_jitter_px": 1.69,
+  "resting_jitter_reduction_pct": -9.3,
+  "baseline_latency_ms": 31.3,
+  "stabilized_latency_ms": 16.6,
+  "latency_speedup_factor": 1.89
+}
